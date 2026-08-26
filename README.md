@@ -55,7 +55,7 @@ bash deploy.sh            # 首次运行生成 .env，填入域名后再次运�
 ```bash
 # 服务端（开发：PGlite 文件持久化，默认 127.0.0.1:8787）
 cd server && npm install && npm run dev
-# 或 Windows 下双击仓库根目录 start-local.cmd（开发辅助，非产品形态）
+# 或 Windows 下双击仓库根目录 dev/start-local.cmd（开发辅助，非产品形态）
 
 # 客户端（Tauri 桌面，需要 Rust + MSVC）
 cd client && npm install && npm run tauri dev

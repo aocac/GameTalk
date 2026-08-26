@@ -6,8 +6,8 @@ import net from 'node:net';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const here = dirname(fileURLToPath(import.meta.url)); // server/scripts
-const serverDir = join(here, '..');
+const here = dirname(fileURLToPath(import.meta.url)); // dev/
+const serverDir = join(here, '..', 'server');
 const PORT = 8787;
 
 // 用 shell 执行完整命令字符串：避免 Windows 下 spawn .cmd 的 EINVAL，

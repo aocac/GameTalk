@@ -7,8 +7,8 @@ import net from 'node:net';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const here = dirname(fileURLToPath(import.meta.url)); // client/scripts
-const clientDir = join(here, '..');
+const here = dirname(fileURLToPath(import.meta.url)); // dev/
+const clientDir = join(here, '..', 'client');
 const PORT = 1420;
 
 function portInUse(port) {
