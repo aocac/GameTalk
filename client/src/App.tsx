@@ -75,6 +75,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     setHotkey,
     overlayPosition,
     setOverlayPosition,
+    overlayCustomPosition,
     setOverlayCustomPosition,
     overlayScale,
     setOverlayScale,
@@ -90,8 +91,10 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   // 位置/缩放变化后应用（不自动预览：避免 adjust-done 保存时窗口被重新显示）
   useEffect(() => {
     if (!gameModeEnabled) return;
+    // 「自定义」且尚无保存过的自定义坐标：不跳位置（保持当前，等待用户拖拽）
+    if (overlayPosition === 'custom' && overlayCustomPosition == null) return;
     void gameMode.applyOverlayConfig();
-  }, [overlayPosition, overlayScale, gameModeEnabled]);
+  }, [overlayPosition, overlayScale, overlayCustomPosition, gameModeEnabled]);
 
   // 用户主动调整位置/缩放后的 3 秒预览（让用户确认效果）
   const previewAfterApply = () => {
@@ -221,8 +224,16 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             <select
               value={overlayPosition}
               onChange={(e) => {
-                setOverlayPosition(e.target.value as OverlayPosition);
-                if (gameModeEnabled) previewAfterApply();
+                const v = e.target.value as OverlayPosition;
+                if (v === 'custom') {
+                  // 选择「自定义」= 进入拖拽调整，保持当前位置，绝不跳位
+                  setOverlayPosition(v);
+                  void gameMode.stopOverlayAdjust();
+                  void gameMode.startOverlayAdjust();
+                } else {
+                  setOverlayPosition(v);
+                  if (gameModeEnabled) previewAfterApply();
+                }
               }}
             >
               {Object.entries(POSITION_LABELS).map(([v, label]) => (
@@ -249,11 +260,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               onClick={() => {
                 void gameMode.stopOverlayAdjust();
                 setOverlayCustomPosition(null);
-                setOverlayPosition('bottom-left');
+                setOverlayPosition('top-left');
                 previewAfterApply();
               }}
             >
-              复位到左下角
+              复位到左上角
             </button>
           )}
           <label className="field">
