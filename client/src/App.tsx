@@ -223,11 +223,10 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                   setOverlayPosition(v);
                   void gameMode.stopOverlayAdjust();
                   void gameMode.startOverlayAdjust();
-                } else if (gameModeEnabled) {
-                  // 预设：立即应用 + 5 秒预览（Overlay 平时隐藏，必须主动显示确认效果）
-                  applyAndPreview(v);
                 } else {
-                  setOverlayPosition(v);
+                  // 预设：立即应用 + 5 秒预览（Overlay 平时隐藏，必须主动显示确认效果）
+                  // 不依赖游戏模式开关——位置配置在任何状态下都应生效
+                  applyAndPreview(v);
                 }
               }}
             >
@@ -240,28 +239,25 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           </label>
           <button
             className="btn ghost block"
-            disabled={!gameModeEnabled}
             onClick={() => {
               // 先退出可能残留的调整态，再进入（不切换 preset，避免与预览竞争）
               void gameMode.stopOverlayAdjust();
               void gameMode.applyOverlayConfig().then(() => void gameMode.startOverlayAdjust());
             }}
           >
-            {gameModeEnabled ? '拖拽调整 Overlay 位置/大小（在屏幕上直接拖动）' : '需先启用游戏模式'}
+            拖拽调整 Overlay 位置/大小（在屏幕上直接拖动）
           </button>
-          {gameModeEnabled && (
-            <button
-              className="btn ghost block"
-              onClick={() => {
-                void gameMode.stopOverlayAdjust();
-                setOverlayCustomPosition(null);
-                setOverlayPosition('top-left');
-                applyAndPreview();
-              }}
-            >
-              复位到左上角
-            </button>
-          )}
+          <button
+            className="btn ghost block"
+            onClick={() => {
+              void gameMode.stopOverlayAdjust();
+              setOverlayCustomPosition(null);
+              setOverlayPosition('top-left');
+              applyAndPreview();
+            }}
+          >
+            复位到左上角
+          </button>
           <label className="field">
             <span>缩放比例：{Math.round(overlayScale * 100)}%</span>
             <input
@@ -272,7 +268,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               value={overlayScale}
               onChange={(e) => {
                 setOverlayScale(parseFloat(e.target.value));
-                if (gameModeEnabled) applyAndPreview();
+                applyAndPreview();
               }}
             />
           </label>
