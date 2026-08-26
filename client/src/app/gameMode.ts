@@ -105,17 +105,38 @@ export async function applyOverlayConfig(): Promise<void> {
   const winW = Math.round(w * dpr);
   const winH = Math.round(h * dpr);
   await win.setSize(new PhysicalSize(winW, winH));
+  let posX = 0;
+  let posY = 0;
   if (overlayPosition === 'custom' && overlayCustomPosition) {
     // 用户拖拽自定义位置（物理像素，左上角锚点）；越界则夹回屏幕内
     const clamped = clampToMonitor(overlayCustomPosition.x, overlayCustomPosition.y, winW, winH, mon);
-    await win.setPosition(new PhysicalPosition(clamped.x, clamped.y));
+    posX = clamped.x;
+    posY = clamped.y;
+    await win.setPosition(new PhysicalPosition(posX, posY));
   } else if (overlayPosition === 'custom') {
     // 「自定义」但尚未保存过坐标：保持当前位置不动（只改大小），
     // 等待用户进入拖拽调整——绝不擅自把窗口挪走
   } else {
-    await win.setPosition(computePosition(mon, winW, winH, overlayPosition, OVERLAY_MARGIN * dpr));
+    const p = computePosition(mon, winW, winH, overlayPosition, OVERLAY_MARGIN * dpr);
+    posX = p.x;
+    posY = p.y;
+    await win.setPosition(p);
   }
   await emit('overlay:config', { scale: overlayScale });
+  // 调试信息：预览时显示实际计算值，便于远程定位位置问题
+  await emit('overlay:debug', {
+    pos: overlayPosition,
+    x: posX,
+    y: posY,
+    w: winW,
+    h: winH,
+    dpr,
+    scale: overlayScale,
+    monW: mon.size.width,
+    monH: mon.size.height,
+    monX: mon.position.x,
+    monY: mon.position.y,
+  });
 }
 
 /** 位置预览：显示 Overlay 3 秒，方便确认位置/大小效果（Overlay 平时隐藏） */

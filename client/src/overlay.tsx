@@ -75,6 +75,7 @@ function OverlayApp() {
   const [adjusting, setAdjusting] = useState(false);
   const [fading, setFading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<string | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const configRef = useRef(config);
@@ -132,6 +133,7 @@ function OverlayApp() {
     let unlistenConfig: UnlistenFn | undefined;
     let unlistenAdjust: UnlistenFn | undefined;
     let unlistenPreview: UnlistenFn | undefined;
+    let unlistenDebug: UnlistenFn | undefined;
     let cancelled = false;
 
     void listen<ChatMessage>('overlay:append', (e) => {
@@ -159,6 +161,15 @@ function OverlayApp() {
       setConfig((prev) => ({ ...prev, ...e.payload }));
       scaleRef.current = e.payload.scale ?? scaleRef.current;
     }).then((off) => (unlistenConfig = off));
+
+    // 调试信息（位置计算值），用于远程定位位置问题，验证后移除
+    void listen<Record<string, unknown>>('overlay:debug', (e) => {
+      if (cancelled) return;
+      const d = e.payload as { pos?: string; x?: number; y?: number; w?: number; h?: number; dpr?: number; scale?: number; monW?: number; monH?: number; monX?: number; monY?: number };
+      setDebugInfo(
+        `pos=${d.pos} x=${d.x} y=${d.y} w=${d.w} h=${d.h} dpr=${d.dpr} scale=${d.scale} mon=${d.monW}x${d.monH}@${d.monX},${d.monY}`,
+      );
+    }).then((off) => (unlistenDebug = off));
 
     // 位置预览：设置里调整位置/大小后显示 5 秒确认效果（Overlay 平时隐藏）
     void listen('overlay:preview', () => {
@@ -204,6 +215,7 @@ function OverlayApp() {
       unlistenConfig?.();
       unlistenAdjust?.();
       unlistenPreview?.();
+      unlistenDebug?.();
       stopClampPoll();
       clearTimers();
     };
@@ -280,7 +292,10 @@ function OverlayApp() {
         </div>
       )}
       {previewing && items.length === 0 && !adjusting && (
-        <div className="overlay-preview">消息将显示在这里</div>
+        <div className="overlay-preview">
+          消息将显示在这里
+          {debugInfo && <div className="overlay-debug">{debugInfo}</div>}
+        </div>
       )}
       {items.length > 0 && !adjusting && (
         <>

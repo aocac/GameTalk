@@ -219,10 +219,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               onChange={(e) => {
                 const v = e.target.value as OverlayPosition;
                 if (v === 'custom') {
-                  // 选择「自定义」= 进入拖拽调整，保持当前位置，绝不跳位
+                  // 选择「自定义」= 进入拖拽调整，保持当前位置，绝不跳位；
+                  // 先同步窗口尺寸（与当前缩放一致），避免内容截断
                   setOverlayPosition(v);
                   void gameMode.stopOverlayAdjust();
-                  void gameMode.startOverlayAdjust();
+                  void gameMode.applyOverlayConfig().then(() => void gameMode.startOverlayAdjust());
                 } else {
                   // 预设：立即应用 + 5 秒预览（Overlay 平时隐藏，必须主动显示确认效果）
                   // 不依赖游戏模式开关——位置配置在任何状态下都应生效

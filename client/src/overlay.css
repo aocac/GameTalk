@@ -93,6 +93,15 @@ body {
   text-align: center;
 }
 
+/* 调试信息（临时，验证后移除） */
+.overlay-debug {
+  margin-top: 6px;
+  font-size: 11px;
+  font-family: ui-monospace, Consolas, monospace;
+  color: #ffd479;
+  word-break: break-all;
+}
+
 /* 调整模式工具条 */
 .adjust-bar {
   display: flex;
