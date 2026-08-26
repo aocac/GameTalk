@@ -307,6 +307,9 @@ function LoginView() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  // 未登录时也能配置服务器地址（否则连接失败时会陷入无法改地址的死锁）
+  const { serverUrl, setServerUrl } = useSettings();
+  const [showServer, setShowServer] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -328,6 +331,25 @@ function LoginView() {
           <h1>GameTalk</h1>
           <p>游戏玩家的轻量群组通信</p>
         </div>
+
+        <button
+          type="button"
+          className="server-toggle"
+          onClick={() => setShowServer((v) => !v)}
+          title="配置要连接的服务器"
+        >
+          {showServer ? '收起服务器设置' : `服务器：${serverUrl}`}
+        </button>
+        {showServer && (
+          <label className="field">
+            <span>服务器地址（连接你自己的 GameTalk 服务器）</span>
+            <input
+              value={serverUrl}
+              onChange={(e) => setServerUrl(e.target.value)}
+              placeholder="https://chat.example.com"
+            />
+          </label>
+        )}
 
         <div className="auth-tabs">
           <button type="button" className={`tab ${mode === 'login' ? 'active' : ''}`} onClick={() => setMode('login')}>
@@ -398,7 +420,6 @@ function ChatView() {
   const [draft, setDraft] = useState('');
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showClosePrompt, setShowClosePrompt] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
@@ -410,13 +431,6 @@ function ChatView() {
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [messages.length]);
-
-  // 主窗口关闭请求：弹出「退出 / 关闭到托盘」选择
-  useEffect(() => {
-    let off: UnlistenFn | undefined;
-    void listen('main-close-requested', () => setShowClosePrompt(true)).then((fn) => (off = fn));
-    return () => off?.();
-  }, []);
 
   // 进入聊天视图自动连接（connect 幂等，StrictMode 双挂载安全）
   useEffect(() => {
@@ -624,42 +638,6 @@ function ChatView() {
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
-      {showClosePrompt && (
-        <div className="modal-mask" onClick={() => setShowClosePrompt(false)}>
-          <div className="modal close-prompt" onClick={(e) => e.stopPropagation()}>
-            <h3>退出 GameTalk？</h3>
-            <p className="close-prompt-sub">
-              关闭到托盘后，仍可在系统托盘图标中重新打开，并继续接收房间消息。
-            </p>
-            <div className="row-between">
-              <button className="btn ghost" onClick={() => setShowClosePrompt(false)}>
-                取消
-              </button>
-              <div className="row-between">
-                <button
-                  className="btn ghost"
-                  onClick={() => {
-                    setShowClosePrompt(false);
-                    void getCurrentWindow().hide();
-                  }}
-                >
-                  关闭到托盘
-                </button>
-                <button
-                  className="btn primary"
-                  onClick={() => {
-                    setShowClosePrompt(false);
-                    void invoke('quit_app');
-                  }}
-                >
-                  退出
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {showRoomModal && (
         <div className="modal-mask" onClick={() => setShowRoomModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -704,8 +682,47 @@ function ChatView() {
   );
 }
 
+function ClosePromptModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal close-prompt" onClick={(e) => e.stopPropagation()}>
+        <h3>退出 GameTalk？</h3>
+        <p className="close-prompt-sub">
+          关闭到托盘后，仍可在系统托盘图标中重新打开，并继续接收房间消息。
+        </p>
+        <div className="row-between">
+          <button className="btn ghost" onClick={onClose}>
+            取消
+          </button>
+          <div className="row-between">
+            <button
+              className="btn ghost"
+              onClick={() => {
+                onClose();
+                void getCurrentWindow().hide();
+              }}
+            >
+              关闭到托盘
+            </button>
+            <button
+              className="btn primary"
+              onClick={() => {
+                onClose();
+                void invoke('quit_app');
+              }}
+            >
+              退出
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { token, user, refreshMe } = useAuth();
+  const [showClosePrompt, setShowClosePrompt] = useState(false);
 
   // 启动时校验持久化的 token
   useEffect(() => {
@@ -713,6 +730,18 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!token || !user) return <LoginView />;
-  return <ChatView />;
+  // 关闭确认监听提升到根组件：登录页/聊天页都能响应窗口关闭
+  // （否则登录页时 Rust 已拦截关闭但前端无监听，窗口将无法关闭）
+  useEffect(() => {
+    let off: UnlistenFn | undefined;
+    void listen('main-close-requested', () => setShowClosePrompt(true)).then((fn) => (off = fn));
+    return () => off?.();
+  }, []);
+
+  return (
+    <>
+      {token && user ? <ChatView /> : <LoginView />}
+      {showClosePrompt && <ClosePromptModal onClose={() => setShowClosePrompt(false)} />}
+    </>
+  );
 }

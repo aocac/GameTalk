@@ -490,6 +490,22 @@ body {
   font-size: 12.5px;
 }
 
+/* 登录页服务器地址入口 */
+.server-toggle {
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  align-self: center;
+}
+
+.server-toggle:hover {
+  color: var(--accent);
+}
+
 .btn.block {
   width: 100%;
   padding: 11px 0;
