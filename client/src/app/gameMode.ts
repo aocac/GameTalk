@@ -118,9 +118,11 @@ export async function applyOverlayConfig(): Promise<void> {
     // 等待用户进入拖拽调整——绝不擅自把窗口挪走
   } else {
     const p = computePosition(mon, winW, winH, overlayPosition, OVERLAY_MARGIN * dpr);
-    posX = p.x;
-    posY = p.y;
-    await win.setPosition(p);
+    // 所有预设都夹取到主屏内：即使坐标计算异常，窗口也保证可见（最多贴边）
+    const clamped = clampToMonitor(p.x, p.y, winW, winH, mon);
+    posX = clamped.x;
+    posY = clamped.y;
+    await win.setPosition(new PhysicalPosition(clamped.x, clamped.y));
   }
   await emit('overlay:config', { scale: overlayScale });
   // 调试信息：预览时显示实际计算值，便于远程定位位置问题

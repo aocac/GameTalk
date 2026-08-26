@@ -771,6 +771,18 @@ body {
   line-height: 1.6;
 }
 
+/* Overlay 位置调试信息（临时，验证后移除） */
+.overlay-debug-inline {
+  font-size: 11px;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  color: var(--pending);
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
 /* ============ 侧边栏用户块 ============ */
 .user-block {
   align-items: center;
