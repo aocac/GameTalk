@@ -37,7 +37,7 @@ export interface AppSettings {
   setGameModeEnabled: (v: boolean) => void;
   setHotkey: (v: string) => void;
   setOverlayPosition: (v: OverlayPosition) => void;
-  setOverlayCustomPosition: (v: OverlayPositionState) => void;
+  setOverlayCustomPosition: (v: OverlayPositionState | null) => void;
   setOverlayScale: (v: number) => void;
   setOverlayDurationSec: (v: number) => void;
 }
@@ -66,7 +66,7 @@ export const useSettings = create<AppSettings>()(
       soundEnabled: true,
       gameModeEnabled: false,
       hotkey: DEFAULT_HOTKEY,
-      overlayPosition: 'bottom-left',
+      overlayPosition: 'top-left',
       overlayCustomPosition: null,
       overlayScale: 1,
       overlayDurationSec: 6,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { PhysicalSize } from '@tauri-apps/api/dpi';
+import { getCurrentWindow, primaryMonitor } from '@tauri-apps/api/window';
+import { PhysicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import './overlay.css';
 import type { ChatMessage } from './app/types';
@@ -16,6 +16,32 @@ const MAX_ITEMS = 5;
 const BASE_WIDTH = 380;
 const BASE_HEIGHT = 180;
 const FADE_MS = 350;
+
+/** 若窗口位于主屏可视范围外，将其夹回屏内（防止拖出屏幕后找不到） */
+async function pullIntoView(
+  win: ReturnType<typeof getCurrentWindow>,
+  scale: number,
+): Promise<void> {
+  const [pos, mon, dpr] = await Promise.all([
+    win.outerPosition(),
+    primaryMonitor(),
+    Promise.resolve((typeof window !== 'undefined' && window.devicePixelRatio) || 1),
+  ]);
+  if (!mon) return;
+  const w = Math.round(BASE_WIDTH * scale * dpr);
+  const h = Math.round(BASE_HEIGHT * scale * dpr);
+  const x0 = mon.position.x;
+  const y0 = mon.position.y;
+  const maxX = x0 + Math.max(mon.size.width - w, 0);
+  const maxY = y0 + Math.max(mon.size.height - h, 0);
+  // 容差 40px：窗口边缘略微出屏不强制拉回
+  const visible = pos.x >= x0 - 40 && pos.y >= y0 - 40 && pos.x <= maxX + 40 && pos.y <= maxY + 40;
+  if (!visible) {
+    const nx = Math.min(Math.max(pos.x, x0), maxX);
+    const ny = Math.min(Math.max(pos.y, y0), maxY);
+    await win.setPosition(new PhysicalPosition(nx, ny));
+  }
+}
 
 function MiniAvatar({ name, url, size = 20 }: { name: string; url?: string | null; size?: number }) {
   if (url) {
@@ -56,7 +82,21 @@ function OverlayApp() {
   const scaleRef = useRef(config.scale);
   const lastPos = useRef<{ x: number; y: number } | null>(null);
   const adjustingRef = useRef(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const winRef = useRef<ReturnType<typeof getCurrentWindow> | null>(null);
+
+  // 调整模式下每 200ms 把窗口夹回主屏内（OS 拖拽可拖出屏幕，需要主动拉回）
+  const startClampPoll = () => {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(() => {
+      const win = winRef.current;
+      if (win && adjustingRef.current) void pullIntoView(win, scaleRef.current);
+    }, 200);
+  };
+  const stopClampPoll = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
+  };
 
   // 点击穿透 + 永不聚焦：消息 Overlay 不干扰游戏操作
   useEffect(() => {
@@ -105,9 +145,11 @@ function OverlayApp() {
         if (adjustingRef.current) {
           setAdjusting(false);
           adjustingRef.current = false;
+          stopClampPoll();
           void win.setIgnoreCursorEvents(true);
         }
-        void win.show();
+        // 窗口若在屏幕外（曾被拖出）则先拉回
+        void pullIntoView(win, scaleRef.current).then(() => void win.show());
       }
       scheduleHide();
     }).then((off) => (unlistenAppend = off));
@@ -128,6 +170,7 @@ function OverlayApp() {
       if (adjustingRef.current) {
         setAdjusting(false);
         adjustingRef.current = false;
+        stopClampPoll();
         void win.setIgnoreCursorEvents(true);
       }
       scheduleHide();
@@ -144,13 +187,13 @@ function OverlayApp() {
       if (active) {
         clearTimers();
         setFading(false);
-        void win.show();
+        // 进入调整模式：若窗口在屏幕外（上次拖出），拉回屏内；并启动防出屏轮询
+        void pullIntoView(win, scaleRef.current).then(() => void win.show());
+        startClampPoll();
       } else {
-        // 退出调整：保存并应用
-        void win.outerPosition().then((pos) => {
-          lastPos.current = { x: pos.x, y: pos.y };
-          void emit('overlay:adjust-done', { position: lastPos.current, scale: Math.round(scaleRef.current * 100) / 100 });
-        });
+        // 外部退出（如设置里复位/切预设）：不保存位置、不 emit adjust-done，
+        // 避免回调覆盖用户当前选择的位置（竞态根因）
+        stopClampPoll();
         void win.hide();
       }
     }).then((off) => (unlistenAdjust = off));
@@ -161,6 +204,7 @@ function OverlayApp() {
       unlistenConfig?.();
       unlistenAdjust?.();
       unlistenPreview?.();
+      stopClampPoll();
       clearTimers();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -178,9 +222,12 @@ function OverlayApp() {
     void win.setSize(new PhysicalSize(Math.round(BASE_WIDTH * next * dpr), Math.round(BASE_HEIGHT * next * dpr)));
   };
 
-  // 调整模式：OS 级拖拽（startDragging 绝对跟手）；最终位置在完成/退出时读取
+  // 调整模式：OS 级拖拽（startDragging 绝对跟手）；最终位置在完成时读取
   const onAdjustBarMouseDown = (e: React.MouseEvent) => {
     if (!adjusting) return;
+    // 关键：点击「完成」按钮时不触发拖拽——否则 mousedown 先开始拖窗，
+    // click 事件被系统拖拽吞掉，导致完成按钮永远点不生效
+    if ((e.target as HTMLElement).closest('.adjust-done')) return;
     e.preventDefault();
     const win = winRef.current;
     if (win) void win.startDragging();
@@ -195,14 +242,29 @@ function OverlayApp() {
             className="adjust-done"
             onClick={() => {
               const win = winRef.current;
+              stopClampPoll();
               if (win) void win.setIgnoreCursorEvents(true);
               setAdjusting(false);
               adjustingRef.current = false;
-              void win?.outerPosition().then((pos) => {
-                lastPos.current = { x: pos.x, y: pos.y };
+              // 完成：读取最终位置（夹回屏内后）保存，然后隐藏（不再触发预览重新显示）
+              void (async () => {
+                if (!win) return;
+                const pos = await win.outerPosition();
+                const mon = await primaryMonitor();
+                let x = pos.x;
+                let y = pos.y;
+                if (mon) {
+                  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+                  const w = Math.round(BASE_WIDTH * scaleRef.current * dpr);
+                  const h = Math.round(BASE_HEIGHT * scaleRef.current * dpr);
+                  x = Math.min(Math.max(x, mon.position.x), mon.position.x + Math.max(mon.size.width - w, 0));
+                  y = Math.min(Math.max(y, mon.position.y), mon.position.y + Math.max(mon.size.height - h, 0));
+                  if (x !== pos.x || y !== pos.y) await win.setPosition(new PhysicalPosition(x, y));
+                }
+                lastPos.current = { x, y };
                 void emit('overlay:adjust-done', { position: lastPos.current, scale: Math.round(scaleRef.current * 100) / 100 });
-              });
-              void win?.hide();
+                void win.hide();
+              })();
             }}
           >
             完成 ✓

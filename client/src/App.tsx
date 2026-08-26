@@ -75,6 +75,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     setHotkey,
     overlayPosition,
     setOverlayPosition,
+    setOverlayCustomPosition,
     overlayScale,
     setOverlayScale,
     overlayDurationSec,
@@ -86,11 +87,16 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [avatarMsg, setAvatarMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // 位置/缩放变化后立即应用并预览 3 秒（Overlay 平时隐藏，用户需要看到效果）
+  // 位置/缩放变化后应用（不自动预览：避免 adjust-done 保存时窗口被重新显示）
   useEffect(() => {
     if (!gameModeEnabled) return;
-    void gameMode.applyOverlayConfig().then(() => void gameMode.previewOverlay());
+    void gameMode.applyOverlayConfig();
   }, [overlayPosition, overlayScale, gameModeEnabled]);
+
+  // 用户主动调整位置/缩放后的 3 秒预览（让用户确认效果）
+  const previewAfterApply = () => {
+    void gameMode.applyOverlayConfig().then(() => void gameMode.previewOverlay());
+  };
 
   const closeModal = () => {
     // 防止调整模式残留卡死
@@ -212,7 +218,13 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           <span className="section-title">消息 Overlay</span>
           <label className="field">
             <span>显示位置</span>
-            <select value={overlayPosition} onChange={(e) => setOverlayPosition(e.target.value as OverlayPosition)}>
+            <select
+              value={overlayPosition}
+              onChange={(e) => {
+                setOverlayPosition(e.target.value as OverlayPosition);
+                if (gameModeEnabled) previewAfterApply();
+              }}
+            >
               {Object.entries(POSITION_LABELS).map(([v, label]) => (
                 <option key={v} value={v}>
                   {label}
@@ -236,8 +248,9 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               className="btn ghost block"
               onClick={() => {
                 void gameMode.stopOverlayAdjust();
+                setOverlayCustomPosition(null);
                 setOverlayPosition('bottom-left');
-                void gameMode.applyOverlayConfig().then(() => void gameMode.previewOverlay());
+                previewAfterApply();
               }}
             >
               复位到左下角
@@ -251,7 +264,10 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               max={2}
               step={0.1}
               value={overlayScale}
-              onChange={(e) => setOverlayScale(parseFloat(e.target.value))}
+              onChange={(e) => {
+                setOverlayScale(parseFloat(e.target.value));
+                if (gameModeEnabled) previewAfterApply();
+              }}
             />
           </label>
           <label className="field">
