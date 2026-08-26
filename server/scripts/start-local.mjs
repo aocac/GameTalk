@@ -10,14 +10,14 @@ const here = dirname(fileURLToPath(import.meta.url)); // server/scripts
 const serverDir = join(here, '..');
 const PORT = 8787;
 
-function run(cmd, args, cwd) {
+// 用 shell 执行完整命令字符串：避免 Windows 下 spawn .cmd 的 EINVAL，
+// 且不触发 DEP0190（该警告仅针对 shell:true + args 数组）
+function run(cmdStr, cwd) {
   return new Promise((resolve) => {
-    const p = spawn(cmd, args, { cwd, stdio: 'inherit' });
+    const p = spawn(cmdStr, { cwd, stdio: 'inherit', shell: true });
     p.on('close', (code) => resolve(code ?? 0));
   });
 }
-
-const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 function portInUse(port) {
   return new Promise((resolve) => {
@@ -38,7 +38,7 @@ console.log();
 
 if (!existsSync(join(serverDir, 'node_modules'))) {
   console.log('[GameTalk] 首次运行：正在安装服务端依赖（约 1 分钟）...');
-  const c = await run(npmCmd, ['install'], serverDir);
+  const c = await run('npm install', serverDir);
   if (c !== 0) {
     console.error('[GameTalk] 依赖安装失败，请检查上方错误。');
     process.exit(c);
@@ -47,7 +47,7 @@ if (!existsSync(join(serverDir, 'node_modules'))) {
 
 if (!existsSync(join(serverDir, 'dist'))) {
   console.log('[GameTalk] 首次运行：正在构建服务端...');
-  const c = await run(npmCmd, ['run', 'build'], serverDir);
+  const c = await run('npm run build', serverDir);
   if (c !== 0) {
     console.error('[GameTalk] 构建失败，请检查上方错误。');
     process.exit(c);
@@ -64,5 +64,5 @@ console.log(`[GameTalk] 本地服务器已启动：http://127.0.0.1:${PORT}`);
 console.log('[GameTalk] 保持本窗口开启；Ctrl+C 或关闭窗口即停止服务器。');
 console.log();
 
-const code = await run(process.execPath, ['dist/index.js'], serverDir);
+const code = await run('node dist/index.js', serverDir);
 process.exit(code ?? 0);

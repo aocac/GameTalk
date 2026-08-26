@@ -49,8 +49,10 @@ if (await portInUse(PORT)) {
   process.exit(0);
 }
 
-const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-const vite = spawn(npmCmd, ['run', 'dev'], { cwd: clientDir, stdio: 'inherit' });
+// 用 shell 执行完整命令字符串（非 args 数组）：
+// - 无 EINVAL（Windows 下 spawn 无法直接执行 .cmd，需 shell 解析）
+// - 无 DEP0190 警告（该警告仅针对 shell:true + args 数组组合）
+const vite = spawn('npm run dev', { cwd: clientDir, stdio: 'inherit', shell: true });
 
 if (await waitForPort(PORT, 30000)) {
   console.log(`[GameTalk] 第二客户端已就绪：http://localhost:${PORT}`);
