@@ -25,33 +25,54 @@ body {
   gap: 6px;
   padding: 8px;
   transform-origin: bottom center;
+  transition: opacity 0.35s ease;
 }
 
-.overlay-empty {
-  display: none;
+.overlay-root.fading {
+  opacity: 0;
+}
+
+.overlay-root.adjusting {
+  justify-content: flex-start;
 }
 
 .overlay-item {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 7px;
   background: rgba(16, 18, 22, 0.62);
   border-left: 3px solid #6f8dff;
   border-radius: 8px;
-  padding: 6px 10px;
+  padding: 5px 10px;
   max-width: 100%;
   animation: slide-in 0.18s ease-out;
   backdrop-filter: blur(2px);
 }
 
+.overlay-avatar {
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.overlay-avatar-img {
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
 .overlay-name {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   color: #9db4ff;
   white-space: nowrap;
-  max-width: 40%;
+  max-width: 34%;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 0;
 }
 
 .overlay-text {
@@ -60,6 +81,40 @@ body {
   word-break: break-word;
   white-space: pre-wrap;
   line-height: 1.4;
+}
+
+/* 调整模式工具条 */
+.adjust-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: rgba(16, 18, 22, 0.85);
+  border: 1px dashed rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: move;
+  user-select: none;
+}
+
+.adjust-hint {
+  font-size: 12px;
+  color: #cfd6e4;
+}
+
+.adjust-done {
+  border: none;
+  background: #4f6ef7;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.adjust-done:hover {
+  background: #3d5ce5;
 }
 
 @keyframes slide-in {

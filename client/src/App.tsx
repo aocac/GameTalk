@@ -58,6 +58,7 @@ const POSITION_LABELS: Record<OverlayPosition, string> = {
   'bottom-left': '左下',
   'bottom-center': '底部居中',
   'bottom-right': '右下',
+  custom: '自定义（拖拽）',
 };
 
 const MAX_AVATAR_BYTES = 512 * 1024;
@@ -207,6 +208,28 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               ))}
             </select>
           </label>
+          <button
+            className="btn ghost block"
+            disabled={!gameModeEnabled}
+            onClick={() => {
+              setOverlayPosition('custom');
+              void gameMode.applyOverlayConfig();
+              void gameMode.startOverlayAdjust();
+            }}
+          >
+            {gameModeEnabled ? '拖拽调整 Overlay 位置/大小（在屏幕上直接拖动）' : '需先启用游戏模式'}
+          </button>
+          {gameModeEnabled && (
+            <button
+              className="btn ghost block"
+              onClick={() => {
+                setOverlayPosition('bottom-left');
+                void gameMode.applyOverlayConfig();
+              }}
+            >
+              复位到左下角
+            </button>
+          )}
           <label className="field">
             <span>缩放比例：{Math.round(overlayScale * 100)}%</span>
             <input
@@ -511,7 +534,7 @@ function ChatView() {
           )}
           {messages.map((m) => (
             <div key={m.id} className={`message ${m.userId === me?.id ? 'mine' : ''}`}>
-              <Avatar name={m.username} size={30} />
+              <Avatar name={m.username} url={m.avatarUrl} size={30} />
               <div className="message-body">
                 <div className="message-head">
                   <span className="message-author">{m.username}</span>

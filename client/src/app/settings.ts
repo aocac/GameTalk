@@ -7,7 +7,13 @@ export type OverlayPosition =
   | 'top-right'
   | 'bottom-left'
   | 'bottom-center'
-  | 'bottom-right';
+  | 'bottom-right'
+  | 'custom';
+
+export interface OverlayPositionState {
+  x: number;
+  y: number;
+}
 
 export interface AppSettings {
   /** 服务端地址（REST），WS 地址由此推导 */
@@ -18,8 +24,10 @@ export interface AppSettings {
   gameModeEnabled: boolean;
   /** 呼出输入框的全局快捷键 */
   hotkey: string;
-  /** 消息 Overlay 位置预设 */
+  /** 消息 Overlay 位置预设（custom = 使用拖拽自定义位置） */
   overlayPosition: OverlayPosition;
+  /** 拖拽自定义位置（overlayPosition='custom' 时生效，物理像素） */
+  overlayCustomPosition: OverlayPositionState | null;
   /** 消息 Overlay 缩放比例（0.5 ~ 2.0） */
   overlayScale: number;
   /** 消息 Overlay 自动隐藏时长（秒） */
@@ -29,6 +37,7 @@ export interface AppSettings {
   setGameModeEnabled: (v: boolean) => void;
   setHotkey: (v: string) => void;
   setOverlayPosition: (v: OverlayPosition) => void;
+  setOverlayCustomPosition: (v: OverlayPositionState) => void;
   setOverlayScale: (v: number) => void;
   setOverlayDurationSec: (v: number) => void;
 }
@@ -58,6 +67,7 @@ export const useSettings = create<AppSettings>()(
       gameModeEnabled: false,
       hotkey: DEFAULT_HOTKEY,
       overlayPosition: 'bottom-left',
+      overlayCustomPosition: null,
       overlayScale: 1,
       overlayDurationSec: 6,
       setServerUrl: (serverUrl) => set({ serverUrl: serverUrl.trim() }),
@@ -65,6 +75,7 @@ export const useSettings = create<AppSettings>()(
       setGameModeEnabled: (gameModeEnabled) => set({ gameModeEnabled }),
       setHotkey: (hotkey) => set({ hotkey: hotkey.trim() || DEFAULT_HOTKEY }),
       setOverlayPosition: (overlayPosition) => set({ overlayPosition }),
+      setOverlayCustomPosition: (overlayCustomPosition) => set({ overlayCustomPosition }),
       setOverlayScale: (overlayScale) => set({ overlayScale: Math.min(2, Math.max(0.5, overlayScale)) }),
       setOverlayDurationSec: (overlayDurationSec) => set({ overlayDurationSec: Math.min(30, Math.max(2, overlayDurationSec)) }),
     }),

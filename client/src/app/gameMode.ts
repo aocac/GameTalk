@@ -71,12 +71,15 @@ function computePosition(
       return new PhysicalPosition(x0 + (mon.size.width - w) / 2, y0 + mon.size.height - h - margin);
     case 'bottom-right':
       return new PhysicalPosition(x0 + mon.size.width - w - margin, y0 + mon.size.height - h - margin);
+    case 'custom':
+      // 自定义位置走单独分支（applyOverlayConfig 已处理），此处兜底为左下
+      return new PhysicalPosition(x0 + margin, y0 + mon.size.height - h - margin);
   }
 }
 
 /** 根据设置把消息 Overlay 摆到指定位置并按比例缩放 */
 export async function applyOverlayConfig(): Promise<void> {
-  const { overlayPosition, overlayScale } = useSettings.getState();
+  const { overlayPosition, overlayScale, overlayCustomPosition } = useSettings.getState();
   const win = await getOverlayWindow();
   const mon = await primaryMonitor();
   if (!win || !mon) return;
@@ -84,8 +87,23 @@ export async function applyOverlayConfig(): Promise<void> {
   const w = Math.round(OVERLAY_BASE_WIDTH * overlayScale);
   const h = Math.round(OVERLAY_BASE_HEIGHT * overlayScale);
   await win.setSize(new PhysicalSize(Math.round(w * dpr), Math.round(h * dpr)));
-  await win.setPosition(computePosition(mon, w * dpr, h * dpr, overlayPosition, OVERLAY_MARGIN * dpr));
+  if (overlayPosition === 'custom' && overlayCustomPosition) {
+    // 用户拖拽自定义位置（物理像素，左上角锚点）
+    await win.setPosition(new PhysicalPosition(overlayCustomPosition.x, overlayCustomPosition.y));
+  } else {
+    await win.setPosition(computePosition(mon, w * dpr, h * dpr, overlayPosition, OVERLAY_MARGIN * dpr));
+  }
   await emit('overlay:config', { scale: overlayScale });
+}
+
+/** 进入 Overlay 调整模式：可拖拽移动 + 滚轮缩放（overlay 窗口内操作） */
+export async function startOverlayAdjust(): Promise<void> {
+  await emit('overlay:adjust', { active: true });
+}
+
+/** 退出 Overlay 调整模式 */
+export async function stopOverlayAdjust(): Promise<void> {
+  await emit('overlay:adjust', { active: false });
 }
 
 /** 呼出输入框（全局快捷键触发）：定位底部居中 + 显示 + 聚焦 */
@@ -175,6 +193,16 @@ export async function startGameMode(): Promise<void> {
   unlisteners.push(
     await listen('game-input-cancel', () => {
       void hideInputWindow();
+    }),
+  );
+  // Overlay 调整完成：保存自定义位置/缩放并应用
+  unlisteners.push(
+    await listen('overlay:adjust-done', (e) => {
+      const p = (e.payload ?? {}) as { position?: { x: number; y: number }; scale?: number };
+      if (p.position) useSettings.getState().setOverlayCustomPosition(p.position);
+      if (typeof p.scale === 'number') useSettings.getState().setOverlayScale(p.scale);
+      useSettings.getState().setOverlayPosition('custom');
+      void applyOverlayConfig();
     }),
   );
   await applyOverlayConfig();

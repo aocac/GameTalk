@@ -186,11 +186,21 @@ describe('rooms REST', () => {
 });
 
 describe('realtime + persistence', () => {
-  it('persists messages and paginates history', async () => {
+  it('persists messages and paginates history (with avatar)', async () => {
     const owner = await registerUser('hist_owner');
     const { room } = (
       await app.inject({ method: 'POST', url: '/api/rooms', headers: auth(owner.token), payload: { name: 'Hist' } })
     ).json();
+
+    // 给 owner 设置头像，验证消息携带 avatarUrl
+    const pngBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    await app.inject({
+      method: 'POST',
+      url: '/api/auth/avatar',
+      headers: auth(owner.token),
+      payload: { dataUrl: `data:image/png;base64,${pngBase64}` },
+    });
 
     const ws = await connectWs(owner.token);
     ws.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
@@ -200,7 +210,8 @@ describe('realtime + persistence', () => {
     for (let i = 1; i <= 3; i++) {
       const got = nextMessage(ws, (m) => m.type === 'message:new');
       ws.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: `msg-${i}` } }));
-      await got;
+      const msg = await got;
+      expect(msg.payload.message.avatarUrl).toContain('data:image/png;base64,');
     }
 
     // 历史拉取
@@ -209,6 +220,7 @@ describe('realtime + persistence', () => {
     const { messages } = res.json();
     expect(messages.map((m: any) => m.text)).toEqual(['msg-1', 'msg-2', 'msg-3']);
     expect(messages[0].username).toBe('hist_owner');
+    expect(messages[0].avatarUrl).toContain('data:image/png;base64,');
     ws.close();
   });
 

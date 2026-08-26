@@ -30,6 +30,7 @@ interface MessageRow extends QueryResultRow {
   room_id: string;
   user_id: string;
   username: string;
+  avatar_url: string | null;
   text: string;
   created_at: string;
 }
@@ -175,11 +176,12 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
 
     const res = await db.query<MessageRow>(
       `SELECT * FROM (
-         SELECT id, room_id, user_id, username, text, created_at
-         FROM messages
-         WHERE room_id = $1
-           AND ($2::uuid IS NULL OR (created_at, id) < (SELECT created_at, id FROM messages WHERE id = $2))
-         ORDER BY created_at DESC, id DESC
+         SELECT m.id, m.room_id, m.user_id, m.username, u.avatar_url, m.text, m.created_at
+         FROM messages m
+         LEFT JOIN users u ON u.id = m.user_id
+         WHERE m.room_id = $1
+           AND ($2::uuid IS NULL OR (m.created_at, m.id) < (SELECT created_at, id FROM messages WHERE id = $2))
+         ORDER BY m.created_at DESC, m.id DESC
          LIMIT $3
        ) t
        ORDER BY created_at ASC, id ASC`,
@@ -193,6 +195,7 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
       roomId: m.room_id,
       userId: m.user_id,
       username: m.username,
+      avatarUrl: m.avatar_url,
       text: m.text,
       createdAt: m.created_at,
     }));

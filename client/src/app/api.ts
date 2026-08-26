@@ -89,6 +89,7 @@ export interface RoomMessage {
   roomId: string;
   userId: string;
   username: string;
+  avatarUrl?: string | null;
   text: string;
   createdAt: string;
 }

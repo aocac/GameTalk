@@ -5,7 +5,9 @@ let ctx: AudioContext | null = null;
 function getCtx(): AudioContext | null {
   try {
     if (!ctx) {
-      const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      const AC =
+        typeof window !== 'undefined' &&
+        (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
       if (!AC) return null;
       ctx = new AC();
     }
@@ -16,49 +18,39 @@ function getCtx(): AudioContext | null {
   }
 }
 
-/** 收到新消息的提示音：两声短促的高频"叮咚" */
+function playNote(ac: AudioContext, freq: number, start: number, dur: number, vol: number, type: OscillatorType): void {
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0, start);
+  gain.gain.linearRampToValueAtTime(vol, start + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+  osc.connect(gain);
+  gain.connect(ac.destination);
+  osc.start(start);
+  osc.stop(start + dur + 0.02);
+}
+
+/**
+ * 收到新消息：柔和圆润的「叮」——主音 C6 + 高八度泛音，短促不刺耳。
+ */
 export function playMessageSound(enabled: boolean): void {
   if (!enabled) return;
   const ac = getCtx();
   if (!ac) return;
-
   const now = ac.currentTime;
-  const notes: Array<[number, number]> = [
-    [880, 0.09],
-    [1320, 0.12],
-  ];
-
-  for (const [freq, dur] of notes) {
-    const osc = ac.createOscillator();
-    const gain = ac.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.18, now + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-    osc.connect(gain);
-    gain.connect(ac.destination);
-    osc.start(now);
-    osc.stop(now + dur);
-  }
+  playNote(ac, 1046.5, now, 0.24, 0.14, 'sine'); // C6 主音
+  playNote(ac, 2093.0, now + 0.004, 0.18, 0.045, 'sine'); // C7 泛音
+  playNote(ac, 3135.96, now + 0.008, 0.1, 0.012, 'sine'); // 轻微高频润色
 }
 
-/** 发送消息的确认音：低促一声 */
+/** 发送消息确认音：低促一声 */
 export function playSendSound(enabled: boolean): void {
   if (!enabled) return;
   const ac = getCtx();
   if (!ac) return;
-
   const now = ac.currentTime;
-  const osc = ac.createOscillator();
-  const gain = ac.createGain();
-  osc.type = 'sine';
-  osc.frequency.value = 660;
-  gain.gain.setValueAtTime(0, now);
-  gain.gain.linearRampToValueAtTime(0.12, now + 0.008);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
-  osc.connect(gain);
-  gain.connect(ac.destination);
-  osc.start(now);
-  osc.stop(now + 0.07);
+  playNote(ac, 784.0, now, 0.12, 0.09, 'sine'); // G5
+  playNote(ac, 1046.5, now + 0.008, 0.1, 0.04, 'sine');
 }

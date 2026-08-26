@@ -18,6 +18,7 @@ interface Conn {
   socket: WebSocket;
   userId: string | null;
   username: string;
+  avatarUrl: string | null;
   rooms: Set<string>;
 }
 
@@ -26,6 +27,7 @@ interface ChatMessage {
   roomId: string;
   userId: string;
   username: string;
+  avatarUrl: string | null;
   text: string;
   createdAt: string;
 }
@@ -40,10 +42,11 @@ type ClientMessage =
 interface UserRow extends QueryResultRow {
   id: string;
   username: string;
+  avatar_url: string | null;
 }
 
-/** roomId -> userId -> { username, sockets }（同一用户可能多端连接） */
-const rooms = new Map<string, Map<string, { username: string; sockets: Set<WebSocket> }>>();
+/** roomId -> userId -> { username, avatarUrl, sockets }（同一用户可能多端连接） */
+const rooms = new Map<string, Map<string, { username: string; avatarUrl: string | null; sockets: Set<WebSocket> }>>();
 
 function sanitizeRoomId(id: string): string {
   return id.trim().slice(0, 64);
@@ -77,11 +80,11 @@ function broadcastToRoom(roomId: string, msg: unknown, except?: WebSocket): void
   }
 }
 
-function publicMember(userId: string, username: string) {
-  return { id: userId, username };
+function publicMember(userId: string, username: string, avatarUrl?: string | null) {
+  return { id: userId, username, avatarUrl: avatarUrl ?? null };
 }
 
-function joinRoom(conn: Conn, roomId: string): void {
+function joinRoom(conn: Conn, roomId: string, avatarUrl?: string | null): void {
   if (!conn.userId) return;
   if (conn.rooms.has(roomId)) return;
   conn.rooms.add(roomId);
@@ -94,7 +97,7 @@ function joinRoom(conn: Conn, roomId: string): void {
   let entry = members.get(conn.userId);
   const isNewMember = !entry;
   if (!entry) {
-    entry = { username: conn.username, sockets: new Set() };
+    entry = { username: conn.username, avatarUrl: avatarUrl ?? null, sockets: new Set() };
     members.set(conn.userId, entry);
   }
   entry.sockets.add(conn.socket);
@@ -103,13 +106,13 @@ function joinRoom(conn: Conn, roomId: string): void {
     type: 'room:joined',
     payload: {
       roomId,
-      members: [...members.entries()].map(([uid, e]) => publicMember(uid, e.username)),
+      members: [...members.entries()].map(([uid, e]) => publicMember(uid, e.username, e.avatarUrl)),
     },
   });
   if (isNewMember) {
     broadcastToRoom(
       roomId,
-      { type: 'member:joined', payload: { roomId, member: publicMember(conn.userId, conn.username) } },
+      { type: 'member:joined', payload: { roomId, member: publicMember(conn.userId, conn.username, conn.avatarUrl) } },
       conn.socket,
     );
   }
@@ -145,13 +148,13 @@ export function registerWsRoutes(app: FastifyInstance, deps: { config: Config; d
       socket,
       userId: null,
       username: 'Player',
+      avatarUrl: null,
       rooms: new Set(),
     };
 
     socket.on('message', (raw: RawData) => {
       void handleMessage(conn, raw, db, jwt);
-    });
-    socket.on('close', () => {
+    });    socket.on('close', () => {
       for (const roomId of [...conn.rooms]) leaveRoom(conn, roomId);
     });
     socket.on('error', () => {
@@ -175,12 +178,13 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         const token = String(msg.payload.token ?? '');
         try {
           const payload = await jwt.verify(token);
-          const found = await db.query<UserRow>('SELECT id, username FROM users WHERE id = $1', [payload.sub]);
+          const found = await db.query<UserRow>('SELECT id, username, avatar_url FROM users WHERE id = $1', [payload.sub]);
           const user = found.rows[0];
           if (!user) throw new Error('user not found');
           conn.userId = user.id;
           conn.username = user.username;
-          send(conn.socket, { type: 'hello:ok', payload: { me: publicMember(user.id, user.username) } });
+          conn.avatarUrl = user.avatar_url;
+          send(conn.socket, { type: 'hello:ok', payload: { me: publicMember(user.id, user.username, user.avatar_url) } });
         } catch {
           send(conn.socket, { type: 'error', payload: { code: 'unauthorized', message: 'invalid token' } });
           conn.socket.close();
@@ -203,7 +207,11 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'you are not a member of this room' } });
         return;
       }
-      joinRoom(conn, roomId);
+      const avatar = await db.query<{ avatar_url: string | null }>('SELECT avatar_url FROM users WHERE id = $1', [
+        conn.userId,
+      ]);
+      conn.avatarUrl = avatar.rows[0]?.avatar_url ?? null;
+      joinRoom(conn, roomId, conn.avatarUrl);
       break;
     }
     case 'room:leave': {
@@ -236,6 +244,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         roomId,
         userId: conn.userId,
         username: conn.username,
+        avatarUrl: conn.avatarUrl,
         text,
         createdAt: row.created_at,
       };

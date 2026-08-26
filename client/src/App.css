@@ -495,6 +495,10 @@ body {
   padding: 11px 0;
 }
 
+.btn.ghost.block {
+  padding: 9px 0;
+}
+
 /* ============ 房间列表 ============ */
 .rooms-header {
   display: flex;
