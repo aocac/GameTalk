@@ -1,0 +1,59 @@
+/* 输入 Overlay：窗口透明，仅显示输入条 */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', Roboto, sans-serif;
+}
+
+.input-shell {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(18, 20, 24, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+.input-prefix {
+  color: #7f8aa0;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.input-box {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #f2f4f8;
+  font-size: 15px;
+  caret-color: #6f8dff;
+}
+
+.input-box::placeholder {
+  color: #6b7483;
+}
+
+.input-hint {
+  font-size: 11px;
+  color: #6b7483;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}

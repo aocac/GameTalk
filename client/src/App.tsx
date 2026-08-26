@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useChat } from './stores/chat';
 import { useAuth } from './stores/auth';
-import { useSettings } from './app/settings';
+import { useSettings, DEFAULT_HOTKEY, type OverlayPosition } from './app/settings';
+import * as gameMode from './app/gameMode';
 
 function Avatar({ name, url, size = 28 }: { name: string; url?: string | null; size?: number }) {
   if (url) {
@@ -43,6 +44,110 @@ function StatusDot({ status }: { status: string }) {
       <span className={`dot ${s.cls}`} />
       {s.label}
     </span>
+  );
+}
+
+const POSITION_LABELS: Record<OverlayPosition, string> = {
+  'top-left': '左上',
+  'top-center': '顶部居中',
+  'top-right': '右上',
+  'bottom-left': '左下',
+  'bottom-center': '底部居中',
+  'bottom-right': '右下',
+};
+
+function SettingsModal({ onClose }: { onClose: () => void }) {
+  const {
+    serverUrl,
+    setServerUrl,
+    soundEnabled,
+    setSoundEnabled,
+    gameModeEnabled,
+    setGameModeEnabled,
+    hotkey,
+    setHotkey,
+    overlayPosition,
+    setOverlayPosition,
+    overlayScale,
+    setOverlayScale,
+    overlayDurationSec,
+    setOverlayDurationSec,
+  } = useSettings();
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>设置</h3>
+
+        <label className="field">
+          <span>服务器地址</span>
+          <input value={serverUrl} placeholder="http://127.0.0.1:8787" onChange={(e) => setServerUrl(e.target.value)} />
+        </label>
+
+        <label className="field">
+          <span>消息提示音</span>
+          <div className="switch-row">
+            <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
+            {soundEnabled ? '已开启' : '已关闭'}
+          </div>
+        </label>
+
+        <div className="settings-section">
+          <span className="section-title">游戏模式</span>
+          <label className="field">
+            <span>启用游戏模式（全局快捷键 + Overlay）</span>
+            <div className="switch-row">
+              <input type="checkbox" checked={gameModeEnabled} onChange={(e) => setGameModeEnabled(e.target.checked)} />
+              {gameModeEnabled ? '已启用' : '已停用'}
+            </div>
+          </label>
+          <label className="field">
+            <span>呼出快捷键</span>
+            <input value={hotkey} placeholder={DEFAULT_HOTKEY} onChange={(e) => setHotkey(e.target.value)} />
+          </label>
+        </div>
+
+        <div className="settings-section">
+          <span className="section-title">消息 Overlay</span>
+          <label className="field">
+            <span>显示位置</span>
+            <select value={overlayPosition} onChange={(e) => setOverlayPosition(e.target.value as OverlayPosition)}>
+              {Object.entries(POSITION_LABELS).map(([v, label]) => (
+                <option key={v} value={v}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>缩放比例：{Math.round(overlayScale * 100)}%</span>
+            <input
+              type="range"
+              min={0.5}
+              max={2}
+              step={0.1}
+              value={overlayScale}
+              onChange={(e) => setOverlayScale(parseFloat(e.target.value))}
+            />
+          </label>
+          <label className="field">
+            <span>显示时长：{overlayDurationSec} 秒</span>
+            <input
+              type="range"
+              min={2}
+              max={15}
+              step={1}
+              value={overlayDurationSec}
+              onChange={(e) => setOverlayDurationSec(parseInt(e.target.value, 10))}
+            />
+          </label>
+        </div>
+
+        <button className="btn primary block" onClick={onClose}>
+          完成
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -140,6 +245,7 @@ function ChatView() {
   const { soundEnabled, setSoundEnabled } = useSettings();
   const [draft, setDraft] = useState('');
   const [showRoomModal, setShowRoomModal] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
@@ -158,6 +264,27 @@ function ChatView() {
     return () => disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 游戏模式生命周期：启停快捷键 + Overlay 事件监听
+  const { gameModeEnabled, overlayPosition, overlayScale, overlayDurationSec } = useSettings();
+  useEffect(() => {
+    gameMode.setOnSend((text) => {
+      useChat.getState().sendMessage(text);
+    });
+    if (gameModeEnabled) {
+      void gameMode.startGameMode();
+    } else {
+      void gameMode.stopGameMode();
+    }
+    return () => {
+      if (gameModeEnabled) void gameMode.stopGameMode();
+    };
+  }, [gameModeEnabled]);
+
+  // Overlay 位置/缩放/时长变化时立即生效
+  useEffect(() => {
+    if (gameModeEnabled) void gameMode.applyOverlayConfig();
+  }, [gameModeEnabled, overlayPosition, overlayScale, overlayDurationSec]);
 
   const submitRoomModal = async (kind: 'create' | 'join') => {
     if (kind === 'create') {
@@ -226,6 +353,7 @@ function ChatView() {
             {activeRoom && <span className="me-tag">邀请码 {activeRoom.inviteCode}</span>}
           </div>
           <div className="topbar-right">
+            {gameModeEnabled && <span className="game-mode-tag">游戏模式</span>}
             <label className="sound-toggle" title="消息提示音">
               <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
               声音
@@ -234,6 +362,9 @@ function ChatView() {
             <StatusDot status={status} />
             <button className="btn ghost small" onClick={connected ? disconnect : connect}>
               {connected ? '断开' : '连接'}
+            </button>
+            <button className="btn ghost small" onClick={() => setShowSettings(true)}>
+              设置
             </button>
           </div>
         </header>
@@ -312,6 +443,8 @@ function ChatView() {
           )}
         </footer>
       </main>
+
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
       {showRoomModal && (
         <div className="modal-mask" onClick={() => setShowRoomModal(false)}>

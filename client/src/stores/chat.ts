@@ -5,6 +5,7 @@ import { useSettings } from '../app/settings';
 import { useAuth } from './auth';
 import { wsUrlOf } from '../app/settings';
 import * as api from '../app/api';
+import { pushOverlayMessage } from '../app/gameMode';
 import type { UserBrief, WsStatus } from '../app/types';
 
 interface ChatState {
@@ -111,6 +112,7 @@ export const useChat = create<ChatState>()((set, get) => ({
           const active = get().activeRoomId;
           if (!isMine && (active === null || active === msg.payload.roomId)) {
             playMessageSound(useSettings.getState().soundEnabled);
+            void pushOverlayMessage(msg.payload.message);
           }
           break;
         }

@@ -12,12 +12,41 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "GameTalk",
         "width": 960,
         "height": 640,
         "minWidth": 720,
         "minHeight": 480,
         "center": true
+      },
+      {
+        "label": "input",
+        "title": "GameTalk 输入",
+        "width": 460,
+        "height": 64,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": true,
+        "visible": false
+      },
+      {
+        "label": "overlay",
+        "title": "GameTalk 消息",
+        "width": 380,
+        "height": 180,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false,
+        "visible": false
       }
     ],
     "security": {
