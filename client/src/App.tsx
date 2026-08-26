@@ -344,7 +344,7 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
           }}
           title="配置要连接的服务器"
         >
-          {showServer ? '收起服务器设置' : `服务器：${serverUrl}`}
+          {serverMsg ? `已保存 ✓` : showServer ? '收起服务器设置' : `服务器：${serverUrl}`}
         </button>
         {showServer && (
           <div className="server-config">
@@ -365,6 +365,8 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
                   setServerMsg('已保存');
                   if (serverMsgTimer.current) clearTimeout(serverMsgTimer.current);
                   serverMsgTimer.current = setTimeout(() => setServerMsg(null), 2000);
+                  // 保存成功即收起编辑面板（回到简洁状态）
+                  setShowServer(false);
                 }}
               >
                 保存
