@@ -52,6 +52,9 @@ export const useChat = create<ChatState>()((set, get) => ({
   roomError: null,
 
   connect: () => {
+    // 幂等：已在连接/已连接则不重复建连（React StrictMode 双挂载安全）
+    const cur = get().status;
+    if (cur === 'open' || cur === 'connecting' || cur === 'reconnecting') return;
     const { token } = useAuth.getState();
     if (!token) return;
     if (socket) socket.close();
@@ -134,15 +137,8 @@ export const useChat = create<ChatState>()((set, get) => ({
   disconnect: () => {
     socket?.close();
     socket = null;
-    set({
-      status: 'closed',
-      me: null,
-      rooms: [],
-      activeRoomId: null,
-      subscribedRoomId: null,
-      messagesByRoom: {},
-      membersByRoom: {},
-    });
+    // 保留 rooms/messages 等状态，便于重新连接后恢复订阅
+    set({ status: 'closed', me: null, subscribedRoomId: null });
   },
 
   refreshRooms: async () => {

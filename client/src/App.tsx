@@ -301,9 +301,9 @@ function ChatView() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [messages.length]);
 
-  // 进入聊天视图自动连接
+  // 进入聊天视图自动连接（connect 幂等，StrictMode 双挂载安全）
   useEffect(() => {
-    if (status === 'idle') connect();
+    connect();
     return () => disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
