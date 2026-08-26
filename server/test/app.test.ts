@@ -88,9 +88,29 @@ describe('health', () => {
 });
 
 describe('realtime chat loop (two authenticated clients, one room)', () => {
+  /** 创建房间并把两个用户都加为成员（owner + invite join） */
+  async function makeRoomForTwo(tokenA: string, tokenB: string): Promise<string> {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/rooms',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: { name: 'Squad Room' },
+    });
+    const roomId = created.json().room.id;
+    const inviteCode = created.json().room.inviteCode;
+    await app.inject({
+      method: 'POST',
+      url: '/api/rooms/join',
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { inviteCode },
+    });
+    return roomId;
+  }
+
   it('A and B join room, A sends message, B receives it', async () => {
     const { token: tokenA } = await registerUser('alice_ws');
     const { token: tokenB } = await registerUser('bob_ws');
+    const roomId = await makeRoomForTwo(tokenA, tokenB);
     const a = await openClient();
     const b = await openClient();
 
@@ -102,17 +122,17 @@ describe('realtime chat loop (two authenticated clients, one room)', () => {
     expect(helloB.payload.me.username).toBe('bob_ws');
 
     // 双方入房
-    a.send(JSON.stringify({ type: 'room:join', payload: { roomId: 'lobby' } }));
-    await nextMessage(a, (m) => m.type === 'room:joined' && m.payload.roomId === 'lobby');
+    a.send(JSON.stringify({ type: 'room:join', payload: { roomId } }));
+    await nextMessage(a, (m) => m.type === 'room:joined' && m.payload.roomId === roomId);
     const aSeesB = nextMessage(a, (m) => m.type === 'member:joined' && m.payload.member.username === 'bob_ws');
-    b.send(JSON.stringify({ type: 'room:join', payload: { roomId: 'lobby' } }));
-    const bJoined = await nextMessage(b, (m) => m.type === 'room:joined' && m.payload.roomId === 'lobby');
+    b.send(JSON.stringify({ type: 'room:join', payload: { roomId } }));
+    const bJoined = await nextMessage(b, (m) => m.type === 'room:joined' && m.payload.roomId === roomId);
     expect(bJoined.payload.members.map((x: any) => x.username)).toContain('alice_ws');
     await aSeesB;
 
     // A 发消息，B 收到
     const bMsgPromise = nextMessage(b, (m) => m.type === 'message:new');
-    a.send(JSON.stringify({ type: 'message:send', payload: { roomId: 'lobby', text: 'Hello GameTalk!' } }));
+    a.send(JSON.stringify({ type: 'message:send', payload: { roomId, text: 'Hello GameTalk!' } }));
     const bMsg = await bMsgPromise;
     expect(bMsg.payload.message.text).toBe('Hello GameTalk!');
     expect(bMsg.payload.message.username).toBe('alice_ws');
@@ -125,23 +145,30 @@ describe('realtime chat loop (two authenticated clients, one room)', () => {
 
   it('rejects empty messages, truncates long ones, rejects send when not in room', async () => {
     const { token } = await registerUser('tester_ws');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/rooms',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Test Room' },
+    });
+    const roomId = created.json().room.id;
     const a = await openClient();
     a.send(JSON.stringify({ type: 'hello', payload: { token } }));
     await nextMessage(a, (m) => m.type === 'hello:ok');
-    a.send(JSON.stringify({ type: 'room:join', payload: { roomId: 'lobby' } }));
+    a.send(JSON.stringify({ type: 'room:join', payload: { roomId } }));
     await nextMessage(a, (m) => m.type === 'room:joined');
 
     const err1 = nextMessage(a, (m) => m.type === 'error');
-    a.send(JSON.stringify({ type: 'message:send', payload: { roomId: 'lobby', text: '   ' } }));
+    a.send(JSON.stringify({ type: 'message:send', payload: { roomId, text: '   ' } }));
     expect((await err1).payload.code).toBe('empty_message');
 
     const longMsgPromise = nextMessage(a, (m) => m.type === 'message:new');
-    a.send(JSON.stringify({ type: 'message:send', payload: { roomId: 'lobby', text: 'x'.repeat(3000) } }));
+    a.send(JSON.stringify({ type: 'message:send', payload: { roomId, text: 'x'.repeat(3000) } }));
     expect((await longMsgPromise).payload.message.text.length).toBe(2000);
 
-    a.send(JSON.stringify({ type: 'room:leave', payload: { roomId: 'lobby' } }));
+    a.send(JSON.stringify({ type: 'room:leave', payload: { roomId } }));
     const err2 = nextMessage(a, (m) => m.type === 'error');
-    a.send(JSON.stringify({ type: 'message:send', payload: { roomId: 'lobby', text: 'hi' } }));
+    a.send(JSON.stringify({ type: 'message:send', payload: { roomId, text: 'hi' } }));
     expect((await err2).payload.code).toBe('not_in_room');
 
     a.close();
@@ -159,6 +186,7 @@ describe('realtime chat loop (two authenticated clients, one room)', () => {
   it('broadcasts member:left when a client disconnects', async () => {
     const { token: tokenA, userId: uidA } = await registerUser('alice_leave');
     const { token: tokenB } = await registerUser('bob_leave');
+    const roomId = await makeRoomForTwo(tokenA, tokenB);
     const a = await openClient();
     const b = await openClient();
     a.send(JSON.stringify({ type: 'hello', payload: { token: tokenA } }));
@@ -166,15 +194,15 @@ describe('realtime chat loop (two authenticated clients, one room)', () => {
     await nextMessage(a, (m) => m.type === 'hello:ok');
     await nextMessage(b, (m) => m.type === 'hello:ok');
 
-    a.send(JSON.stringify({ type: 'room:join', payload: { roomId: 'lobby' } }));
+    a.send(JSON.stringify({ type: 'room:join', payload: { roomId } }));
     await nextMessage(a, (m) => m.type === 'room:joined');
-    b.send(JSON.stringify({ type: 'room:join', payload: { roomId: 'lobby' } }));
+    b.send(JSON.stringify({ type: 'room:join', payload: { roomId } }));
     await nextMessage(b, (m) => m.type === 'room:joined');
 
     const bLeftPromise = nextMessage(b, (m) => m.type === 'member:left' && m.payload.userId === uidA);
     a.close();
     const bLeft = await bLeftPromise;
-    expect(bLeft.payload.roomId).toBe('lobby');
+    expect(bLeft.payload.roomId).toBe(roomId);
     b.close();
   });
 });

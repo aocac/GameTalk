@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
 import type { RawData, WebSocket } from 'ws';
-import { randomUUID } from 'node:crypto';
 import type { QueryResultRow } from 'pg';
 import type { Config } from '../config.js';
 import type { Db } from '../db/db.js';
@@ -194,7 +193,17 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
         return;
       }
-      joinRoom(conn, sanitizeRoomId(msg.payload.roomId));
+      const roomId = sanitizeRoomId(msg.payload.roomId);
+      // 仅允许房间成员订阅该房间的实时消息
+      const member = await db.query('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [
+        roomId,
+        conn.userId,
+      ]);
+      if (member.rows.length === 0) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'you are not a member of this room' } });
+        return;
+      }
+      joinRoom(conn, roomId);
       break;
     }
     case 'room:leave': {
@@ -216,13 +225,19 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room' } });
         return;
       }
+      // 持久化后再广播（Phase 4：消息历史）
+      const inserted = await db.query<{ id: string; created_at: string }>(
+        'INSERT INTO messages (room_id, user_id, username, text) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
+        [roomId, conn.userId, conn.username, text],
+      );
+      const row = inserted.rows[0];
       const message: ChatMessage = {
-        id: randomUUID(),
+        id: row.id,
         roomId,
         userId: conn.userId,
         username: conn.username,
         text,
-        createdAt: new Date().toISOString(),
+        createdAt: row.created_at,
       };
       broadcastToRoom(roomId, { type: 'message:new', payload: { roomId, message } });
       break;

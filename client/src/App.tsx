@@ -118,12 +118,35 @@ function LoginView() {
 }
 
 function ChatView() {
-  const { status, me, roomId, members, messages, connect, disconnect, sendMessage } = useChat();
+  const {
+    status,
+    me,
+    rooms,
+    activeRoomId,
+    membersByRoom,
+    messagesByRoom,
+    loadingRooms,
+    roomError,
+    connect,
+    disconnect,
+    createRoom,
+    joinRoomByCode,
+    selectRoom,
+    leaveActiveRoom,
+    sendMessage,
+    clearRoomError,
+  } = useChat();
   const { user, logout } = useAuth();
   const { soundEnabled, setSoundEnabled } = useSettings();
   const [draft, setDraft] = useState('');
+  const [showRoomModal, setShowRoomModal] = useState(false);
+  const [roomName, setRoomName] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const connected = status === 'open';
+  const activeRoom = rooms.find((r) => r.id === activeRoomId) ?? null;
+  const messages = activeRoomId ? (messagesByRoom[activeRoomId] ?? []) : [];
+  const members = activeRoomId ? (membersByRoom[activeRoomId] ?? []) : [];
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
@@ -136,6 +159,18 @@ function ChatView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const submitRoomModal = async (kind: 'create' | 'join') => {
+    if (kind === 'create') {
+      if (!roomName.trim()) return;
+      const room = await createRoom(roomName.trim());
+      if (room) setShowRoomModal(false);
+    } else {
+      if (!inviteCode.trim()) return;
+      const room = await joinRoomByCode(inviteCode.trim().toUpperCase());
+      if (room) setShowRoomModal(false);
+    }
+  };
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -143,11 +178,33 @@ function ChatView() {
           <span className="logo">GT</span>
           <span className="brand-name">GameTalk</span>
         </div>
+        <div className="rooms-header">
+          <span>房间</span>
+          <button className="icon-btn" title="创建/加入房间" onClick={() => setShowRoomModal(true)}>
+            +
+          </button>
+        </div>
         <nav className="rooms">
-          <div className="room-item active">
-            <span className="hash">#</span>
-            <span>lobby</span>
-          </div>
+          {loadingRooms && rooms.length === 0 && <div className="rooms-hint">加载中…</div>}
+          {!loadingRooms && rooms.length === 0 && (
+            <div className="rooms-hint">
+              还没有房间
+              <br />
+              点击 + 创建或加入
+            </div>
+          )}
+          {rooms.map((r) => (
+            <div
+              key={r.id}
+              className={`room-item ${r.id === activeRoomId ? 'active' : ''}`}
+              onClick={() => void selectRoom(r.id)}
+              title={r.inviteCode}
+            >
+              <span className="hash">#</span>
+              <span className="room-name">{r.name}</span>
+              <span className="room-count">{r.memberCount}</span>
+            </div>
+          ))}
         </nav>
         <div className="sidebar-footer user-block">
           <Avatar name={user?.username ?? ''} url={user?.avatarUrl} size={32} />
@@ -165,8 +222,8 @@ function ChatView() {
         <header className="topbar">
           <div className="topbar-title">
             <span className="hash">#</span>
-            <span>{roomId ?? '…'}</span>
-            {me && <span className="me-tag">{me.username}</span>}
+            <span>{activeRoom?.name ?? '未选择房间'}</span>
+            {activeRoom && <span className="me-tag">邀请码 {activeRoom.inviteCode}</span>}
           </div>
           <div className="topbar-right">
             <label className="sound-toggle" title="消息提示音">
@@ -181,10 +238,28 @@ function ChatView() {
           </div>
         </header>
 
+        {roomError && (
+          <div className="banner-error">
+            <span>{roomError}</span>
+            <button className="btn ghost small" onClick={clearRoomError}>
+              关闭
+            </button>
+          </div>
+        )}
+
         <div className="messages" ref={listRef}>
-          {messages.length === 0 && (
+          {!activeRoom && (
             <div className="empty">
-              <p className="empty-title">欢迎来到 #lobby</p>
+              <p className="empty-title">选择一个房间</p>
+              <p className="empty-sub">创建新房间或通过邀请码加入，开始实时沟通。</p>
+              <button className="btn primary" style={{ marginTop: 14 }} onClick={() => setShowRoomModal(true)}>
+                创建 / 加入房间
+              </button>
+            </div>
+          )}
+          {activeRoom && messages.length === 0 && (
+            <div className="empty">
+              <p className="empty-title">欢迎来到 #{activeRoom.name}</p>
               <p className="empty-sub">发送第一条消息，开始与房间里的玩家实时沟通。</p>
             </div>
           )}
@@ -206,12 +281,12 @@ function ChatView() {
           <input
             className="composer-input"
             value={draft}
-            placeholder={connected ? '输入消息，Enter 发送' : '未连接'}
-            disabled={!connected}
+            placeholder={connected ? (activeRoom ? '输入消息，Enter 发送' : '先选择或创建房间') : '未连接'}
+            disabled={!connected || !activeRoom}
             maxLength={2000}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && connected) {
+              if (e.key === 'Enter' && !e.shiftKey && connected && activeRoom) {
                 e.preventDefault();
                 if (draft.trim()) {
                   sendMessage(draft);
@@ -222,7 +297,7 @@ function ChatView() {
           />
           <button
             className="btn primary"
-            disabled={!connected || !draft.trim()}
+            disabled={!connected || !activeRoom || !draft.trim()}
             onClick={() => {
               sendMessage(draft);
               setDraft('');
@@ -230,8 +305,54 @@ function ChatView() {
           >
             发送
           </button>
+          {activeRoom && (
+            <button className="btn ghost" title="离开房间" onClick={() => void leaveActiveRoom()}>
+              离开
+            </button>
+          )}
         </footer>
       </main>
+
+      {showRoomModal && (
+        <div className="modal-mask" onClick={() => setShowRoomModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>创建 / 加入房间</h3>
+            <label className="field">
+              <span>创建房间（输入名称）</span>
+              <input
+                value={roomName}
+                maxLength={40}
+                placeholder="例如：开黑小队"
+                onChange={(e) => setRoomName(e.target.value)}
+              />
+            </label>
+            <button
+              className="btn primary block"
+              disabled={!roomName.trim()}
+              onClick={() => void submitRoomModal('create')}
+            >
+              创建
+            </button>
+            <div className="modal-divider">或</div>
+            <label className="field">
+              <span>加入房间（输入邀请码）</span>
+              <input
+                value={inviteCode}
+                maxLength={8}
+                placeholder="例如：AB12CD34"
+                onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+              />
+            </label>
+            <button
+              className="btn primary block"
+              disabled={inviteCode.trim().length !== 8}
+              onClick={() => void submitRoomModal('join')}
+            >
+              加入
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

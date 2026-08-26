@@ -6,6 +6,7 @@ import type { Db } from './db/db.js';
 import type { JwtService } from './lib/jwt.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerRoomsRoutes } from './routes/rooms.js';
 import { registerWsRoutes } from './ws/gateway.js';
 
 export interface AppDeps {
@@ -26,6 +27,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   registerHealthRoutes(app, { db });
   registerAuthRoutes(app, { config, db, jwt });
+  registerRoomsRoutes(app, { db, jwt });
   registerWsRoutes(app, { config, db, jwt });
 
   return app;

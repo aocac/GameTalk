@@ -58,3 +58,53 @@ export function fetchMe(token: string): Promise<{ user: PublicUser }> {
 export function patchMe(token: string, patch: { username?: string; avatarUrl?: string }): Promise<{ user: PublicUser }> {
   return request<{ user: PublicUser }>('/api/auth/me', { method: 'PATCH', token, body: patch });
 }
+
+// ============ 房间 ============
+
+export interface Room {
+  id: string;
+  name: string;
+  inviteCode: string;
+  ownerId: string;
+  memberCount: number;
+  createdAt: string;
+}
+
+export interface RoomMessage {
+  id: string;
+  roomId: string;
+  userId: string;
+  username: string;
+  text: string;
+  createdAt: string;
+}
+
+export function listRooms(token: string): Promise<{ rooms: Room[] }> {
+  return request<{ rooms: Room[] }>('/api/rooms', { token });
+}
+
+export function createRoom(token: string, name: string): Promise<{ room: Room }> {
+  return request<{ room: Room }>('/api/rooms', { method: 'POST', token, body: { name } });
+}
+
+export function joinRoomByCode(token: string, inviteCode: string): Promise<{ room: Room }> {
+  return request<{ room: Room }>('/api/rooms/join', { method: 'POST', token, body: { inviteCode } });
+}
+
+export function leaveRoom(token: string, roomId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/rooms/${roomId}/leave`, { method: 'POST', token });
+}
+
+export function roomMessages(
+  token: string,
+  roomId: string,
+  opts: { before?: string; limit?: number } = {},
+): Promise<{ messages: RoomMessage[]; hasMore: boolean }> {
+  const params = new URLSearchParams();
+  if (opts.before) params.set('before', opts.before);
+  if (opts.limit) params.set('limit', String(opts.limit));
+  const qs = params.toString();
+  return request<{ messages: RoomMessage[]; hasMore: boolean }>(`/api/rooms/${roomId}/messages${qs ? `?${qs}` : ''}`, {
+    token,
+  });
+}

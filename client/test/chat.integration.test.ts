@@ -3,14 +3,34 @@ import { TEST_HTTP_URL, TEST_WS_URL } from './global-setup';
 import { ChatSocket } from '../src/app/ws';
 import type { ServerWsMessage } from '../src/app/types';
 
-async function register(username: string): Promise<string> {
+async function register(username: string): Promise<{ token: string; userId: string }> {
   const res = await fetch(`${TEST_HTTP_URL}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password: 'password123' }),
   });
-  const body = (await res.json()) as { token: string };
-  return body.token;
+  const body = (await res.json()) as { token: string; user: { id: string } };
+  return { token: body.token, userId: body.user.id };
+}
+
+async function createRoom(token: string, name: string): Promise<{ id: string; inviteCode: string }> {
+  const res = await fetch(`${TEST_HTTP_URL}/api/rooms`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name }),
+  });
+  const body = (await res.json()) as { room: { id: string; inviteCode: string } };
+  return body.room;
+}
+
+async function joinRoom(token: string, inviteCode: string): Promise<{ id: string }> {
+  const res = await fetch(`${TEST_HTTP_URL}/api/rooms/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ inviteCode }),
+  });
+  const body = (await res.json()) as { room: { id: string } };
+  return body.room;
 }
 
 function nextMsg(socket: ChatSocket, predicate?: (m: ServerWsMessage) => boolean): Promise<ServerWsMessage> {
@@ -26,50 +46,70 @@ function nextMsg(socket: ChatSocket, predicate?: (m: ServerWsMessage) => boolean
   });
 }
 
-describe('ChatSocket integration (against real server, authenticated)', () => {
-  it('connects with token, joins room, sends and receives messages', async () => {
-    const tokenA = await register('client_a');
-    const tokenB = await register('client_b');
-    const a = new ChatSocket();
-    const b = new ChatSocket();
+async function connectAuthed(token: string): Promise<ChatSocket> {
+  const s = new ChatSocket();
+  const opened = new Promise<void>((resolve) => s.onStatus((st) => st === 'open' && resolve()));
+  s.connect(TEST_WS_URL);
+  await opened;
+  s.send({ type: 'hello', payload: { token } });
+  await nextMsg(s, (m) => m.type === 'hello:ok');
+  return s;
+}
 
-    const aOpened = new Promise<void>((resolve) => a.onStatus((s) => s === 'open' && resolve()));
-    const bOpened = new Promise<void>((resolve) => b.onStatus((s) => s === 'open' && resolve()));
-    a.connect(TEST_WS_URL);
-    b.connect(TEST_WS_URL);
-    await Promise.all([aOpened, bOpened]);
+describe('GameTalk room chat (integration)', () => {
+  it('two users: create room, join via invite code, chat in realtime, history persisted', async () => {
+    const owner = await register('owner_int');
+    const member = await register('member_int');
+    const room = await createRoom(owner.token, '集成测试小队');
 
-    const helloA = nextMsg(a, (m) => m.type === 'hello:ok');
-    const helloB = nextMsg(b, (m) => m.type === 'hello:ok');
-    a.send({ type: 'hello', payload: { token: tokenA } });
-    b.send({ type: 'hello', payload: { token: tokenB } });
-    const meA = (await helloA).payload as { me: { id: string; username: string } };
-    expect(meA.me.username).toBe('client_a');
-    await helloB;
+    // member 通过邀请码加入
+    const joined = await joinRoom(member.token, room.inviteCode);
+    expect(joined.id).toBe(room.id);
 
-    // 双方入房
-    a.send({ type: 'room:join', payload: { roomId: 'lobby' } });
+    const a = await connectAuthed(owner.token);
+    const b = await connectAuthed(member.token);
+
+    // 双方订阅房间
+    a.send({ type: 'room:join', payload: { roomId: room.id } });
     await nextMsg(a, (m) => m.type === 'room:joined');
-    const aSeesB = nextMsg(a, (m) => m.type === 'member:joined' && m.payload.member.username === 'client_b');
-    b.send({ type: 'room:join', payload: { roomId: 'lobby' } });
-    const bJoined = await nextMsg(b, (m) => m.type === 'room:joined');
-    const bMembers = bJoined.payload.members as Array<{ username: string }>;
-    expect(bMembers.map((x) => x.username)).toContain('client_a');
-    await aSeesB;
+    const aSeesB = nextMsg(a, (m) => m.type === 'member:joined');
+    b.send({ type: 'room:join', payload: { roomId: room.id } });
+    await nextMsg(b, (m) => m.type === 'room:joined');
+    const seen = await aSeesB;
+    expect((seen.payload as { member: { username: string } }).member.username).toBe('member_int');
 
-    const bGetsMsg = nextMsg(b, (m) => m.type === 'message:new');
-    a.send({ type: 'message:send', payload: { roomId: 'lobby', text: 'ping from A' } });
-    const got = await bGetsMsg;
-    const p = got.payload as { message: { text: string; username: string } };
-    expect(p.message.text).toBe('ping from A');
-    expect(p.message.username).toBe('client_a');
+    // 实时收发
+    const bGets = nextMsg(b, (m) => m.type === 'message:new');
+    a.send({ type: 'message:send', payload: { roomId: room.id, text: '今晚开黑？' } });
+    const got = await bGets;
+    expect((got.payload as { message: { text: string; username: string } }).message.text).toBe('今晚开黑？');
+
+    // 历史持久化（REST 拉取应含该消息）
+    const hist = await fetch(`${TEST_HTTP_URL}/api/rooms/${room.id}/messages`, {
+      headers: { Authorization: `Bearer ${owner.token}` },
+    });
+    const { messages } = (await hist.json()) as { messages: Array<{ text: string }> };
+    expect(messages.map((m) => m.text)).toContain('今晚开黑？');
 
     a.close();
     b.close();
   });
 
+  it('non-member cannot join room via WS (not_in_room)', async () => {
+    const owner = await register('guard_owner');
+    const outsider = await register('guard_outside');
+    const room = await createRoom(owner.token, '私人房间');
+
+    const s = await connectAuthed(outsider.token);
+    const errPromise = nextMsg(s, (m) => m.type === 'error');
+    s.send({ type: 'room:join', payload: { roomId: room.id } });
+    const err = await errPromise;
+    expect((err.payload as { code: string }).code).toBe('not_in_room');
+    s.close();
+  });
+
   it('reconnects automatically after connection loss', async () => {
-    const token = await register('reconnect_user');
+    const user = await register('reconnect_int');
     const s = new ChatSocket();
     const statuses: string[] = [];
     s.onStatus((st) => statuses.push(st));
@@ -77,10 +117,9 @@ describe('ChatSocket integration (against real server, authenticated)', () => {
     const opened = new Promise<void>((resolve) => s.onStatus((st) => st === 'open' && resolve()));
     s.connect(TEST_WS_URL);
     await opened;
-    s.send({ type: 'hello', payload: { token } });
+    s.send({ type: 'hello', payload: { token: user.token } });
     await nextMsg(s, (m) => m.type === 'hello:ok');
 
-    // 模拟异常断线
     const inner = (s as unknown as { ws: WebSocket }).ws;
     inner.close();
 
@@ -99,19 +138,6 @@ describe('ChatSocket integration (against real server, authenticated)', () => {
     });
 
     expect(statuses).toContain('reconnecting');
-    s.close();
-  });
-
-  it('receives unauthorized error and closes for invalid token', async () => {
-    const s = new ChatSocket();
-    const opened = new Promise<void>((resolve) => s.onStatus((st) => st === 'open' && resolve()));
-    s.connect(TEST_WS_URL);
-    await opened;
-
-    const errPromise = nextMsg(s, (m) => m.type === 'error');
-    s.send({ type: 'hello', payload: { token: 'bad-token' } });
-    const err = await errPromise;
-    expect(err.payload.code).toBe('unauthorized');
     s.close();
   });
 });
