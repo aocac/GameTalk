@@ -415,8 +415,8 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
         </button>
 
         <div className="auth-divider">或</div>
-        <button type="button" className="btn ghost block" onClick={onOffline}>
-          离线试用（不连接服务器，仅体验界面与设置）
+        <button type="button" className="btn ghost block" onClick={onOffline} title="不连接服务器，仅体验界面与设置">
+          离线试用
         </button>
       </form>
     </div>
