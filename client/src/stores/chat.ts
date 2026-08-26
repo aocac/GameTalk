@@ -171,7 +171,10 @@ export const useChat = create<ChatState>()((set, get) => ({
 
   createRoom: async (name) => {
     const { token } = useAuth.getState();
-    if (!token) return null;
+    if (!token) {
+      set({ roomError: '未登录或处于离线模式，无法创建房间。请先连接服务器并登录。' });
+      return null;
+    }
     try {
       const { room } = await api.createRoom(token, name);
       set((s) => ({ rooms: [room, ...s.rooms] }));
@@ -185,7 +188,10 @@ export const useChat = create<ChatState>()((set, get) => ({
 
   joinRoomByCode: async (code) => {
     const { token } = useAuth.getState();
-    if (!token) return null;
+    if (!token) {
+      set({ roomError: '未登录或处于离线模式，无法加入房间。请先连接服务器并登录。' });
+      return null;
+    }
     try {
       const { room } = await api.joinRoomByCode(token, code);
       set((s) => (s.rooms.some((r) => r.id === room.id) ? s : { rooms: [room, ...s.rooms] }));

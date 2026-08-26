@@ -512,7 +512,12 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         </div>
         <div className="rooms-header">
           <span>房间</span>
-          <button className="icon-btn" title="创建/加入房间" onClick={() => setShowRoomModal(true)}>
+          <button
+            className="icon-btn"
+            title={offline ? '离线模式不可创建/加入房间' : '创建/加入房间'}
+            disabled={offline}
+            onClick={() => setShowRoomModal(true)}
+          >
             +
           </button>
         </div>
