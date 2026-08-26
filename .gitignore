@@ -1,0 +1,40 @@
+# --- Node ---
+node_modules/
+*.log
+npm-debug.log*
+.pnpm-store/
+
+# --- Build outputs ---
+dist/
+build/
+out/
+*.tsbuildinfo
+coverage/
+
+# --- Tauri / Rust ---
+client/src-tauri/target/
+client/src-tauri/gen/
+**/*.rs.bk
+
+# --- Env & secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+*.suo
+*.user
+Thumbs.db
+.DS_Store
+
+# --- GameTalk runtime ---
+*.sqlite
+*.db
+data/
+
+# --- Docs generated ---
+*.tmp
