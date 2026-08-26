@@ -23,7 +23,7 @@
 - **ADR-004 开发/测试用 PGlite**：本机无 PostgreSQL 与 Docker（2026-08-26 检查）。migration 为纯 SQL 文件，PGlite 与生产 PG 同源执行。PGlite 持久化目录 server/data/gametalk.pglite（本地开发数据不丢）。
 - **ADR-005 实时消息：服务端内存房间表 + 广播**：单机轻量，不做 Redis 等外部依赖（第一版）。
 - **ADR-006 密码哈希 argon2**：@node-rs/argon2（预编译二进制，无需 node-gyp）。
-- **ADR-008 服务端形态：纯远程模式（2026-08-27 用户确认）**：客户端只连接**远程 Linux 服务器**（VPS + Docker + HTTPS/WSS），玩家零服务端负担。`start-local.bat` 仅作为开发验收辅助工具，不面向最终用户。待用户提供 VPS + 域名后执行 docker/deploy.sh 完成真实部署并作为客户端默认服务器。
+- **ADR-008 服务端形态：纯远程模式（2026-08-27 用户确认）**：客户端只连接**远程 Linux 服务器**（VPS + Docker + HTTPS/WSS），玩家零服务端负担。`start-local.cmd` 仅作为开发验收辅助工具，不面向最终用户。待用户提供 VPS + 域名后执行 docker/deploy.sh 完成真实部署并作为客户端默认服务器。
 
 ## 环境事实（2026-08-26 检查）
 - Windows 11 桌面（有真实显示器）✓ —— Overlay/快捷键/声音可做真实人工验收
@@ -64,7 +64,7 @@
 - Docker 实际构建/部署需 Linux 环境（CI 已配置，push 即跑）
 
 ## 本地使用说明（开发/验收辅助）
-- `start-local.bat`（仓库根）可一键启动本地服务端（数据持久化在 server/data/），**仅用于开发验收**，非产品形态。
+- `start-local.cmd`（仓库根）可一键启动本地服务端（数据持久化在 server/data/），**仅用于开发验收**，非产品形态。
 - 产品形态（ADR-008）：客户端连接远程 Linux 服务器；部署见 docker/deploy.sh 与 docs/deployment.md。
 
 ## 验收记录（2026-08-26 本机实测）
@@ -73,7 +73,7 @@
 - Windows 构建：gametalk.exe ~9MB + GameTalk_0.1.0_x64-setup.exe（NSIS，~2MB）
 - 浏览器 E2E（真实 Chromium）：注册 browser_alpha → 创建房间"浏览器测试小队"(邀请码 UNGDCAM4) → 发消息 → 退出 → 注册 browser_beta → 邀请码加入 → 历史持久化可见 → 双向实时消息 ✅（docs/e2e-chat-verification.png）
 - PGlite 持久化：注册 persist_user → 重启 server → 登录成功 ✅（server/data/gametalk.pglite）
-- 连接失败提示：server 停止时登录显示「无法连接服务器（http://127.0.0.1:8787）…运行 start-local.bat」✅；server 启动后登录进入聊天界面且 WS「已连接」✅（docs/e2e-connected-after-server-up.png）
+- 连接失败提示：server 停止时登录显示「无法连接服务器（http://127.0.0.1:8787）…运行 start-local.cmd」✅；server 启动后登录进入聊天界面且 WS「已连接」✅（docs/e2e-connected-after-server-up.png）
 - 修复：React StrictMode 双挂载导致 ChatView 不重连（connect 幂等化 + cleanup 语义修正）
 
 ## 变更日志
@@ -95,7 +95,7 @@
   - 浏览器 E2E 验证文件上传 → 截图 docs/e2e-avatar-settings.png；快捷键录制测试通过；新 NSIS 安装包（9MB exe / 2MB setup）已构建
 - 2026-08-26（用户二轮反馈：连接中无提示 + 游戏内 ESC 关不掉）：
   - PGlite 持久化：config.pgliteDataDir（默认 data/gametalk.pglite），测试仍用内存库；验证重启后用户数据保留
-  - start-local.bat：仓库根一键启动本地服务端（自动 npm install/build/启动），面向无 Node 运维背景用户
+  - start-local.cmd：仓库根一键启动本地服务端（自动 npm install/build/启动），面向无 Node 运维背景用户
   - ChatSocket 连接超时（8s）+ lastError；chat store connectionError；聊天页 banner 明确提示 + 重试按钮
   - api.ts 网络错误 → ApiError('network_error', 中文提示)，登录页不再显示英文 'Failed to fetch'
   - 全局 ESC：输入框显示期间注册 'Esc' 全局快捷键（失焦也能关），隐藏后注销（不干扰游戏内 ESC）；单测覆盖
