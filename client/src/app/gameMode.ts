@@ -109,6 +109,9 @@ export async function applyOverlayConfig(): Promise<void> {
     // 用户拖拽自定义位置（物理像素，左上角锚点）；越界则夹回屏幕内
     const clamped = clampToMonitor(overlayCustomPosition.x, overlayCustomPosition.y, winW, winH, mon);
     await win.setPosition(new PhysicalPosition(clamped.x, clamped.y));
+  } else if (overlayPosition === 'custom') {
+    // 「自定义」但尚未保存过坐标：保持当前位置不动（只改大小），
+    // 等待用户进入拖拽调整——绝不擅自把窗口挪走
   } else {
     await win.setPosition(computePosition(mon, winW, winH, overlayPosition, OVERLAY_MARGIN * dpr));
   }
@@ -157,28 +160,44 @@ export async function hideInputWindow(): Promise<void> {
 }
 
 // ===== 全局 ESC（输入框显示期间生效，隐藏后立即注销，不干扰游戏内 ESC）=====
+// 注册/注销必须串行执行，否则快速连续呼出时 register/unregister 竞态
+// 会导致 ESC 注册失败而失效（用户反馈：第二次呼出后 ESC 失灵）。
 let escRegistered = false;
+let escQueue: Promise<void> = Promise.resolve();
+
+function queueEscOp(fn: () => Promise<void>): Promise<void> {
+  escQueue = escQueue.then(fn, fn);
+  return escQueue;
+}
 
 async function registerEsc(): Promise<void> {
   if (escRegistered) return;
-  try {
-    await register('Esc', () => {
-      void hideInputWindow();
-    });
-    escRegistered = true;
-  } catch (e) {
-    console.error('register Esc failed:', e);
-  }
+  await queueEscOp(async () => {
+    if (escRegistered) return;
+    try {
+      // 先清理可能残留的注册，再注册（避免 already-registered 失败）
+      if (await isRegistered('Esc')) await unregister('Esc');
+      await register('Esc', () => {
+        void hideInputWindow();
+      });
+      escRegistered = true;
+    } catch (e) {
+      console.error('register Esc failed:', e);
+    }
+  });
 }
 
 async function unregisterEsc(): Promise<void> {
   if (!escRegistered) return;
-  escRegistered = false;
-  try {
-    await unregister('Esc');
-  } catch {
-    // 忽略注销失败
-  }
+  await queueEscOp(async () => {
+    if (!escRegistered) return;
+    escRegistered = false;
+    try {
+      await unregister('Esc');
+    } catch {
+      // 忽略注销失败
+    }
+  });
 }
 
 /** 新消息到达时推给 Overlay 显示（由 chat store 调用） */

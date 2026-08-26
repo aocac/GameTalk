@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "npm --prefix ../server run build && vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:full": "tauri build && node scripts/copy-artifacts.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
