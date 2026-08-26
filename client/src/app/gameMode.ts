@@ -93,9 +93,12 @@ function clampToMonitor(
   };
 }
 
-/** 根据设置把消息 Overlay 摆到指定位置并按比例缩放 */
-export async function applyOverlayConfig(): Promise<void> {
-  const { overlayPosition, overlayScale, overlayCustomPosition } = useSettings.getState();
+/** 根据设置把消息 Overlay 摆到指定位置并按比例缩放。
+ *  positionOverride：显式指定本次要应用的预设（不依赖 store 读取，
+ *  避免 select 选择后 store 未及时同步导致应用了旧位置） */
+export async function applyOverlayConfig(positionOverride?: OverlayPosition): Promise<void> {
+  const { overlayPosition: storedPosition, overlayScale, overlayCustomPosition } = useSettings.getState();
+  const overlayPosition = positionOverride ?? storedPosition;
   const win = await getOverlayWindow();
   const mon = await primaryMonitor();
   if (!win || !mon) return;

@@ -88,10 +88,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   // 用户主动调整位置/缩放：立即应用 + 5 秒预览（Overlay 平时隐藏，必须主动显示让用户看到效果）
+  // 显式传入 position，不依赖 store 中转（修复 select 选择后位置未应用的问题）
   const applyAndPreview = (position?: OverlayPosition) => {
     void gameMode.stopOverlayAdjust();
     if (position) setOverlayPosition(position);
-    void gameMode.applyOverlayConfig().then(() => void gameMode.previewOverlay());
+    void gameMode.applyOverlayConfig(position).then(() => void gameMode.previewOverlay());
   };
 
   const closeModal = () => {
@@ -264,8 +265,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             onClick={() => {
               void gameMode.stopOverlayAdjust();
               setOverlayCustomPosition(null);
-              setOverlayPosition('top-left');
-              applyAndPreview();
+              applyAndPreview('top-left');
             }}
           >
             复位到左上角
