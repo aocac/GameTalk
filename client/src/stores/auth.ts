@@ -108,6 +108,14 @@ export const useAuth = create<AuthState>()(
     }),
     {
       name: 'gametalk-auth',
+      // 只持久化 token/user：error/busy 是瞬态，绝不落盘（否则上次登录失败的错误
+      // 会在下次启动时残留显示）
+      version: 1,
+      migrate: (persisted) => {
+        const p = persisted as { token?: string | null; user?: api.PublicUser | null };
+        return { token: p.token ?? null, user: p.user ?? null };
+      },
+      partialize: (s) => ({ token: s.token, user: s.user }),
       storage: typeof window !== 'undefined' ? createJSONStorage(() => localStorage) : createJSONStorage(() => memoryStorage),
     },
   ),
