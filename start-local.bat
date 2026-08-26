@@ -1,34 +1,32 @@
 @echo off
 rem ============================================
-rem  GameTalk æœ¬åœ°æœåŠ¡å™¨ä¸€é”®å¯åŠ¨ï¼ˆWindowsï¼‰
-rem  åŒå‡»æœ¬æ–‡ä»¶å³å¯ï¼›æ•°æ®æŒä¹…åŒ–åœ¨ server\data\ ä¸‹
-rem  å¯åŠ¨åå®¢æˆ·ç«¯è¿ http://127.0.0.1:8787
+rem  GameTalk ±¾µØ·şÎñÆ÷Ò»¼üÆô¶¯
+rem  Êı¾İ³Ö¾Ã»¯ÓÚ server\data\ Ä¿Â¼
 rem ============================================
 setlocal
 cd /d "%~dp0server"
 
 if not exist node_modules (
-  echo [GameTalk] é¦–æ¬¡è¿è¡Œï¼šæ­£åœ¨å®‰è£…æœåŠ¡ç«¯ä¾èµ–ï¼ˆçº¦ 1 åˆ†é’Ÿï¼‰...
+  echo [GameTalk] Ê×´ÎÔËĞĞ£ºÕıÔÚ°²×°·şÎñ¶ËÒÀÀµ£¨Ô¼ 1 ·ÖÖÓ£©...
   call npm install
   if errorlevel 1 goto :error
 )
 
 if not exist dist (
-  echo [GameTalk] é¦–æ¬¡è¿è¡Œï¼šæ­£åœ¨æ„å»ºæœåŠ¡ç«¯...
+  echo [GameTalk] Ê×´ÎÔËĞĞ£ºÕıÔÚ¹¹½¨·şÎñ¶Ë...
   call npm run build
   if errorlevel 1 goto :error
 )
 
 echo.
-echo [GameTalk] æœ¬åœ°æœåŠ¡å™¨å·²å¯åŠ¨:  http://127.0.0.1:8787
-echo [GameTalk] å®¢æˆ·ç«¯ã€Œè®¾ç½® - æœåŠ¡å™¨åœ°å€ã€ä¿æŒé»˜è®¤å³å¯ã€‚
-echo [GameTalk] å…³é—­æœ¬çª—å£å³åœæ­¢æœåŠ¡å™¨ã€‚æŒ‰ Ctrl+C å¯ä¼˜é›…é€€å‡ºã€‚
+echo [GameTalk] ±¾µØ·şÎñÆ÷ÒÑÆô¶¯£ºhttp://127.0.0.1:8787
+echo [GameTalk] Ê¹ÓÃÆÚ¼äÇë±£³Ö±¾´°¿Ú¿ªÆô£¬¹Ø±Õ±¾´°¿Ú¼´Í£Ö¹·şÎñÆ÷¡£
 echo.
 call node dist/index.js
 goto :eof
 
 :error
 echo.
-echo [GameTalk] å¯åŠ¨å¤±è´¥ï¼Œè¯·æ£€æŸ¥ä¸Šæ–¹é”™è¯¯ä¿¡æ¯ï¼Œæˆ–æ‰‹åŠ¨æ‰§è¡Œï¼š
+echo [GameTalk] Æô¶¯Ê§°Ü£¬Çë¼ì²éÉÏ·½´íÎóĞÅÏ¢£¬»òÊÖ¶¯Ö´ĞĞ£º
 echo   cd server ^&^& npm install ^&^& npm run build ^&^& node dist/index.js
 pause
