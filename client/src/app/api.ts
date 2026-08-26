@@ -36,7 +36,11 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
     });
   } catch {
     // 网络不可达（server 未启动 / 地址错误）
-    throw new ApiError(0, 'network_error', `无法连接服务器（${serverUrl}），请确认服务端已启动。本地使用请运行 start-local.bat`);
+    throw new ApiError(
+      0,
+      'network_error',
+      `无法连接服务器（${serverUrl}）。请确认服务器地址正确且服务器已运行；自建服务器请参阅部署文档。`,
+    );
   }
 
   const text = await res.text();

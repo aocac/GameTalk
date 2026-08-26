@@ -20,9 +20,10 @@
 - **ADR-001 单仓库结构**：`client/`(Tauri) + `server/`(Fastify) 各自独立 package.json，不做 npm workspace，隔离干净、AI 易维护。
 - **ADR-002 客户端不直连数据库**：一切数据经服务端 REST + WS。
 - **ADR-003 Overlay 不做 D3D 挂钩/DLL 注入**：Tauri 全局透明置顶窗口（decorations:false, transparent:true, alwaysOnTop, skipTaskbar）+ ignore cursor events + 自定义位置/缩放。前提：用户游戏用无边框窗口化。
-- **ADR-004 开发/测试用 PGlite**：本机无 PostgreSQL 与 Docker（2026-08-26 检查）。migration 为纯 SQL 文件，PGlite 与生产 PG 同源执行。
+- **ADR-004 开发/测试用 PGlite**：本机无 PostgreSQL 与 Docker（2026-08-26 检查）。migration 为纯 SQL 文件，PGlite 与生产 PG 同源执行。PGlite 持久化目录 server/data/gametalk.pglite（本地开发数据不丢）。
 - **ADR-005 实时消息：服务端内存房间表 + 广播**：单机轻量，不做 Redis 等外部依赖（第一版）。
-- **ADR-006 密码哈希 argon2（推荐 argon2 或 bcrypt 视 npm 编译情况）**：优先 argon2；若本机原生编译失败则降级 bcryptjs 纯 JS 并在 PROGRESS 记录。
+- **ADR-006 密码哈希 argon2**：@node-rs/argon2（预编译二进制，无需 node-gyp）。
+- **ADR-008 服务端形态：纯远程模式（2026-08-27 用户确认）**：客户端只连接**远程 Linux 服务器**（VPS + Docker + HTTPS/WSS），玩家零服务端负担。`start-local.bat` 仅作为开发验收辅助工具，不面向最终用户。待用户提供 VPS + 域名后执行 docker/deploy.sh 完成真实部署并作为客户端默认服务器。
 
 ## 环境事实（2026-08-26 检查）
 - Windows 11 桌面（有真实显示器）✓ —— Overlay/快捷键/声音可做真实人工验收
@@ -62,9 +63,9 @@
   3. Overlay 绝对透明 + 位置/缩放（上轮已修复 url bug）
 - Docker 实际构建/部署需 Linux 环境（CI 已配置，push 即跑）
 
-## 本地使用说明（重要）
-- 客户端默认连接 http://127.0.0.1:8787。**使用前需先启动服务端**：双击仓库根目录 `start-local.bat`（自动安装依赖/构建/启动，数据持久化在 server/data/）。
-- 服务端未启动时，客户端会在登录页/聊天页给出明确提示（含一键启动指引），不再"一直连接中"。
+## 本地使用说明（开发/验收辅助）
+- `start-local.bat`（仓库根）可一键启动本地服务端（数据持久化在 server/data/），**仅用于开发验收**，非产品形态。
+- 产品形态（ADR-008）：客户端连接远程 Linux 服务器；部署见 docker/deploy.sh 与 docs/deployment.md。
 
 ## 验收记录（2026-08-26 本机实测）
 - 自动化：server 25 测试 + client 11 测试全绿；typecheck/build/cargo check 全过

@@ -164,7 +164,12 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 
         <label className="field">
           <span>服务器地址</span>
-          <input value={serverUrl} placeholder="http://127.0.0.1:8787" onChange={(e) => setServerUrl(e.target.value)} />
+          <input
+            value={serverUrl}
+            placeholder="https://chat.example.com"
+            onChange={(e) => setServerUrl(e.target.value)}
+          />
+          <span className="field-hint">填写你部署的 GameTalk 服务器地址（如 https://chat.example.com）；本地开发调试可用 http://127.0.0.1:8787</span>
         </label>
 
         <label className="field">

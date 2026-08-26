@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────────────┐       REST + WebSocket(JWT)       ┌──────────────────────────────┐
-│  GameTalk 客户端 (Windows)   │ ────────────────────────────────► │  GameTalk Server (Linux)      │
+│  GameTalk 客户端 (Windows)   │ ────────────────────────────────► │  GameTalk Server (Linux VPS)  │
 │  Tauri 2 + React + TS        │                                   │  Fastify + WS + Node 22      │
 │  ├─ 主窗口（聊天 UI）        │ ◄──────────────────────────────── │  ├─ REST 路由（认证/房间）    │
 │  ├─ 输入 Overlay（游戏内）   │           广播消息                │  ├─ WS 网关（房间 pub/sub）  │
@@ -15,6 +15,8 @@
                                                                           │ PostgreSQL 16   │
                                                                           └────────────────┘
 ```
+
+**产品形态（ADR-008）**：客户端是纯终端（连远程 Linux 服务器），玩家安装即用、零服务端负担；服务端由房主/社区独立部署（Linux VPS + Docker + HTTPS/WSS）。
 
 **核心原则**：客户端永不直连数据库；一切数据经服务端 REST + WebSocket。
 

@@ -475,6 +475,12 @@ body {
   border-color: var(--accent);
 }
 
+.field-hint {
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
 .auth-error {
   background: #fdecec;
   border: 1px solid #f5c6c7;
