@@ -356,6 +356,8 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
                   setServerDraft(e.target.value);
                   // 实时保存：防止忘记点「保存」就登录导致仍用旧地址
                   setServerUrl(e.target.value);
+                  // 地址变了，之前的连接错误提示不再适用，清掉
+                  clearError();
                 }}
                 placeholder="https://chat.example.com"
               />
