@@ -1,3 +1,5 @@
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { Pool, type QueryResultRow } from 'pg';
 import { PGlite } from '@electric-sql/pglite';
 import type { Config } from '../config.js';
@@ -40,6 +42,10 @@ function makePgDb(url: string): Db {
 }
 
 function makePgliteDb(dataDir?: string): Db {
+  // 文件模式：确保目录存在（PGlite 不会自动创建）
+  if (dataDir) {
+    mkdirSync(dirname(dataDir), { recursive: true });
+  }
   const pg = new PGlite(dataDir);
   return {
     async query<T extends QueryResultRow>(text: string, params: unknown[] = []): Promise<QueryResult<T>> {
@@ -57,5 +63,6 @@ function makePgliteDb(dataDir?: string): Db {
 
 export function createDb(config: Config): Db {
   if (config.databaseUrl) return makePgDb(config.databaseUrl);
-  return makePgliteDb();
+  // 测试用内存库（数据不持久）；开发/本地模式持久化到 data 目录
+  return makePgliteDb(config.nodeEnv === 'test' ? undefined : config.pgliteDataDir);
 }

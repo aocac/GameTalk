@@ -56,21 +56,23 @@
 ```
 
 ## 待办与已知问题
-- ⚠️ 需人类物理验收（新版安装包 GameTalk_0.1.0_x64-setup.exe 已重新构建）：
-  1. 主窗口 X 按钮 → 弹出「取消 / 关闭到托盘 / 退出」选择（已实现，需真机视觉确认 + 选「关闭到托盘」后系统托盘图标存在）
-  2. 托盘菜单「显示 GameTalk」恢复主窗口、「退出 GameTalk」彻底退出
-  3. 游戏模式下全局快捷键在真实游戏中呼出输入框、不干扰游戏按键（修复后真实键盘可录制自定义快捷键）
-  4. 消息 Overlay 绝对透明（无灰底）覆盖在游戏画面上（修复 url bug 后应正确加载 overlay.html）
-  5. Overlay 位置/缩放调整实时生效
-  6. 发送后游戏焦点恢复
-  7. 系统提示音
+- ⚠️ 需人类物理验收：
+  1. 游戏模式下：呼出输入框 → 切回游戏 → 按 ESC 应能直接关闭输入框（全局 ESC 已实现，输入框显示期间注册、隐藏后注销；需真机确认不干扰游戏内 ESC）
+  2. 主窗口 X →「取消 / 关闭到托盘 / 退出」弹窗视觉确认（上轮已交付）
+  3. Overlay 绝对透明 + 位置/缩放（上轮已修复 url bug）
 - Docker 实际构建/部署需 Linux 环境（CI 已配置，push 即跑）
 
+## 本地使用说明（重要）
+- 客户端默认连接 http://127.0.0.1:8787。**使用前需先启动服务端**：双击仓库根目录 `start-local.bat`（自动安装依赖/构建/启动，数据持久化在 server/data/）。
+- 服务端未启动时，客户端会在登录页/聊天页给出明确提示（含一键启动指引），不再"一直连接中"。
+
 ## 验收记录（2026-08-26 本机实测）
-- 自动化：server 23 测试 + client 10 测试全绿；typecheck/build/cargo check 全过
+- 自动化：server 25 测试 + client 11 测试全绿；typecheck/build/cargo check 全过
 - 生产冒烟：NODE_ENV=production 启动 → migration 自动应用 → /health 200 → 注册/登录返回 JWT
-- Windows 构建：gametalk.exe 9.0MB + GameTalk_0.1.0_x64-setup.exe（NSIS，2.0MB）
-- 浏览器 E2E（真实 Chromium）：注册 browser_alpha → 创建房间"浏览器测试小队"(邀请码 UNGDCAM4) → 发消息 → 退出 → 注册 browser_beta → 邀请码加入 → 历史持久化可见 → 双向实时消息 ✅（截图 docs/e2e-chat-verification.png）
+- Windows 构建：gametalk.exe ~9MB + GameTalk_0.1.0_x64-setup.exe（NSIS，~2MB）
+- 浏览器 E2E（真实 Chromium）：注册 browser_alpha → 创建房间"浏览器测试小队"(邀请码 UNGDCAM4) → 发消息 → 退出 → 注册 browser_beta → 邀请码加入 → 历史持久化可见 → 双向实时消息 ✅（docs/e2e-chat-verification.png）
+- PGlite 持久化：注册 persist_user → 重启 server → 登录成功 ✅（server/data/gametalk.pglite）
+- 连接失败提示：server 停止时登录显示「无法连接服务器（http://127.0.0.1:8787）…运行 start-local.bat」✅；server 启动后登录进入聊天界面且 WS「已连接」✅（docs/e2e-connected-after-server-up.png）
 - 修复：React StrictMode 双挂载导致 ChatView 不重连（connect 幂等化 + cleanup 语义修正）
 
 ## 变更日志
@@ -90,4 +92,11 @@
   - Overlay 加载了主界面 → tauri.conf.json 中 input/overlay 窗口缺 `url`（加载了 index.html）→ 加 `url: "input.html"/"overlay.html"`
   - 头像手输 URL → `<input type=file>` + FileReader → POST /api/auth/avatar（服务端校验 dataUrl 格式/magic bytes/≤512KB，2 个新测试）
   - 浏览器 E2E 验证文件上传 → 截图 docs/e2e-avatar-settings.png；快捷键录制测试通过；新 NSIS 安装包（9MB exe / 2MB setup）已构建
+- 2026-08-26（用户二轮反馈：连接中无提示 + 游戏内 ESC 关不掉）：
+  - PGlite 持久化：config.pgliteDataDir（默认 data/gametalk.pglite），测试仍用内存库；验证重启后用户数据保留
+  - start-local.bat：仓库根一键启动本地服务端（自动 npm install/build/启动），面向无 Node 运维背景用户
+  - ChatSocket 连接超时（8s）+ lastError；chat store connectionError；聊天页 banner 明确提示 + 重试按钮
+  - api.ts 网络错误 → ApiError('network_error', 中文提示)，登录页不再显示英文 'Failed to fetch'
+  - 全局 ESC：输入框显示期间注册 'Esc' 全局快捷键（失焦也能关），隐藏后注销（不干扰游戏内 ESC）；单测覆盖
+  - 浏览器验证：无 server 时登录显示明确中文提示 ✅；启动 server 后登录进入聊天 + WS 已连接 ✅
 - 关键坑位记录：① Node 22 undici WebSocket 的 addEventListener('message') 不触发，测试必须用 onmessage+派发队列；② @tauri-apps/plugin-global-hotkey 包不存在，正确名是 @tauri-apps/plugin-global-shortcut（crate 同名）；③ migrations 必须放包根目录（src/dist 双路径一致解析）；④ PGlite 的 query 泛型无约束，Db 接口用 pg 的 QueryResultRow 约束需在实现里显式声明。

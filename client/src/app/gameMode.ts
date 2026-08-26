@@ -100,12 +100,40 @@ export async function showInputWindow(): Promise<void> {
   await win.show();
   // Windows 上 show 后需要一点时间才能聚焦
   setTimeout(() => void win.setFocus(), 60);
+  // 输入框显示期间注册全局 ESC：即使焦点已切回游戏，按 ESC 也能关闭输入框
+  await registerEsc();
 }
 
 export async function hideInputWindow(): Promise<void> {
   const win = await getInputWindow();
+  await unregisterEsc();
   if (!win) return;
   await win.hide();
+}
+
+// ===== 全局 ESC（输入框显示期间生效，隐藏后立即注销，不干扰游戏内 ESC）=====
+let escRegistered = false;
+
+async function registerEsc(): Promise<void> {
+  if (escRegistered) return;
+  try {
+    await register('Esc', () => {
+      void hideInputWindow();
+    });
+    escRegistered = true;
+  } catch (e) {
+    console.error('register Esc failed:', e);
+  }
+}
+
+async function unregisterEsc(): Promise<void> {
+  if (!escRegistered) return;
+  escRegistered = false;
+  try {
+    await unregister('Esc');
+  } catch {
+    // 忽略注销失败
+  }
 }
 
 /** 新消息到达时推给 Overlay 显示（由 chat store 调用） */

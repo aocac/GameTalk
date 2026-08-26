@@ -16,10 +16,17 @@ export class ChatSocket {
   private retryCount = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private closedByUser = false;
+  private _lastError: string | null = null;
 
   get status(): WsStatus {
     return this.ws ? (this.ws.readyState === WebSocket.OPEN ? 'open' : 'connecting') : this.closedByUser ? 'closed' : 'idle';
+  }
+
+  /** 最近一次连接失败原因（open 后清空） */
+  get lastError(): string | null {
+    return this._lastError;
   }
 
   onMessage(fn: WsListener): () => void {
@@ -47,12 +54,22 @@ export class ChatSocket {
     try {
       this.ws = new WebSocket(this.url);
     } catch {
+      this._lastError = '无法创建 WebSocket 连接';
       this.scheduleReconnect();
       return;
     }
 
+    // 连接超时：8 秒未握手成功视为失败，关闭并触发重连
+    this.connectTimer = setTimeout(() => {
+      if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+        this._lastError = '连接超时';
+        this.ws.close();
+      }
+    }, 8000);
+
     this.ws.onopen = () => {
       this.retryCount = 0;
+      this._lastError = null;
       this.emitStatus('open');
       this.startHeartbeat();
     };
@@ -67,6 +84,7 @@ export class ChatSocket {
     };
     this.ws.onclose = () => {
       this.stopHeartbeat();
+      if (this.connectTimer) clearTimeout(this.connectTimer);
       if (this.closedByUser) {
         this.emitStatus('closed');
       } else {
@@ -74,6 +92,9 @@ export class ChatSocket {
       }
     };
     this.ws.onerror = () => {
+      if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
+        this._lastError = '连接被拒绝或网络不可达';
+      }
       // onclose 会随后触发并处理重连
     };
   }
@@ -113,6 +134,8 @@ export class ChatSocket {
     this.closedByUser = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    if (this.connectTimer) clearTimeout(this.connectTimer);
+    this.connectTimer = null;
     this.stopHeartbeat();
     this.ws?.close();
     this.ws = null;

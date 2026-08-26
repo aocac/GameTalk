@@ -3,6 +3,8 @@ export interface Config {
   port: number;
   /** 设置了则为真实 PostgreSQL；null 时使用 PGlite（开发/测试） */
   databaseUrl: string | null;
+  /** PGlite 数据目录（相对服务端运行目录）；测试模式传空使用内存库 */
+  pgliteDataDir: string;
   jwtSecret: string;
   jwtExpiresIn: string;
   corsOrigin: string;
@@ -19,6 +21,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     host: env.HOST || '0.0.0.0',
     port: parseInt(env.PORT || '8787', 10),
     databaseUrl: env.DATABASE_URL || null,
+    pgliteDataDir: env.PGLITE_DATA_DIR || 'data/gametalk.pglite',
     jwtSecret,
     jwtExpiresIn: env.JWT_EXPIRES_IN || '7d',
     corsOrigin: env.CORS_ORIGIN || '*',

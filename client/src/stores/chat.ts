@@ -19,6 +19,8 @@ interface ChatState {
   membersByRoom: Record<string, UserBrief[]>;
   loadingRooms: boolean;
   roomError: string | null;
+  /** 连接失败提示（server 不可达时展示） */
+  connectionError: string | null;
   connect: () => void;
   disconnect: () => void;
   refreshRooms: () => Promise<void>;
@@ -50,6 +52,7 @@ export const useChat = create<ChatState>()((set, get) => ({
   membersByRoom: {},
   loadingRooms: false,
   roomError: null,
+  connectionError: null,
 
   connect: () => {
     // 幂等：已在连接/已连接则不重复建连（React StrictMode 双挂载安全）
@@ -63,7 +66,14 @@ export const useChat = create<ChatState>()((set, get) => ({
     socket.onStatus((status) => {
       set({ status });
       if (status === 'open') {
+        set({ connectionError: null });
         socket?.send({ type: 'hello', payload: { token } });
+      } else if (status === 'reconnecting') {
+        set({
+          connectionError: `无法连接服务器${socket?.lastError ? `（${socket.lastError}）` : ''}，请确认服务端已启动。本地使用请运行 start-local.bat`,
+        });
+      } else if (status === 'closed') {
+        set({ connectionError: null });
       }
     });
     socket.onMessage((msg) => {

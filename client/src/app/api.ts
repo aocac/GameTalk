@@ -24,14 +24,20 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, options: { method?: string; body?: unknown; token?: string } = {}): Promise<T> {
   const { serverUrl } = useSettings.getState();
-  const res = await fetch(`${serverUrl}${path}`, {
-    method: options.method ?? 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${serverUrl}${path}`, {
+      method: options.method ?? 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+  } catch {
+    // 网络不可达（server 未启动 / 地址错误）
+    throw new ApiError(0, 'network_error', `无法连接服务器（${serverUrl}），请确认服务端已启动。本地使用请运行 start-local.bat`);
+  }
 
   const text = await res.text();
   const data = text ? (JSON.parse(text) as { error?: { code: string; message: string } } & T) : undefined;

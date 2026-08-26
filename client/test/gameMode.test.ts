@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSettings } from '../src/app/settings';
 import * as gameMode from '../src/app/gameMode';
+import { isRegistered, register, unregister } from '@tauri-apps/plugin-global-shortcut';
 import type { ChatMessage } from '../src/app/types';
 
 // ---- mock Tauri APIs ----
@@ -165,5 +166,23 @@ describe('gameMode manager', () => {
     expect(gameMode.isGameModeRunning()).toBe(false);
     expect(hotkey).toBe('Ctrl+Shift+Space');
     expect(mockWindow.hide).toHaveBeenCalled();
+  });
+
+  it('registers global Esc while input window is shown, unregisters on hide', async () => {
+    await gameMode.startGameMode();
+    expect(register).not.toHaveBeenCalledWith('Esc', expect.any(Function));
+
+    // 呼出输入框 → 注册全局 Esc
+    await gameMode.showInputWindow();
+    expect(register).toHaveBeenCalledWith('Esc', expect.any(Function));
+
+    // 即使焦点已离开输入框（模拟游戏内按 ESC），全局 Esc 也能关闭
+    const escHandler = (globalThis as unknown as Record<string, unknown>)['__hotkey_Esc'] as
+      | (() => void)
+      | undefined;
+    expect(escHandler).toBeDefined();
+    escHandler!();
+    await vi.waitFor(() => expect(mockWindow.hide).toHaveBeenCalled());
+    await vi.waitFor(() => expect(unregister).toHaveBeenCalledWith('Esc'));
   });
 });

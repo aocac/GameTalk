@@ -315,6 +315,7 @@ function ChatView() {
     messagesByRoom,
     loadingRooms,
     roomError,
+    connectionError,
     connect,
     disconnect,
     createRoom,
@@ -459,6 +460,24 @@ function ChatView() {
             </button>
           </div>
         </header>
+
+        {connectionError && (
+          <div className="banner-error">
+            <span>
+              <strong>无法连接服务器：</strong>
+              {connectionError}
+            </span>
+            <button
+              className="btn ghost small"
+              onClick={() => {
+                disconnect();
+                connect();
+              }}
+            >
+              重试
+            </button>
+          </div>
+        )}
 
         {roomError && (
           <div className="banner-error">
