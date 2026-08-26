@@ -506,6 +506,16 @@ body {
   color: var(--accent);
 }
 
+.server-config {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface);
+}
+
 .btn.block {
   width: 100%;
   padding: 11px 0;

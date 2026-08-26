@@ -310,6 +310,9 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
   // 未登录时也能配置服务器地址（否则连接失败时会陷入无法改地址的死锁）
   const { serverUrl, setServerUrl } = useSettings();
   const [showServer, setShowServer] = useState(false);
+  const [serverDraft, setServerDraft] = useState(serverUrl);
+  const [serverMsg, setServerMsg] = useState<string | null>(null);
+  const serverMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -335,20 +338,40 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
         <button
           type="button"
           className="server-toggle"
-          onClick={() => setShowServer((v) => !v)}
+          onClick={() => {
+            if (!showServer) setServerDraft(useSettings.getState().serverUrl);
+            setShowServer((v) => !v);
+          }}
           title="配置要连接的服务器"
         >
           {showServer ? '收起服务器设置' : `服务器：${serverUrl}`}
         </button>
         {showServer && (
-          <label className="field">
-            <span>服务器地址（连接你自己的 GameTalk 服务器）</span>
-            <input
-              value={serverUrl}
-              onChange={(e) => setServerUrl(e.target.value)}
-              placeholder="https://chat.example.com"
-            />
-          </label>
+          <div className="server-config">
+            <label className="field">
+              <span>服务器地址（连接你自己的 GameTalk 服务器）</span>
+              <input
+                value={serverDraft}
+                onChange={(e) => setServerDraft(e.target.value)}
+                placeholder="https://chat.example.com"
+              />
+            </label>
+            <div className="row-between">
+              <button
+                type="button"
+                className="btn primary small"
+                onClick={() => {
+                  setServerUrl(serverDraft.trim() || serverDraft);
+                  setServerMsg('已保存');
+                  if (serverMsgTimer.current) clearTimeout(serverMsgTimer.current);
+                  serverMsgTimer.current = setTimeout(() => setServerMsg(null), 2000);
+                }}
+              >
+                保存
+              </button>
+              {serverMsg && <span className="ok-text">{serverMsg}</span>}
+            </div>
+          </div>
         )}
 
         <div className="auth-tabs">
