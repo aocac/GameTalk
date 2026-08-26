@@ -681,6 +681,21 @@ body {
   padding: 2px 10px;
 }
 
+.offline-tag {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border-radius: 20px;
+  padding: 2px 10px;
+}
+
+.auth-divider {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
 .profile-row {
   display: flex;
   align-items: center;

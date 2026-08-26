@@ -302,7 +302,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LoginView() {
+function LoginView({ onOffline }: { onOffline: () => void }) {
   const { login, register, busy, error, clearError } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
@@ -390,12 +390,17 @@ function LoginView() {
         <button className="btn primary block" type="submit" disabled={busy || !username.trim() || password.length < (mode === 'register' ? 8 : 1)}>
           {busy ? '请稍候…' : mode === 'login' ? '登录' : '创建账号'}
         </button>
+
+        <div className="auth-divider">或</div>
+        <button type="button" className="btn ghost block" onClick={onOffline}>
+          离线试用（不连接服务器，仅体验界面与设置）
+        </button>
       </form>
     </div>
   );
 }
 
-function ChatView() {
+function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExitOffline?: () => void }) {
   const {
     status,
     me,
@@ -432,12 +437,13 @@ function ChatView() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [messages.length]);
 
-  // 进入聊天视图自动连接（connect 幂等，StrictMode 双挂载安全）
+  // 进入聊天视图自动连接（connect 幂等，StrictMode 双挂载安全）；离线模式不连接
   useEffect(() => {
+    if (offline) return;
     connect();
     return () => disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [offline]);
 
   // 游戏模式生命周期：启停快捷键 + Overlay 事件监听
   const { gameModeEnabled, overlayPosition, overlayScale, overlayDurationSec } = useSettings();
@@ -486,8 +492,15 @@ function ChatView() {
           </button>
         </div>
         <nav className="rooms">
-          {loadingRooms && rooms.length === 0 && <div className="rooms-hint">加载中…</div>}
-          {!loadingRooms && rooms.length === 0 && (
+          {offline && (
+            <div className="rooms-hint">
+              离线模式：未连接服务器
+              <br />
+              房间/聊天不可用，可体验设置与游戏模式
+            </div>
+          )}
+          {!offline && loadingRooms && rooms.length === 0 && <div className="rooms-hint">加载中…</div>}
+          {!offline && !loadingRooms && rooms.length === 0 && (
             <div className="rooms-hint">
               还没有房间
               <br />
@@ -508,14 +521,16 @@ function ChatView() {
           ))}
         </nav>
         <div className="sidebar-footer user-block">
-          <Avatar name={user?.username ?? ''} url={user?.avatarUrl} size={32} />
+          <Avatar name={offline ? '访客' : (user?.username ?? '')} url={user?.avatarUrl} size={32} />
           <div className="user-info">
-            <div className="user-name">{user?.username}</div>
-            <div className="user-id">#{user?.id.slice(0, 8)}</div>
+            <div className="user-name">{offline ? '离线访客' : user?.username}</div>
+            <div className="user-id">{offline ? '未登录' : `#${user?.id.slice(0, 8)}`}</div>
           </div>
-          <button className="btn ghost small" title="退出登录" onClick={logout}>
-            退出
-          </button>
+          {!offline && (
+            <button className="btn ghost small" title="退出登录" onClick={logout}>
+              退出
+            </button>
+          )}
         </div>
       </aside>
 
@@ -523,23 +538,31 @@ function ChatView() {
         <header className="topbar">
           <div className="topbar-title">
             <span className="hash">#</span>
-            <span>{activeRoom?.name ?? '未选择房间'}</span>
-            {activeRoom && <span className="me-tag">邀请码 {activeRoom.inviteCode}</span>}
+            <span>{offline ? '离线模式' : (activeRoom?.name ?? '未选择房间')}</span>
+            {activeRoom && !offline && <span className="me-tag">邀请码 {activeRoom.inviteCode}</span>}
           </div>
           <div className="topbar-right">
-            {gameModeEnabled && <span className="game-mode-tag">游戏模式</span>}
+            {offline && <span className="offline-tag">离线模式</span>}
+            {!offline && gameModeEnabled && <span className="game-mode-tag">游戏模式</span>}
             <label className="sound-toggle" title="消息提示音">
               <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
               声音
             </label>
-            <span className="member-count">{members.length} 人在线</span>
+            <span className="member-count">{offline ? '未连接' : `${members.length} 人在线`}</span>
             <StatusDot status={status} />
-            <button className="btn ghost small" onClick={connected ? disconnect : connect}>
-              {connected ? '断开' : '连接'}
-            </button>
+            {!offline && (
+              <button className="btn ghost small" onClick={connected ? disconnect : connect}>
+                {connected ? '断开' : '连接'}
+              </button>
+            )}
             <button className="btn ghost small" onClick={() => setShowSettings(true)}>
               设置
             </button>
+            {offline && (
+              <button className="btn ghost small" onClick={onExitOffline}>
+                退出离线
+              </button>
+            )}
           </div>
         </header>
 
@@ -571,7 +594,15 @@ function ChatView() {
         )}
 
         <div className="messages" ref={listRef}>
-          {!activeRoom && (
+          {offline && (
+            <div className="empty">
+              <p className="empty-title">离线模式</p>
+              <p className="empty-sub">
+                未连接服务器，房间与聊天不可用。可前往「设置」体验游戏模式、快捷键与 Overlay 配置。
+              </p>
+            </div>
+          )}
+          {!offline && !activeRoom && (
             <div className="empty">
               <p className="empty-title">选择一个房间</p>
               <p className="empty-sub">创建新房间或通过邀请码加入，开始实时沟通。</p>
@@ -580,7 +611,7 @@ function ChatView() {
               </button>
             </div>
           )}
-          {activeRoom && messages.length === 0 && (
+          {!offline && activeRoom && messages.length === 0 && (
             <div className="empty">
               <p className="empty-title">欢迎来到 #{activeRoom.name}</p>
               <p className="empty-sub">发送第一条消息，开始与房间里的玩家实时沟通。</p>
@@ -604,12 +635,12 @@ function ChatView() {
           <input
             className="composer-input"
             value={draft}
-            placeholder={connected ? (activeRoom ? '输入消息，Enter 发送' : '先选择或创建房间') : '未连接'}
-            disabled={!connected || !activeRoom}
+            placeholder={offline ? '离线模式：未连接服务器' : connected ? (activeRoom ? '输入消息，Enter 发送' : '先选择或创建房间') : '未连接'}
+            disabled={offline || !connected || !activeRoom}
             maxLength={2000}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && connected && activeRoom) {
+              if (e.key === 'Enter' && !e.shiftKey && !offline && connected && activeRoom) {
                 e.preventDefault();
                 if (draft.trim()) {
                   sendMessage(draft);
@@ -620,7 +651,7 @@ function ChatView() {
           />
           <button
             className="btn primary"
-            disabled={!connected || !activeRoom || !draft.trim()}
+            disabled={offline || !connected || !activeRoom || !draft.trim()}
             onClick={() => {
               sendMessage(draft);
               setDraft('');
@@ -723,6 +754,7 @@ function ClosePromptModal({ onClose }: { onClose: () => void }) {
 export default function App() {
   const { token, user, refreshMe } = useAuth();
   const [showClosePrompt, setShowClosePrompt] = useState(false);
+  const [offline, setOffline] = useState(false);
 
   // 启动时校验持久化的 token
   useEffect(() => {
@@ -740,7 +772,13 @@ export default function App() {
 
   return (
     <>
-      {token && user ? <ChatView /> : <LoginView />}
+      {offline ? (
+        <ChatView offline onExitOffline={() => setOffline(false)} />
+      ) : token && user ? (
+        <ChatView />
+      ) : (
+        <LoginView onOffline={() => setOffline(true)} />
+      )}
       {showClosePrompt && <ClosePromptModal onClose={() => setShowClosePrompt(false)} />}
     </>
   );
