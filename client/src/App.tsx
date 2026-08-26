@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useChat } from './stores/chat';
 import { useAuth } from './stores/auth';
-import { useSettings, DEFAULT_HOTKEY, type OverlayPosition } from './app/settings';
+import { useSettings, type OverlayPosition } from './app/settings';
 import * as gameMode from './app/gameMode';
+import HotkeyRecorder from './components/HotkeyRecorder';
 
 function Avatar({ name, url, size = 28 }: { name: string; url?: string | null; size?: number }) {
   if (url) {
@@ -56,6 +60,8 @@ const POSITION_LABELS: Record<OverlayPosition, string> = {
   'bottom-right': '右下',
 };
 
+const MAX_AVATAR_BYTES = 512 * 1024;
+
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const {
     serverUrl,
@@ -73,19 +79,45 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     overlayDurationSec,
     setOverlayDurationSec,
   } = useSettings();
-  const { user, updateProfile, busy } = useAuth();
+  const { user, updateProfile, uploadAvatar, busy } = useAuth();
   const [username, setUsername] = useState(user?.username ?? '');
-  const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? '');
   const [profileMsg, setProfileMsg] = useState<string | null>(null);
+  const [avatarMsg, setAvatarMsg] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const saveProfile = async () => {
     setProfileMsg(null);
     try {
-      await updateProfile({ username: username.trim() || user?.username, avatarUrl });
+      await updateProfile({ username: username.trim() || user?.username });
       setProfileMsg('已保存');
     } catch {
       setProfileMsg(null);
     }
+  };
+
+  const onAvatarFile = async (file: File | undefined) => {
+    setAvatarMsg(null);
+    if (!file) return;
+    if (file.size > MAX_AVATAR_BYTES) {
+      setAvatarMsg('图片需 ≤512KB，请换一张更小的图');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUrl = String(reader.result ?? '');
+      try {
+        await uploadAvatar(dataUrl);
+        setAvatarMsg('头像已更新');
+      } catch {
+        setAvatarMsg('上传失败（仅支持 PNG/JPEG/WebP/GIF）');
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const onHotkeyChange = (v: string) => {
+    setHotkey(v);
+    if (gameModeEnabled) void gameMode.reapplyHotkey();
   };
 
   return (
@@ -96,27 +128,35 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         <div className="settings-section">
           <span className="section-title">个人资料</span>
           <div className="profile-row">
-            <Avatar name={username || user?.username || ''} url={avatarUrl} size={44} />
+            <button className="avatar-btn" title="点击更换头像" onClick={() => fileRef.current?.click()}>
+              <Avatar name={username || user?.username || ''} url={user?.avatarUrl} size={48} />
+            </button>
             <div className="user-info">
               <div className="user-name">{user?.username}</div>
               <div className="user-id">#{user?.id.slice(0, 8)}</div>
+              <button className="btn ghost small" onClick={() => fileRef.current?.click()}>
+                {busy ? '上传中…' : '更换头像'}
+              </button>
             </div>
           </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              void onAvatarFile(e.target.files?.[0]);
+              e.target.value = '';
+            }}
+          />
+          {avatarMsg && <span className={avatarMsg.includes('失败') ? 'err-text' : 'ok-text'}>{avatarMsg}</span>}
           <label className="field">
             <span>昵称</span>
             <input value={username} maxLength={24} onChange={(e) => setUsername(e.target.value)} />
           </label>
-          <label className="field">
-            <span>头像 URL（可选，留空使用首字母头像）</span>
-            <input
-              value={avatarUrl}
-              placeholder="https://example.com/avatar.png"
-              onChange={(e) => setAvatarUrl(e.target.value)}
-            />
-          </label>
           <div className="row-between">
             <button className="btn primary small" disabled={busy} onClick={() => void saveProfile()}>
-              {busy ? '保存中…' : '保存资料'}
+              {busy ? '保存中…' : '保存昵称'}
             </button>
             {profileMsg && <span className="ok-text">{profileMsg}</span>}
           </div>
@@ -145,8 +185,8 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             </div>
           </label>
           <label className="field">
-            <span>呼出快捷键</span>
-            <input value={hotkey} placeholder={DEFAULT_HOTKEY} onChange={(e) => setHotkey(e.target.value)} />
+            <span>呼出快捷键（点击后按下组合键）</span>
+            <HotkeyRecorder value={hotkey} onChange={onHotkeyChange} />
           </label>
         </div>
 
@@ -289,6 +329,7 @@ function ChatView() {
   const [draft, setDraft] = useState('');
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showClosePrompt, setShowClosePrompt] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
@@ -300,6 +341,13 @@ function ChatView() {
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [messages.length]);
+
+  // 主窗口关闭请求：弹出「退出 / 关闭到托盘」选择
+  useEffect(() => {
+    let off: UnlistenFn | undefined;
+    void listen('main-close-requested', () => setShowClosePrompt(true)).then((fn) => (off = fn));
+    return () => off?.();
+  }, []);
 
   // 进入聊天视图自动连接（connect 幂等，StrictMode 双挂载安全）
   useEffect(() => {
@@ -488,6 +536,42 @@ function ChatView() {
       </main>
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+
+      {showClosePrompt && (
+        <div className="modal-mask" onClick={() => setShowClosePrompt(false)}>
+          <div className="modal close-prompt" onClick={(e) => e.stopPropagation()}>
+            <h3>退出 GameTalk？</h3>
+            <p className="close-prompt-sub">
+              关闭到托盘后，仍可在系统托盘图标中重新打开，并继续接收房间消息。
+            </p>
+            <div className="row-between">
+              <button className="btn ghost" onClick={() => setShowClosePrompt(false)}>
+                取消
+              </button>
+              <div className="row-between">
+                <button
+                  className="btn ghost"
+                  onClick={() => {
+                    setShowClosePrompt(false);
+                    void getCurrentWindow().hide();
+                  }}
+                >
+                  关闭到托盘
+                </button>
+                <button
+                  className="btn primary"
+                  onClick={() => {
+                    setShowClosePrompt(false);
+                    void invoke('quit_app');
+                  }}
+                >
+                  退出
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showRoomModal && (
         <div className="modal-mask" onClick={() => setShowRoomModal(false)}>

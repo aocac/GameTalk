@@ -11,6 +11,7 @@ interface AuthState {
   register: (username: string, password: string) => Promise<void>;
   refreshMe: () => Promise<void>;
   updateProfile: (patch: { username?: string; avatarUrl?: string }) => Promise<void>;
+  uploadAvatar: (dataUrl: string) => Promise<void>;
   logout: () => void;
   clearError: () => void;
 }
@@ -76,6 +77,21 @@ export const useAuth = create<AuthState>()(
           set({ user });
         } catch (e) {
           set({ error: e instanceof Error ? e.message : '更新资料失败' });
+          throw e;
+        } finally {
+          set({ busy: false });
+        }
+      },
+
+      async uploadAvatar(dataUrl: string) {
+        const { token } = get();
+        if (!token) return;
+        set({ busy: true, error: null });
+        try {
+          const { user } = await api.uploadAvatar(token, dataUrl);
+          set({ user });
+        } catch (e) {
+          set({ error: e instanceof Error ? e.message : '上传头像失败' });
           throw e;
         } finally {
           set({ busy: false });

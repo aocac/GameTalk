@@ -158,4 +158,54 @@ describe('auth', () => {
     });
     expect(res.statusCode).toBe(409);
   });
+
+  it('uploads avatar via data URL', async () => {
+    const reg = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'avatar_user', password: 'password123' },
+    });
+    const { token } = reg.json();
+
+    // 1x1 透明 PNG
+    const pngBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/avatar',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { dataUrl: `data:image/png;base64,${pngBase64}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().user.avatarUrl).toContain('data:image/png;base64,');
+  });
+
+  it('rejects non-image avatar payload', async () => {
+    const reg = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'avatar_bad', password: 'password123' },
+    });
+    const { token } = reg.json();
+
+    // 伪装成 png 的文本
+    const fake = Buffer.from('not-an-image').toString('base64');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/avatar',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { dataUrl: `data:image/png;base64,${fake}` },
+    });
+    expect(res.statusCode).toBe(400);
+
+    // 超大（>512KB）
+    const huge = Buffer.alloc(600 * 1024, 0x89).toString('base64');
+    const res2 = await app.inject({
+      method: 'POST',
+      url: '/api/auth/avatar',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { dataUrl: `data:image/png;base64,${huge}` },
+    });
+    expect(res2.statusCode).toBe(400);
+  });
 });

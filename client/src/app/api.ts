@@ -59,6 +59,10 @@ export function patchMe(token: string, patch: { username?: string; avatarUrl?: s
   return request<{ user: PublicUser }>('/api/auth/me', { method: 'PATCH', token, body: patch });
 }
 
+export function uploadAvatar(token: string, dataUrl: string): Promise<{ user: PublicUser }> {
+  return request<{ user: PublicUser }>('/api/auth/avatar', { method: 'POST', token, body: { dataUrl } });
+}
+
 // ============ 房间 ============
 
 export interface Room {

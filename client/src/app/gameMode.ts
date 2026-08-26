@@ -127,6 +127,12 @@ async function registerHotkey(): Promise<void> {
   }
 }
 
+/** 快捷键变更后重新注册（游戏模式运行中时由设置界面调用） */
+export async function reapplyHotkey(): Promise<void> {
+  if (!started) return;
+  await registerHotkey();
+}
+
 export async function startGameMode(): Promise<void> {
   if (started) return;
   started = true;

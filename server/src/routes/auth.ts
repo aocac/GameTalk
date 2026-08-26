@@ -4,6 +4,7 @@ import type { Config } from '../config.js';
 import type { Db } from '../db/db.js';
 import type { JwtService } from '../lib/jwt.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
+import { validateAvatarDataUrl } from '../lib/image.js';
 import { makeAuthPreHandler } from '../plugins/auth.js';
 
 export interface AuthDeps {
@@ -91,6 +92,26 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
   app.get('/api/auth/me', { preHandler: [auth] }, async (req, reply) => {
     const found = await db.query<UserRow>('SELECT * FROM users WHERE id = $1', [req.userId]);
     const user = found.rows[0];
+    if (!user) {
+      await reply.code(404).send({ error: { code: 'user_not_found', message: '用户不存在' } });
+      return;
+    }
+    await reply.send({ user: toPublicUser(user) });
+  });
+
+  // 头像上传：接收 data URL，服务端校验类型/大小/魔数后入库
+  app.post('/api/auth/avatar', { preHandler: [auth] }, async (req, reply) => {
+    const body = (req.body ?? {}) as { dataUrl?: unknown };
+    const result = validateAvatarDataUrl(body.dataUrl);
+    if (!result.ok) {
+      await reply.code(400).send({ error: { code: result.error, message: '头像格式不支持（仅 PNG/JPEG/WebP/GIF，且 ≤512KB）' } });
+      return;
+    }
+    const updated = await db.query<UserRow>(
+      'UPDATE users SET avatar_url = $1, updated_at = now() WHERE id = $2 RETURNING *',
+      [result.dataUrl, req.userId],
+    );
+    const user = updated.rows[0];
     if (!user) {
       await reply.code(404).send({ error: { code: 'user_not_found', message: '用户不存在' } });
       return;

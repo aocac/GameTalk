@@ -673,6 +673,53 @@ body {
   color: var(--ok);
 }
 
+.err-text {
+  font-size: 12.5px;
+  color: var(--danger);
+}
+
+.avatar-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: opacity 0.12s;
+}
+
+.avatar-btn:hover {
+  opacity: 0.82;
+}
+
+.hotkey-input {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  color: var(--text);
+  background: var(--surface-2);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.hotkey-input:focus {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.close-prompt {
+  width: 360px;
+}
+
+.close-prompt-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
 /* ============ 侧边栏用户块 ============ */
 .user-block {
   align-items: center;

@@ -23,6 +23,7 @@
       {
         "label": "input",
         "title": "GameTalk 输入",
+        "url": "input.html",
         "width": 460,
         "height": 64,
         "decorations": false,
@@ -37,6 +38,7 @@
       {
         "label": "overlay",
         "title": "GameTalk 消息",
+        "url": "overlay.html",
         "width": 380,
         "height": 180,
         "decorations": false,
