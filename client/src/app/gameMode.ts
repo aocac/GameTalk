@@ -77,6 +77,22 @@ function computePosition(
   }
 }
 
+/** 坐标夹取：确保窗口留在主屏可视范围内（防止拖出屏幕外导致"找不到"） */
+function clampToMonitor(
+  x: number,
+  y: number,
+  winW: number,
+  winH: number,
+  mon: { position: { x: number; y: number }; size: { width: number; height: number } },
+): { x: number; y: number } {
+  const x0 = mon.position.x;
+  const y0 = mon.position.y;
+  return {
+    x: Math.min(Math.max(x, x0), x0 + Math.max(mon.size.width - winW, 0)),
+    y: Math.min(Math.max(y, y0), y0 + Math.max(mon.size.height - winH, 0)),
+  };
+}
+
 /** 根据设置把消息 Overlay 摆到指定位置并按比例缩放 */
 export async function applyOverlayConfig(): Promise<void> {
   const { overlayPosition, overlayScale, overlayCustomPosition } = useSettings.getState();
@@ -86,14 +102,25 @@ export async function applyOverlayConfig(): Promise<void> {
   const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
   const w = Math.round(OVERLAY_BASE_WIDTH * overlayScale);
   const h = Math.round(OVERLAY_BASE_HEIGHT * overlayScale);
-  await win.setSize(new PhysicalSize(Math.round(w * dpr), Math.round(h * dpr)));
+  const winW = Math.round(w * dpr);
+  const winH = Math.round(h * dpr);
+  await win.setSize(new PhysicalSize(winW, winH));
   if (overlayPosition === 'custom' && overlayCustomPosition) {
-    // 用户拖拽自定义位置（物理像素，左上角锚点）
-    await win.setPosition(new PhysicalPosition(overlayCustomPosition.x, overlayCustomPosition.y));
+    // 用户拖拽自定义位置（物理像素，左上角锚点）；越界则夹回屏幕内
+    const clamped = clampToMonitor(overlayCustomPosition.x, overlayCustomPosition.y, winW, winH, mon);
+    await win.setPosition(new PhysicalPosition(clamped.x, clamped.y));
   } else {
-    await win.setPosition(computePosition(mon, w * dpr, h * dpr, overlayPosition, OVERLAY_MARGIN * dpr));
+    await win.setPosition(computePosition(mon, winW, winH, overlayPosition, OVERLAY_MARGIN * dpr));
   }
   await emit('overlay:config', { scale: overlayScale });
+}
+
+/** 位置预览：显示 Overlay 3 秒，方便确认位置/大小效果（Overlay 平时隐藏） */
+export async function previewOverlay(): Promise<void> {
+  const win = await getOverlayWindow();
+  if (!win) return;
+  await win.show();
+  await emit('overlay:preview');
 }
 
 /** 进入 Overlay 调整模式：可拖拽移动 + 滚轮缩放（overlay 窗口内操作） */

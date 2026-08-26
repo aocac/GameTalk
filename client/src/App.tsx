@@ -86,6 +86,18 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [avatarMsg, setAvatarMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // 位置/缩放变化后立即应用并预览 3 秒（Overlay 平时隐藏，用户需要看到效果）
+  useEffect(() => {
+    if (!gameModeEnabled) return;
+    void gameMode.applyOverlayConfig().then(() => void gameMode.previewOverlay());
+  }, [overlayPosition, overlayScale, gameModeEnabled]);
+
+  const closeModal = () => {
+    // 防止调整模式残留卡死
+    void gameMode.stopOverlayAdjust();
+    onClose();
+  };
+
   const saveProfile = async () => {
     setProfileMsg(null);
     try {
@@ -122,7 +134,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="modal-mask" onClick={onClose}>
+    <div className="modal-mask" onClick={closeModal}>
       <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
         <h3>设置</h3>
 
@@ -212,9 +224,9 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             className="btn ghost block"
             disabled={!gameModeEnabled}
             onClick={() => {
-              setOverlayPosition('custom');
-              void gameMode.applyOverlayConfig();
-              void gameMode.startOverlayAdjust();
+              // 先退出可能残留的调整态，再进入（不切换 preset，避免与预览竞争）
+              void gameMode.stopOverlayAdjust();
+              void gameMode.applyOverlayConfig().then(() => void gameMode.startOverlayAdjust());
             }}
           >
             {gameModeEnabled ? '拖拽调整 Overlay 位置/大小（在屏幕上直接拖动）' : '需先启用游戏模式'}
@@ -223,8 +235,9 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             <button
               className="btn ghost block"
               onClick={() => {
+                void gameMode.stopOverlayAdjust();
                 setOverlayPosition('bottom-left');
-                void gameMode.applyOverlayConfig();
+                void gameMode.applyOverlayConfig().then(() => void gameMode.previewOverlay());
               }}
             >
               复位到左下角
@@ -254,7 +267,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           </label>
         </div>
 
-        <button className="btn primary block" onClick={onClose}>
+        <button className="btn primary block" onClick={closeModal}>
           完成
         </button>
       </div>
