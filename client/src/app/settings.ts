@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 
 export interface AppSettings {
   /** 服务端地址（REST），WS 地址由此推导 */
@@ -20,6 +20,13 @@ export function wsUrlOf(serverUrl: string): string {
   return base.replace(/^http/, 'ws') + '/ws';
 }
 
+/** 非浏览器环境（vitest node）下的内存存储兜底 */
+const memoryStorage: StateStorage = {
+  getItem: () => null,
+  setItem: () => undefined,
+  removeItem: () => undefined,
+};
+
 export const useSettings = create<AppSettings>()(
   persist(
     (set) => ({
@@ -30,6 +37,9 @@ export const useSettings = create<AppSettings>()(
       setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
       setQuickName: (quickName) => set({ quickName }),
     }),
-    { name: 'gametalk-settings' },
+    {
+      name: 'gametalk-settings',
+      storage: typeof window !== 'undefined' ? createJSONStorage(() => localStorage) : createJSONStorage(() => memoryStorage),
+    },
   ),
 );

@@ -35,8 +35,8 @@
 ## Phase 状态
 | Phase | 内容 | 状态 | 备注 |
 |---|---|---|---|
-| 1 | 项目结构/Git/GitHub/环境/PROGRESS | 🔵 进行中 | — |
-| 2 | 最小实时通信闭环 | ⚪ 未开始 | — |
+| 1 | 项目结构/Git/GitHub/环境/PROGRESS | ✅ 完成 | 仓库 https://github.com/aocac/GameTalk |
+| 2 | 最小实时通信闭环 | 🔵 进行中 | 服务端网关+测试✅；客户端逻辑测试/联调中 |
 | 3 | 注册/登录/头像/昵称/用户ID | ⚪ 未开始 | — |
 | 4 | 房间/邀请码/成员/群聊/历史 | ⚪ 未开始 | — |
 | 5 | 游戏模式(快捷键/Overlay/声音/焦点) | ⚪ 未开始 | 部分项需人类物理验收 |
@@ -55,3 +55,6 @@
 
 ## 变更日志
 - 2026-08-26：Phase 1 启动。环境盘点完成，决策 ADR-001~006。Git 初始化。
+- 2026-08-26：Phase 1 完成。GitHub 仓库 https://github.com/aocac/GameTalk 创建并推送 main。
+- 2026-08-26：Phase 2 服务端完成：WS 网关（hello/房间加入/消息广播/成员通知/校验），4 个集成测试通过（双客户端实时收发）。客户端 ChatSocket（自动重连+心跳）、chat store、WebAudio 提示音、快速聊天 UI 完成，前端构建通过；客户端逻辑测试进行中。
+- 关键坑位记录：① Node 22 undici WebSocket 的 addEventListener('message') 不触发，测试必须用 onmessage+派发队列；② @tauri-apps/plugin-global-hotkey 包不存在，正确名是 @tauri-apps/plugin-global-shortcut（crate 同名）；③ migrations 必须放包根目录（src/dist 双路径一致解析）。
