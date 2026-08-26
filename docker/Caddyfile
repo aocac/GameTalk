@@ -1,0 +1,9 @@
+# GameTalk 反向代理：自动 HTTPS + WSS
+{$GAMETALK_HOST}
+
+encode zstd gzip
+
+handle {
+	# API + WS 统一转发（WS 升级由 Caddy 自动处理）
+	reverse_proxy server:8787
+}

@@ -73,11 +73,54 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     overlayDurationSec,
     setOverlayDurationSec,
   } = useSettings();
+  const { user, updateProfile, busy } = useAuth();
+  const [username, setUsername] = useState(user?.username ?? '');
+  const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? '');
+  const [profileMsg, setProfileMsg] = useState<string | null>(null);
+
+  const saveProfile = async () => {
+    setProfileMsg(null);
+    try {
+      await updateProfile({ username: username.trim() || user?.username, avatarUrl });
+      setProfileMsg('已保存');
+    } catch {
+      setProfileMsg(null);
+    }
+  };
 
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
         <h3>设置</h3>
+
+        <div className="settings-section">
+          <span className="section-title">个人资料</span>
+          <div className="profile-row">
+            <Avatar name={username || user?.username || ''} url={avatarUrl} size={44} />
+            <div className="user-info">
+              <div className="user-name">{user?.username}</div>
+              <div className="user-id">#{user?.id.slice(0, 8)}</div>
+            </div>
+          </div>
+          <label className="field">
+            <span>昵称</span>
+            <input value={username} maxLength={24} onChange={(e) => setUsername(e.target.value)} />
+          </label>
+          <label className="field">
+            <span>头像 URL（可选，留空使用首字母头像）</span>
+            <input
+              value={avatarUrl}
+              placeholder="https://example.com/avatar.png"
+              onChange={(e) => setAvatarUrl(e.target.value)}
+            />
+          </label>
+          <div className="row-between">
+            <button className="btn primary small" disabled={busy} onClick={() => void saveProfile()}>
+              {busy ? '保存中…' : '保存资料'}
+            </button>
+            {profileMsg && <span className="ok-text">{profileMsg}</span>}
+          </div>
+        </div>
 
         <label className="field">
           <span>服务器地址</span>

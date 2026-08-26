@@ -10,6 +10,7 @@ interface AuthState {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
   refreshMe: () => Promise<void>;
+  updateProfile: (patch: { username?: string; avatarUrl?: string }) => Promise<void>;
   logout: () => void;
   clearError: () => void;
 }
@@ -63,6 +64,21 @@ export const useAuth = create<AuthState>()(
         } catch {
           // token 失效时登出
           set({ token: null, user: null });
+        }
+      },
+
+      async updateProfile(patch) {
+        const { token } = get();
+        if (!token) return;
+        set({ busy: true, error: null });
+        try {
+          const { user } = await api.patchMe(token, patch);
+          set({ user });
+        } catch (e) {
+          set({ error: e instanceof Error ? e.message : '更新资料失败' });
+          throw e;
+        } finally {
+          set({ busy: false });
         }
       },
 

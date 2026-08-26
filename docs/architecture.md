@@ -86,11 +86,13 @@ gametalk/
 
 ## 6. 游戏 Overlay（ADR-003 妥协方案）
 
-不做 Direct3D/OpenGL 挂钩、不做 DLL 注入。使用 Tauri 原生能力：
+不做 Direct3D/OpenGL 挂钩、不做 DLL 注入。使用 Tauri 原生能力，三窗口架构（Vite 多页入口：index/input/overlay）：
 
-- **输入 Overlay**：独立 WebviewWindow（`decorations:false, transparent:true, alwaysOnTop:true, skipTaskbar:true`），全局快捷键呼出，Enter 发送 / Esc 取消，关闭后恢复游戏焦点。
-- **消息 Overlay**：同参数 + `set_ignore_cursor_events(true)`（点击穿透），绝对透明背景（CSS `background: transparent`），位置/缩放由设置驱动。
-- **前提**：目标用户在游戏中采用**无边框窗口化**模式（覆盖式窗口在独占全屏下无效）。
+- **main**：聊天主窗口（React 全量 UI）
+- **input**（输入 Overlay）：`decorations:false, transparent:true, alwaysOnTop:true, skipTaskbar:true, focus:true`；全局快捷键（默认 `Ctrl+Shift+Space`，设置可改）呼出 → 定位主屏底部居中 → 聚焦；Enter 发送（emit `game-input-send` → 主窗口走 WS）→ 自动隐藏；Esc 取消（emit `game-input-cancel`）。
+- **overlay**（消息 Overlay）：同参数 + `focus:false` + `setIgnoreCursorEvents(true)`（点击穿透）；背景**绝对透明**（CSS `background: transparent`）；位置 6 预设（左上/上中/右上/左下/下中/右下）+ 缩放 0.5–2.0 + 自动隐藏时长 2–15s，设置实时生效（`applyOverlayConfig` → setPosition/setSize + emit config → CSS zoom）。
+
+**焦点恢复**：输入窗发送后隐藏，Windows 将焦点还给先前的前台窗口（即游戏）。**前提**：目标用户在游戏中采用**无边框窗口化**模式（覆盖式窗口在独占全屏下无效）。
 
 ## 7. 断线重连与可靠性
 

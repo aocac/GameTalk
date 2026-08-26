@@ -44,10 +44,15 @@
 | 7 | 服务端 Docker 化/生产部署准备 | ⚪ 未开始 | Docker 构建需环境支持 |
 | 8 | 最终测试与验收 | ⚪ 未开始 | — |
 
-## 核心数据流（将在 Phase 2 落定后更新）
+## 核心数据流（已落定）
 ```
-客户端 --REST(JWT)--> 服务端 --SQL--> PostgreSQL
-客户端 <--WS(带token)--> 服务端(房间广播) --> 其他客户端(消息/Overlay/声音)
+客户端 main 窗口 ──REST(JWT Bearer)──> Fastify 路由(认证/房间/历史) ──SQL──> PostgreSQL
+客户端 main 窗口 ──WS hello{token}──> 网关鉴权 → 绑定用户 ──room:join(校验成员)──> 订阅房间
+消息: 客户端 message:send → 服务端 INSERT messages → 广播 message:new → 其他客户端
+      → 更新聊天列表 + 播放提示音 + pushOverlayMessage → 消息 Overlay 显示 N 秒
+游戏模式: 全局快捷键 → main 显示/定位/聚焦 input 窗口 → Enter: input emit → main sendMessage → hide
+          → Windows 焦点还给先前前台窗口（游戏）
+设置变更 → main applyOverlayConfig → overlay 窗口 setPosition/setSize + emit config → CSS zoom
 ```
 
 ## 待办与已知问题
