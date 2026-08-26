@@ -138,6 +138,8 @@ export async function stopOverlayAdjust(): Promise<void> {
 
 /** 呼出输入框（全局快捷键触发）：定位底部居中 + 显示 + 聚焦 */
 export async function showInputWindow(): Promise<void> {
+  // 先注册全局 ESC（确保用户紧接着按 ESC 时已就绪，避免注册未完成的时序窗口）
+  await registerEsc();
   const win = await getInputWindow();
   const mon = await primaryMonitor();
   if (!win || !mon) return;
@@ -148,8 +150,6 @@ export async function showInputWindow(): Promise<void> {
   await win.show();
   // Windows 上 show 后需要一点时间才能聚焦
   setTimeout(() => void win.setFocus(), 60);
-  // 输入框显示期间注册全局 ESC：即使焦点已切回游戏，按 ESC 也能关闭输入框
-  await registerEsc();
 }
 
 export async function hideInputWindow(): Promise<void> {

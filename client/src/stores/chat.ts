@@ -243,8 +243,17 @@ export const useChat = create<ChatState>()((set, get) => ({
 
   sendMessage: (text) => {
     const trimmed = text.trim();
-    const { activeRoomId, subscribedRoomId } = get();
-    if (!trimmed || !activeRoomId || activeRoomId !== subscribedRoomId) return;
+    if (!trimmed) return;
+    const { activeRoomId, subscribedRoomId, status } = get();
+    if (!activeRoomId || activeRoomId !== subscribedRoomId) {
+      // 订阅未就绪：明确提示而不是静默失败（用户曾反馈"点击发送无效"）
+      set({ roomError: '当前房间未订阅成功，无法发送。请稍候重试或重新选择房间。' });
+      return;
+    }
+    if (status !== 'open') {
+      set({ roomError: '连接未就绪，消息未发送。请确认已连接服务器。' });
+      return;
+    }
     const ok = socket?.send({ type: 'message:send', payload: { roomId: activeRoomId, text: trimmed } });
     if (ok) playSendSound(useSettings.getState().soundEnabled);
   },
