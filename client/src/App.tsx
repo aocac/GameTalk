@@ -75,7 +75,6 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     setHotkey,
     overlayPosition,
     setOverlayPosition,
-    overlayCustomPosition,
     setOverlayCustomPosition,
     overlayScale,
     setOverlayScale,
@@ -88,16 +87,10 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [avatarMsg, setAvatarMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // 位置/缩放变化后应用（不自动预览：避免 adjust-done 保存时窗口被重新显示）
-  useEffect(() => {
-    if (!gameModeEnabled) return;
-    // 「自定义」位置完全由拖拽决定：跳过自动应用，避免切到 custom 时跳到旧坐标
-    if (overlayPosition === 'custom') return;
-    void gameMode.applyOverlayConfig();
-  }, [overlayPosition, overlayScale, overlayCustomPosition, gameModeEnabled]);
-
-  // 用户主动调整位置/缩放后的 3 秒预览（让用户确认效果）
-  const previewAfterApply = () => {
+  // 用户主动调整位置/缩放：立即应用 + 5 秒预览（Overlay 平时隐藏，必须主动显示让用户看到效果）
+  const applyAndPreview = (position?: OverlayPosition) => {
+    void gameMode.stopOverlayAdjust();
+    if (position) setOverlayPosition(position);
     void gameMode.applyOverlayConfig().then(() => void gameMode.previewOverlay());
   };
 
@@ -230,9 +223,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                   setOverlayPosition(v);
                   void gameMode.stopOverlayAdjust();
                   void gameMode.startOverlayAdjust();
+                } else if (gameModeEnabled) {
+                  // 预设：立即应用 + 5 秒预览（Overlay 平时隐藏，必须主动显示确认效果）
+                  applyAndPreview(v);
                 } else {
                   setOverlayPosition(v);
-                  if (gameModeEnabled) previewAfterApply();
                 }
               }}
             >
@@ -261,7 +256,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                 void gameMode.stopOverlayAdjust();
                 setOverlayCustomPosition(null);
                 setOverlayPosition('top-left');
-                previewAfterApply();
+                applyAndPreview();
               }}
             >
               复位到左上角
@@ -277,7 +272,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               value={overlayScale}
               onChange={(e) => {
                 setOverlayScale(parseFloat(e.target.value));
-                if (gameModeEnabled) previewAfterApply();
+                if (gameModeEnabled) applyAndPreview();
               }}
             />
           </label>

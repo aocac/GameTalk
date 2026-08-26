@@ -112,9 +112,9 @@ function OverlayApp() {
     fadeTimer.current = null;
   };
 
-  const scheduleHide = () => {
+  const scheduleHide = (durMsOverride?: number) => {
     clearTimers();
-    const durMs = configRef.current.durationSec * 1000;
+    const durMs = durMsOverride ?? configRef.current.durationSec * 1000;
       fadeTimer.current = setTimeout(() => {
         setFading(true);
         hideTimer.current = setTimeout(() => {
@@ -160,7 +160,7 @@ function OverlayApp() {
       scaleRef.current = e.payload.scale ?? scaleRef.current;
     }).then((off) => (unlistenConfig = off));
 
-    // 位置预览：设置里调整位置/大小后显示 3 秒确认效果
+    // 位置预览：设置里调整位置/大小后显示 5 秒确认效果（Overlay 平时隐藏）
     void listen('overlay:preview', () => {
       if (cancelled) return;
       const win = winRef.current;
@@ -173,7 +173,7 @@ function OverlayApp() {
         stopClampPoll();
         void win.setIgnoreCursorEvents(true);
       }
-      scheduleHide();
+      scheduleHide(5000);
     }).then((off) => (unlistenPreview = off));
 
     void listen<{ active: boolean }>('overlay:adjust', (e) => {
