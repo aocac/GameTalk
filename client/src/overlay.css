@@ -33,7 +33,7 @@ body {
 }
 
 .overlay-root.adjusting {
-  justify-content: flex-start;
+  justify-content: flex-end;
 }
 
 .overlay-item {

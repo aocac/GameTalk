@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { getCurrentWindow, primaryMonitor } from '@tauri-apps/api/window';
-import { PhysicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { PhysicalSize } from '@tauri-apps/api/dpi';
 import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import './overlay.css';
 import type { ChatMessage } from './app/types';
@@ -178,35 +178,12 @@ function OverlayApp() {
     void win.setSize(new PhysicalSize(Math.round(BASE_WIDTH * next * dpr), Math.round(BASE_HEIGHT * next * dpr)));
   };
 
-  // 调整模式：纯 JS 拖拽（mousedown 记偏移 → mousemove setPosition → mouseup 保存），坐标夹取在主屏内
-  const onAdjustBarMouseDown = async (e: React.MouseEvent) => {
+  // 调整模式：OS 级拖拽（startDragging 绝对跟手）；最终位置在完成/退出时读取
+  const onAdjustBarMouseDown = (e: React.MouseEvent) => {
     if (!adjusting) return;
     e.preventDefault();
     const win = winRef.current;
-    if (!win) return;
-    const startMouse = { x: e.clientX, y: e.clientY };
-    const startPos = await win.outerPosition();
-    const mon = await primaryMonitor();
-
-    const onMove = async (ev: MouseEvent) => {
-      let nx = startPos.x + (ev.clientX - startMouse.x);
-      let ny = startPos.y + (ev.clientY - startMouse.y);
-      if (mon) {
-        const dpr = window.devicePixelRatio || 1;
-        const w = Math.round(BASE_WIDTH * scaleRef.current * dpr);
-        const h = Math.round(BASE_HEIGHT * scaleRef.current * dpr);
-        nx = Math.min(Math.max(nx, mon.position.x), mon.position.x + Math.max(mon.size.width - w, 0));
-        ny = Math.min(Math.max(ny, mon.position.y), mon.position.y + Math.max(mon.size.height - h, 0));
-      }
-      await win.setPosition(new PhysicalPosition(nx, ny));
-      lastPos.current = { x: nx, y: ny };
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    if (win) void win.startDragging();
   };
 
   return (
