@@ -352,7 +352,11 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
               <span>服务器地址（连接你自己的 GameTalk 服务器）</span>
               <input
                 value={serverDraft}
-                onChange={(e) => setServerDraft(e.target.value)}
+                onChange={(e) => {
+                  setServerDraft(e.target.value);
+                  // 实时保存：防止忘记点「保存」就登录导致仍用旧地址
+                  setServerUrl(e.target.value);
+                }}
                 placeholder="https://chat.example.com"
               />
             </label>
