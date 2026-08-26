@@ -219,6 +219,8 @@ function OverlayApp() {
     const dpr = window.devicePixelRatio || 1;
     const next = Math.min(2, Math.max(0.5, Math.round((scaleRef.current + (e.deltaY < 0 ? 0.1 : -0.1)) * 100) / 100));
     scaleRef.current = next;
+    // 同步更新 transform 缩放（窗口尺寸 setSize 与内容 transform 匹配）
+    setConfig((prev) => ({ ...prev, scale: next }));
     void win.setSize(new PhysicalSize(Math.round(BASE_WIDTH * next * dpr), Math.round(BASE_HEIGHT * next * dpr)));
   };
 
@@ -234,7 +236,13 @@ function OverlayApp() {
   };
 
   return (
-    <div className={`overlay-root ${adjusting ? 'adjusting' : ''} ${fading ? 'fading' : ''}`} style={{ zoom: config.scale }} onWheel={onWheel}>
+    <div
+      className={`overlay-root ${adjusting ? 'adjusting' : ''} ${fading ? 'fading' : ''}`}
+      // 内容缩放用 transform（不影响布局尺寸），窗口 setSize 已按 scale 放大，
+      // 两者匹配避免 zoom 造成的"平方放大"视觉偏移
+      style={{ transform: `scale(${config.scale})`, width: BASE_WIDTH, height: BASE_HEIGHT }}
+      onWheel={onWheel}
+    >
       {adjusting && (
         <div className="adjust-bar" onMouseDown={onAdjustBarMouseDown}>
           <span className="adjust-hint">拖拽移动 · 滚轮缩放</span>

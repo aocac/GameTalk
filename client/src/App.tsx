@@ -91,8 +91,8 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   // 位置/缩放变化后应用（不自动预览：避免 adjust-done 保存时窗口被重新显示）
   useEffect(() => {
     if (!gameModeEnabled) return;
-    // 「自定义」且尚无保存过的自定义坐标：不跳位置（保持当前，等待用户拖拽）
-    if (overlayPosition === 'custom' && overlayCustomPosition == null) return;
+    // 「自定义」位置完全由拖拽决定：跳过自动应用，避免切到 custom 时跳到旧坐标
+    if (overlayPosition === 'custom') return;
     void gameMode.applyOverlayConfig();
   }, [overlayPosition, overlayScale, overlayCustomPosition, gameModeEnabled]);
 
