@@ -3,6 +3,7 @@ loadEnvFileIfPresent();
 import { loadConfig } from './config.js';
 import { createDb } from './db/db.js';
 import { runMigrations } from './db/migrate.js';
+import { createJwtService } from './lib/jwt.js';
 import { buildApp } from './app.js';
 
 const config = loadConfig();
@@ -12,11 +13,14 @@ if (migrated.length > 0) {
   console.log(`[boot] migrations applied: ${migrated.join(', ')}`);
 }
 
-const app = await buildApp({ config, db });
+const jwt = createJwtService(config.jwtSecret, config.jwtExpiresIn);
+const app = await buildApp({ config, db, jwt });
 
 try {
   await app.listen({ host: config.host, port: config.port });
-  app.log.info(`GameTalk server listening on ${config.host}:${config.port} (db: ${config.databaseUrl ? 'postgres' : 'pglite'})`);
+  app.log.info(
+    `GameTalk server listening on ${config.host}:${config.port} (db: ${config.databaseUrl ? 'postgres' : 'pglite'})`,
+  );
 } catch (err) {
   app.log.error(err);
   process.exit(1);

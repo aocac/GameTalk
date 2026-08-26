@@ -3,19 +3,21 @@ import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import type { Config } from './config.js';
 import type { Db } from './db/db.js';
+import type { JwtService } from './lib/jwt.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerAuthRoutes } from './routes/auth.js';
 import { registerWsRoutes } from './ws/gateway.js';
 
 export interface AppDeps {
   config: Config;
   db: Db;
+  jwt: JwtService;
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const { config, db } = deps;
+  const { config, db, jwt } = deps;
   const app = Fastify({
     logger: { level: config.logLevel },
-    // 生产环境关闭 Fastify 默认的敏感信息展示
     disableRequestLogging: config.nodeEnv === 'production',
   });
 
@@ -23,7 +25,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(websocket);
 
   registerHealthRoutes(app, { db });
-  registerWsRoutes(app);
+  registerAuthRoutes(app, { config, db, jwt });
+  registerWsRoutes(app, { config, db, jwt });
 
   return app;
 }

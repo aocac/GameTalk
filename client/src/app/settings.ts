@@ -6,11 +6,8 @@ export interface AppSettings {
   serverUrl: string;
   /** 消息提示音开关 */
   soundEnabled: boolean;
-  /** 快捷会话昵称（Phase 3 后由账号体系取代） */
-  quickName: string;
   setServerUrl: (url: string) => void;
   setSoundEnabled: (v: boolean) => void;
-  setQuickName: (name: string) => void;
 }
 
 export const DEFAULT_SERVER_URL = 'http://127.0.0.1:8787';
@@ -32,10 +29,8 @@ export const useSettings = create<AppSettings>()(
     (set) => ({
       serverUrl: DEFAULT_SERVER_URL,
       soundEnabled: true,
-      quickName: '',
       setServerUrl: (serverUrl) => set({ serverUrl: serverUrl.trim() }),
       setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
-      setQuickName: (quickName) => set({ quickName }),
     }),
     {
       name: 'gametalk-settings',

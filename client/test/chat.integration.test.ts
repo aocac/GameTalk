@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { TEST_WS_URL } from './global-setup';
+import { TEST_HTTP_URL, TEST_WS_URL } from './global-setup';
 import { ChatSocket } from '../src/app/ws';
 import type { ServerWsMessage } from '../src/app/types';
+
+async function register(username: string): Promise<string> {
+  const res = await fetch(`${TEST_HTTP_URL}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password: 'password123' }),
+  });
+  const body = (await res.json()) as { token: string };
+  return body.token;
+}
 
 function nextMsg(socket: ChatSocket, predicate?: (m: ServerWsMessage) => boolean): Promise<ServerWsMessage> {
   return new Promise((resolve, reject) => {
@@ -16,8 +26,10 @@ function nextMsg(socket: ChatSocket, predicate?: (m: ServerWsMessage) => boolean
   });
 }
 
-describe('ChatSocket integration (against real server)', () => {
-  it('connects, hello, joins room, sends and receives messages', async () => {
+describe('ChatSocket integration (against real server, authenticated)', () => {
+  it('connects with token, joins room, sends and receives messages', async () => {
+    const tokenA = await register('client_a');
+    const tokenB = await register('client_b');
     const a = new ChatSocket();
     const b = new ChatSocket();
 
@@ -29,20 +41,20 @@ describe('ChatSocket integration (against real server)', () => {
 
     const helloA = nextMsg(a, (m) => m.type === 'hello:ok');
     const helloB = nextMsg(b, (m) => m.type === 'hello:ok');
-    a.send({ type: 'hello', payload: { name: 'ClientA' } });
-    b.send({ type: 'hello', payload: { name: 'ClientB' } });
+    a.send({ type: 'hello', payload: { token: tokenA } });
+    b.send({ type: 'hello', payload: { token: tokenB } });
     const meA = (await helloA).payload as { me: { id: string; username: string } };
-    expect(meA.me.username).toBe('ClientA');
+    expect(meA.me.username).toBe('client_a');
     await helloB;
 
-    // 双方入房：B 入房时 room:joined 应含 A；A 会收到 Bob 的 member:joined
+    // 双方入房
     a.send({ type: 'room:join', payload: { roomId: 'lobby' } });
     await nextMsg(a, (m) => m.type === 'room:joined');
-    const aSeesB = nextMsg(a, (m) => m.type === 'member:joined' && m.payload.member.username === 'ClientB');
+    const aSeesB = nextMsg(a, (m) => m.type === 'member:joined' && m.payload.member.username === 'client_b');
     b.send({ type: 'room:join', payload: { roomId: 'lobby' } });
     const bJoined = await nextMsg(b, (m) => m.type === 'room:joined');
     const bMembers = bJoined.payload.members as Array<{ username: string }>;
-    expect(bMembers.map((x) => x.username)).toContain('ClientA');
+    expect(bMembers.map((x) => x.username)).toContain('client_a');
     await aSeesB;
 
     const bGetsMsg = nextMsg(b, (m) => m.type === 'message:new');
@@ -50,13 +62,14 @@ describe('ChatSocket integration (against real server)', () => {
     const got = await bGetsMsg;
     const p = got.payload as { message: { text: string; username: string } };
     expect(p.message.text).toBe('ping from A');
-    expect(p.message.username).toBe('ClientA');
+    expect(p.message.username).toBe('client_a');
 
     a.close();
     b.close();
   });
 
   it('reconnects automatically after connection loss', async () => {
+    const token = await register('reconnect_user');
     const s = new ChatSocket();
     const statuses: string[] = [];
     s.onStatus((st) => statuses.push(st));
@@ -64,12 +77,13 @@ describe('ChatSocket integration (against real server)', () => {
     const opened = new Promise<void>((resolve) => s.onStatus((st) => st === 'open' && resolve()));
     s.connect(TEST_WS_URL);
     await opened;
+    s.send({ type: 'hello', payload: { token } });
+    await nextMsg(s, (m) => m.type === 'hello:ok');
 
-    // 模拟异常断线：直接关闭底层连接（非用户主动 close）
+    // 模拟异常断线
     const inner = (s as unknown as { ws: WebSocket }).ws;
     inner.close();
 
-    // 应进入 reconnecting 并再次 open（自动重连）
     const deadline = Date.now() + 8000;
     await new Promise<void>((resolve, reject) => {
       const t = setInterval(() => {
@@ -85,6 +99,19 @@ describe('ChatSocket integration (against real server)', () => {
     });
 
     expect(statuses).toContain('reconnecting');
+    s.close();
+  });
+
+  it('receives unauthorized error and closes for invalid token', async () => {
+    const s = new ChatSocket();
+    const opened = new Promise<void>((resolve) => s.onStatus((st) => st === 'open' && resolve()));
+    s.connect(TEST_WS_URL);
+    await opened;
+
+    const errPromise = nextMsg(s, (m) => m.type === 'error');
+    s.send({ type: 'hello', payload: { token: 'bad-token' } });
+    const err = await errPromise;
+    expect(err.payload.code).toBe('unauthorized');
     s.close();
   });
 });

@@ -3,6 +3,7 @@
 export interface UserBrief {
   id: string;
   username: string;
+  avatarUrl?: string | null;
 }
 
 export interface ChatMessage {
@@ -16,7 +17,7 @@ export interface ChatMessage {
 
 // 客户端 -> 服务端
 export type ClientWsMessage =
-  | { type: 'hello'; payload: { name: string } }
+  | { type: 'hello'; payload: { token: string } }
   | { type: 'room:join'; payload: { roomId: string } }
   | { type: 'room:leave'; payload: { roomId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string } }

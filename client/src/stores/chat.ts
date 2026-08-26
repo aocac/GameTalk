@@ -2,12 +2,10 @@ import { create } from 'zustand';
 import { ChatSocket } from '../app/ws';
 import { playMessageSound, playSendSound } from '../app/audio';
 import { useSettings } from '../app/settings';
+import { useAuth } from './auth';
+import { wsUrlOf } from '../app/settings';
 import type { ChatMessage, UserBrief, WsStatus } from '../app/types';
 
-/**
- * Phase 2 聊天状态：单房间（lobby）+ 匿名昵称。
- * Phase 3/4 将扩展为 多房间 + 账号 + 历史消息。
- */
 interface ChatState {
   status: WsStatus;
   me: UserBrief | null;
@@ -29,14 +27,15 @@ export const useChat = create<ChatState>()((set, get) => ({
   messages: [],
 
   connect: () => {
-    const { quickName } = useSettings.getState();
+    const { token } = useAuth.getState();
+    if (!token) return;
     if (socket) socket.close();
 
     socket = new ChatSocket();
     socket.onStatus((status) => {
       set({ status });
       if (status === 'open') {
-        socket?.send({ type: 'hello', payload: { name: quickName || 'Player' } });
+        socket?.send({ type: 'hello', payload: { token } });
       }
     });
     socket.onMessage((msg) => {
@@ -66,12 +65,17 @@ export const useChat = create<ChatState>()((set, get) => ({
           if (!isMine) playMessageSound(useSettings.getState().soundEnabled);
           break;
         }
+        case 'error':
+          if (msg.payload.code === 'unauthorized') {
+            useAuth.getState().logout();
+          }
+          break;
         default:
           break;
       }
     });
 
-    socket.connect(useSettings.getState().serverUrl.replace(/\/+$/, '').replace(/^http/, 'ws') + '/ws');
+    socket.connect(wsUrlOf(useSettings.getState().serverUrl));
   },
 
   disconnect: () => {

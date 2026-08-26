@@ -4,15 +4,27 @@ import { buildApp } from '../src/app.js';
 import { createDb, type Db } from '../src/db/db.js';
 import { runMigrations } from '../src/db/migrate.js';
 import { loadConfig } from '../src/config.js';
+import { createJwtService } from '../src/lib/jwt.js';
 
 let app: FastifyInstance;
 let db: Db;
 let wsUrl = '';
 
+async function registerUser(username: string, password = 'password123'): Promise<{ token: string; userId: string }> {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/auth/register',
+    payload: { username, password },
+  });
+  const body = res.json();
+  return { token: body.token, userId: body.user.id };
+}
+
 beforeAll(async () => {
   db = createDb(loadConfig({ NODE_ENV: 'test' }));
   await runMigrations(db);
-  app = await buildApp({ config: loadConfig({ NODE_ENV: 'test' }), db });
+  const jwt = createJwtService('test-secret', '1h');
+  app = await buildApp({ config: loadConfig({ NODE_ENV: 'test' }), db, jwt });
   await app.listen({ host: '127.0.0.1', port: 0 });
   wsUrl = `ws://127.0.0.1:${(app.server.address() as { port: number }).port}/ws`;
 });
@@ -75,29 +87,35 @@ describe('health', () => {
   });
 });
 
-describe('realtime chat loop (two clients, one room)', () => {
+describe('realtime chat loop (two authenticated clients, one room)', () => {
   it('A and B join room, A sends message, B receives it', async () => {
+    const { token: tokenA } = await registerUser('alice_ws');
+    const { token: tokenB } = await registerUser('bob_ws');
     const a = await openClient();
     const b = await openClient();
 
-    a.send(JSON.stringify({ type: 'hello', payload: { name: 'Alice' } }));
-    b.send(JSON.stringify({ type: 'hello', payload: { name: 'Bob' } }));
-    await nextMessage(a, (m) => m.type === 'hello:ok');
-    await nextMessage(b, (m) => m.type === 'hello:ok');
+    a.send(JSON.stringify({ type: 'hello', payload: { token: tokenA } }));
+    b.send(JSON.stringify({ type: 'hello', payload: { token: tokenB } }));
+    const helloA = await nextMessage(a, (m) => m.type === 'hello:ok');
+    const helloB = await nextMessage(b, (m) => m.type === 'hello:ok');
+    expect(helloA.payload.me.username).toBe('alice_ws');
+    expect(helloB.payload.me.username).toBe('bob_ws');
 
-    // 双方都加入 lobby
+    // 双方入房
     a.send(JSON.stringify({ type: 'room:join', payload: { roomId: 'lobby' } }));
     await nextMessage(a, (m) => m.type === 'room:joined' && m.payload.roomId === 'lobby');
+    const aSeesB = nextMessage(a, (m) => m.type === 'member:joined' && m.payload.member.username === 'bob_ws');
     b.send(JSON.stringify({ type: 'room:join', payload: { roomId: 'lobby' } }));
     const bJoined = await nextMessage(b, (m) => m.type === 'room:joined' && m.payload.roomId === 'lobby');
-    expect(bJoined.payload.members.map((x: any) => x.username)).toContain('Alice');
+    expect(bJoined.payload.members.map((x: any) => x.username)).toContain('alice_ws');
+    await aSeesB;
 
     // A 发消息，B 收到
     const bMsgPromise = nextMessage(b, (m) => m.type === 'message:new');
     a.send(JSON.stringify({ type: 'message:send', payload: { roomId: 'lobby', text: 'Hello GameTalk!' } }));
     const bMsg = await bMsgPromise;
     expect(bMsg.payload.message.text).toBe('Hello GameTalk!');
-    expect(bMsg.payload.message.username).toBe('Alice');
+    expect(bMsg.payload.message.username).toBe('alice_ws');
     expect(bMsg.payload.message.id).toBeTruthy();
     expect(bMsg.payload.message.createdAt).toBeTruthy();
 
@@ -106,8 +124,9 @@ describe('realtime chat loop (two clients, one room)', () => {
   });
 
   it('rejects empty messages, truncates long ones, rejects send when not in room', async () => {
+    const { token } = await registerUser('tester_ws');
     const a = await openClient();
-    a.send(JSON.stringify({ type: 'hello', payload: { name: 'Tester' } }));
+    a.send(JSON.stringify({ type: 'hello', payload: { token } }));
     await nextMessage(a, (m) => m.type === 'hello:ok');
     a.send(JSON.stringify({ type: 'room:join', payload: { roomId: 'lobby' } }));
     await nextMessage(a, (m) => m.type === 'room:joined');
@@ -116,13 +135,10 @@ describe('realtime chat loop (two clients, one room)', () => {
     a.send(JSON.stringify({ type: 'message:send', payload: { roomId: 'lobby', text: '   ' } }));
     expect((await err1).payload.code).toBe('empty_message');
 
-    // 超长消息被截断为 2000 字符
     const longMsgPromise = nextMessage(a, (m) => m.type === 'message:new');
     a.send(JSON.stringify({ type: 'message:send', payload: { roomId: 'lobby', text: 'x'.repeat(3000) } }));
-    const longMsg = await longMsgPromise;
-    expect(longMsg.payload.message.text.length).toBe(2000);
+    expect((await longMsgPromise).payload.message.text.length).toBe(2000);
 
-    // 离开房间后发消息被拒（member:left 广播给其他成员，离开者自身不收）
     a.send(JSON.stringify({ type: 'room:leave', payload: { roomId: 'lobby' } }));
     const err2 = nextMessage(a, (m) => m.type === 'error');
     a.send(JSON.stringify({ type: 'message:send', payload: { roomId: 'lobby', text: 'hi' } }));
@@ -131,13 +147,23 @@ describe('realtime chat loop (two clients, one room)', () => {
     a.close();
   });
 
+  it('rejects ws hello with invalid token and closes', async () => {
+    const a = await openClient();
+    const errPromise = nextMessage(a, (m) => m.type === 'error');
+    a.send(JSON.stringify({ type: 'hello', payload: { token: 'not-a-valid-token' } }));
+    const err = await errPromise;
+    expect(err.payload.code).toBe('unauthorized');
+    a.close();
+  });
+
   it('broadcasts member:left when a client disconnects', async () => {
+    const { token: tokenA, userId: uidA } = await registerUser('alice_leave');
+    const { token: tokenB } = await registerUser('bob_leave');
     const a = await openClient();
     const b = await openClient();
-    a.send(JSON.stringify({ type: 'hello', payload: { name: 'Alice' } }));
-    b.send(JSON.stringify({ type: 'hello', payload: { name: 'Bob' } }));
-    const helloA = await nextMessage(a, (m) => m.type === 'hello:ok');
-    const aUserId = helloA.payload.me.id;
+    a.send(JSON.stringify({ type: 'hello', payload: { token: tokenA } }));
+    b.send(JSON.stringify({ type: 'hello', payload: { token: tokenB } }));
+    await nextMessage(a, (m) => m.type === 'hello:ok');
     await nextMessage(b, (m) => m.type === 'hello:ok');
 
     a.send(JSON.stringify({ type: 'room:join', payload: { roomId: 'lobby' } }));
@@ -145,7 +171,7 @@ describe('realtime chat loop (two clients, one room)', () => {
     b.send(JSON.stringify({ type: 'room:join', payload: { roomId: 'lobby' } }));
     await nextMessage(b, (m) => m.type === 'room:joined');
 
-    const bLeftPromise = nextMessage(b, (m) => m.type === 'member:left' && m.payload.userId === aUserId);
+    const bLeftPromise = nextMessage(b, (m) => m.type === 'member:left' && m.payload.userId === uidA);
     a.close();
     const bLeft = await bLeftPromise;
     expect(bLeft.payload.roomId).toBe('lobby');
