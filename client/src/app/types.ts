@@ -35,7 +35,7 @@ export type ServerWsMessage =
   | { type: 'member:left'; payload: { roomId: string; userId: string; username: string } }
   | { type: 'message:new'; payload: { roomId: string; message: ChatMessage } }
   | { type: 'room:deleted'; payload: { roomId: string } }
-  | { type: 'error'; payload: { code: string; message: string } }
+  | { type: 'error'; payload: { code: string; message: string; roomId?: string } }
   | { type: 'pong' };
 
 export type WsStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed';

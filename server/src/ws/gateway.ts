@@ -206,7 +206,10 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         conn.userId,
       ]);
       if (member.rows.length === 0) {
-        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'you are not a member of this room' } });
+        send(conn.socket, {
+          type: 'error',
+          payload: { code: 'not_in_room', message: 'you are not a member of this room', roomId },
+        });
         return;
       }
       const avatar = await db.query<{ avatar_url: string | null }>('SELECT avatar_url FROM users WHERE id = $1', [
@@ -262,7 +265,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         return;
       }
       if (!conn.rooms.has(roomId)) {
-        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room' } });
+        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
         return;
       }
       // 持久化后再广播（Phase 4：消息历史）

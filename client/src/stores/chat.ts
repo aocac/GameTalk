@@ -42,9 +42,12 @@ let subWatchdog: ReturnType<typeof setInterval> | null = null;
 function startSubWatchdog(): void {
   if (subWatchdog) return;
   subWatchdog = setInterval(() => {
-    const { status, activeRoomId, subscribedRoomId } = useChat.getState();
+    const { status, activeRoomId, subscribedRoomId, rooms } = useChat.getState();
     if (status === 'open' && activeRoomId && subscribedRoomId !== activeRoomId) {
-      socket?.send({ type: 'room:join', payload: { roomId: activeRoomId } });
+      // 只补订本地列表里存在的房间（防止对已删除房间反复 join）
+      if (rooms.some((r) => r.id === activeRoomId)) {
+        socket?.send({ type: 'room:join', payload: { roomId: activeRoomId } });
+      }
     }
   }, 2000);
 }
@@ -59,6 +62,8 @@ function stopSubWatchdog(): void {
 function wsRoomSwitch(roomId: string | null): void {
   const s = socket;
   if (!s) return;
+  // 只 join 本地房间列表里存在的房间：避免对已删除/失效的房间发 join 被拒
+  if (roomId && !useChat.getState().rooms.some((r) => r.id === roomId)) return;
   const cur = useChat.getState().subscribedRoomId;
   if (cur && cur !== roomId) s.send({ type: 'room:leave', payload: { roomId: cur } });
   if (roomId && roomId !== cur) s.send({ type: 'room:join', payload: { roomId } });
@@ -265,8 +270,30 @@ export const useChat = create<ChatState>()((set, get) => ({
           }));
           if (msg.payload.code === 'unauthorized') {
             useAuth.getState().logout();
-          } else if (msg.payload.code === 'not_in_room' && msg.payload.message.includes('not a member')) {
-            set({ roomError: '你不是该房间成员' });
+          } else if (msg.payload.code === 'not_in_room') {
+            const rid = msg.payload.roomId;
+            if (rid) {
+              // 房间已删除/不再是成员：从本地移除并自动切换（避免"你不是该房间成员"误导报错）
+              const wasActive = get().activeRoomId === rid;
+              set((s) => {
+                const rooms = s.rooms.filter((r) => r.id !== rid);
+                const messagesByRoom = { ...s.messagesByRoom };
+                const membersByRoom = { ...s.membersByRoom };
+                delete messagesByRoom[rid];
+                delete membersByRoom[rid];
+                return {
+                  rooms,
+                  messagesByRoom,
+                  membersByRoom,
+                  activeRoomId: wasActive ? (rooms[0]?.id ?? null) : s.activeRoomId,
+                  subscribedRoomId: wasActive ? null : s.subscribedRoomId,
+                };
+              });
+              if (get().activeRoomId) void get().selectRoom(get().activeRoomId!);
+              if (wasActive) set({ roomError: '房间已删除或你已不在该房间，已自动切换。' });
+            } else {
+              set({ roomError: '你不是该房间成员' });
+            }
           } else if (msg.payload.code === 'only_owner') {
             set({ roomError: '只有房主才能删除房间' });
           } else if (msg.payload.code === 'room_not_found') {
