@@ -213,7 +213,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 
         <div className="settings-section">
           <span className="section-title">消息 Overlay</span>
-          <label className="field">
+          <div className="field">
             <span>显示位置（点击即应用并预览 5 秒）</span>
             <div className="position-chips">
               {Object.entries(POSITION_LABELS).map(([v, label]) => (
@@ -240,7 +240,8 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                 </button>
               ))}
             </div>
-          </label>
+            <span className="position-current">当前位置：{POSITION_LABELS[overlayPosition]}</span>
+          </div>
           <button
             className="btn ghost block"
             onClick={() => {
