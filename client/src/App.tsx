@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useChat } from './stores/chat';
 import { useAuth } from './stores/auth';
-import { useSettings, type OverlayPosition } from './app/settings';
+import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
 import * as gameMode from './app/gameMode';
 import HotkeyRecorder from './components/HotkeyRecorder';
 
@@ -80,11 +80,16 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     setOverlayScale,
     overlayDurationSec,
     setOverlayDurationSec,
+    useProxy,
+    setUseProxy,
+    proxyAddress,
+    setProxyAddress,
   } = useSettings();
   const { user, updateProfile, uploadAvatar, busy } = useAuth();
   const [username, setUsername] = useState(user?.username ?? '');
   const [profileMsg, setProfileMsg] = useState<string | null>(null);
   const [avatarMsg, setAvatarMsg] = useState<string | null>(null);
+  const [proxyMsg, setProxyMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // 用户主动调整位置/缩放：立即应用 + 5 秒预览（Overlay 平时隐藏，必须主动显示让用户看到效果）
@@ -195,6 +200,45 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             {soundEnabled ? '已开启' : '已关闭'}
           </div>
         </label>
+
+        <div className="settings-section">
+          <span className="section-title">网络代理</span>
+          <label className="field">
+            <span>启用代理（默认关闭 = 直连，不走系统代理）</span>
+            <div className="switch-row">
+              <input
+                type="checkbox"
+                checked={useProxy}
+                onChange={(e) => {
+                  setUseProxy(e.target.checked);
+                  void applyProxySetting(e.target.checked, proxyAddress);
+                  setProxyMsg('已应用（立即生效）');
+                  setTimeout(() => setProxyMsg(null), 2000);
+                }}
+              />
+              {useProxy ? '已启用' : '已关闭'}
+            </div>
+          </label>
+          {useProxy && (
+            <label className="field">
+              <span>代理地址（HTTP 混合代理，如 127.0.0.1:7890）</span>
+              <input
+                value={proxyAddress}
+                placeholder="127.0.0.1:7890"
+                onChange={(e) => {
+                  setProxyAddress(e.target.value);
+                  void applyProxySetting(true, e.target.value);
+                  setProxyMsg('已应用（立即生效）');
+                  setTimeout(() => setProxyMsg(null), 2000);
+                }}
+              />
+              {proxyMsg && <span className="ok-text">{proxyMsg}</span>}
+            </label>
+          )}
+          <span className="field-hint">
+            连接国内/自建服务器建议保持关闭（直连最快）；仅当服务器需要经代理访问时再开启。
+          </span>
+        </div>
 
         <div className="settings-section">
           <span className="section-title">游戏模式</span>
@@ -468,6 +512,12 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     return () => disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [offline]);
+
+  // 启动时应用已保存的代理设置（默认关闭=直连）
+  useEffect(() => {
+    const { useProxy: up, proxyAddress: pa } = useSettings.getState();
+    void applyProxySetting(up, pa);
+  }, []);
 
   // 游戏模式生命周期：启停快捷键 + Overlay 事件监听
   const { gameModeEnabled } = useSettings();

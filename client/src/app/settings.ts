@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
+import { invoke } from '@tauri-apps/api/core';
 
 export type OverlayPosition =
   | 'top-left'
@@ -32,6 +33,10 @@ export interface AppSettings {
   overlayScale: number;
   /** 消息 Overlay 自动隐藏时长（秒） */
   overlayDurationSec: number;
+  /** 启用代理（默认关闭=不走代理，直连服务器） */
+  useProxy: boolean;
+  /** 代理地址，如 127.0.0.1:7890 */
+  proxyAddress: string;
   setServerUrl: (url: string) => void;
   setSoundEnabled: (v: boolean) => void;
   setGameModeEnabled: (v: boolean) => void;
@@ -40,6 +45,8 @@ export interface AppSettings {
   setOverlayCustomPosition: (v: OverlayPositionState | null) => void;
   setOverlayScale: (v: number) => void;
   setOverlayDurationSec: (v: number) => void;
+  setUseProxy: (v: boolean) => void;
+  setProxyAddress: (v: string) => void;
 }
 
 export const DEFAULT_SERVER_URL = 'http://127.0.0.1:8787';
@@ -50,6 +57,19 @@ export const OVERLAY_BASE_HEIGHT = 180;
 export function wsUrlOf(serverUrl: string): string {
   const base = serverUrl.trim().replace(/\/+$/, '');
   return base.replace(/^http/, 'ws') + '/ws';
+}
+
+/**
+ * 应用代理设置到 WebView（立即生效，无需重启）：
+ * - 启用且填了地址 → 走该代理（Network.setProxyOverride）
+ * - 关闭 → 直连（绕过系统代理，默认行为）
+ */
+export async function applyProxySetting(useProxy: boolean, proxyAddress: string): Promise<void> {
+  try {
+    await invoke('set_proxy', { enabled: useProxy && !!proxyAddress.trim(), addr: proxyAddress.trim() });
+  } catch {
+    // 非 Tauri 环境（浏览器调试/测试）下无此命令，忽略
+  }
 }
 
 /** 非浏览器环境（vitest node）下的内存存储兜底 */
@@ -70,6 +90,8 @@ export const useSettings = create<AppSettings>()(
       overlayCustomPosition: null,
       overlayScale: 1,
       overlayDurationSec: 6,
+      useProxy: false,
+      proxyAddress: '',
       setServerUrl: (serverUrl) => set({ serverUrl: serverUrl.trim() }),
       setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
       setGameModeEnabled: (gameModeEnabled) => set({ gameModeEnabled }),
@@ -78,6 +100,8 @@ export const useSettings = create<AppSettings>()(
       setOverlayCustomPosition: (overlayCustomPosition) => set({ overlayCustomPosition }),
       setOverlayScale: (overlayScale) => set({ overlayScale: Math.min(2, Math.max(0.5, overlayScale)) }),
       setOverlayDurationSec: (overlayDurationSec) => set({ overlayDurationSec: Math.min(30, Math.max(2, overlayDurationSec)) }),
+      setUseProxy: (useProxy) => set({ useProxy }),
+      setProxyAddress: (proxyAddress) => set({ proxyAddress: proxyAddress.trim() }),
     }),
     {
       name: 'gametalk-settings',

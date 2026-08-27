@@ -10,6 +10,35 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// 运行时设置 WebView 代理（立即生效，无需重启）：
+/// - enabled=true 且 addr 非空 → Network.setProxyOverride 走该代理
+/// - enabled=false → 直连（绕过系统代理，默认行为）
+#[tauri::command]
+fn set_proxy(window: tauri::WebviewWindow, enabled: bool, addr: Option<String>) {
+    let _ = window.with_webview(move |webview| {
+        #[cfg(windows)]
+        {
+            use windows_core::{w, HSTRING, PCWSTR};
+            let controller = webview.controller();
+            if let Ok(core) = unsafe { controller.CoreWebView2() } {
+                let params = if enabled {
+                    let rules = addr.unwrap_or_default();
+                    format!(r#"{{"proxyRules":"{}","proxyBypassList":[]}}"#, rules)
+                } else {
+                    r#"{"proxyRules":"","proxyBypassList":["*"]}"#.to_string()
+                };
+                let params_h = HSTRING::from(params);
+                let params_pcw = PCWSTR(params_h.as_ptr());
+                let _ = unsafe { core.CallDevToolsProtocolMethod(w!("Network.setProxyOverride"), params_pcw, None) };
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = webview;
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -22,7 +51,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![quit_app])
+        .invoke_handler(tauri::generate_handler![quit_app, set_proxy])
         .setup(|app| {
             // 系统托盘：显示主窗口 / 退出
             let show = MenuItem::with_id(app, "show", "显示 GameTalk", true, None::<&str>)?;

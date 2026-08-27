@@ -1143,6 +1143,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
