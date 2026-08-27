@@ -143,6 +143,26 @@ describe('realtime chat loop (two authenticated clients, one room)', () => {
     b.close();
   });
 
+  it('idempotent room:join always replies room:joined (client watchdog safety)', async () => {
+    const { token } = await registerUser('join_idem');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/rooms',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'idem' },
+    });
+    const roomId = created.json().room.id;
+    const c = await openClient();
+    c.send(JSON.stringify({ type: 'hello', payload: { token } }));
+    await nextMessage(c, (m) => m.type === 'hello:ok');
+    c.send(JSON.stringify({ type: 'room:join', payload: { roomId } }));
+    await nextMessage(c, (m) => m.type === 'room:joined' && m.payload.roomId === roomId);
+    // 再次 join（客户端看门狗重试场景）：必须仍收到 room:joined，而不是被静默吞掉
+    c.send(JSON.stringify({ type: 'room:join', payload: { roomId } }));
+    await nextMessage(c, (m) => m.type === 'room:joined' && m.payload.roomId === roomId);
+    c.close();
+  });
+
   it('owner deletes room: only_owner enforced, both clients get room:deleted, DB cleaned', async () => {
     const { token: tokenA } = await registerUser('owner_del');
     const { token: tokenB } = await registerUser('guest_del');

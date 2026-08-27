@@ -34,6 +34,25 @@ interface ChatState {
 }
 
 let socket: ChatSocket | null = null;
+/** 订阅看门狗：连接开着但活跃房间订阅缺失时，每 2s 补发 room:join 自愈 */
+let subWatchdog: ReturnType<typeof setInterval> | null = null;
+
+function startSubWatchdog(): void {
+  if (subWatchdog) return;
+  subWatchdog = setInterval(() => {
+    const { status, activeRoomId, subscribedRoomId } = useChat.getState();
+    if (status === 'open' && activeRoomId && subscribedRoomId !== activeRoomId) {
+      socket?.send({ type: 'room:join', payload: { roomId: activeRoomId } });
+    }
+  }, 2000);
+}
+
+function stopSubWatchdog(): void {
+  if (subWatchdog) {
+    clearInterval(subWatchdog);
+    subWatchdog = null;
+  }
+}
 
 function wsRoomSwitch(roomId: string | null): void {
   const s = socket;
@@ -175,9 +194,11 @@ export const useChat = create<ChatState>()((set, get) => ({
     });
 
     socket.connect(wsUrlOf(useSettings.getState().serverUrl));
+    startSubWatchdog();
   },
 
   disconnect: () => {
+    stopSubWatchdog();
     socket?.close();
     socket = null;
     // 保留 rooms/messages 等状态，便于重新连接后恢复订阅

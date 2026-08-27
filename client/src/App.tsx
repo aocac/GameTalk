@@ -426,6 +426,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     me,
     rooms,
     activeRoomId,
+    subscribedRoomId,
     membersByRoom,
     messagesByRoom,
     loadingRooms,
@@ -572,6 +573,14 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             </label>
             <span className="member-count">{offline ? '未连接' : `${members.length} 人在线`}</span>
             <StatusDot status={status} />
+            {!offline && activeRoom && (
+              <span
+                className={`sub-tag ${subscribedRoomId === activeRoomId ? 'ok' : 'pending'}`}
+                title={subscribedRoomId === activeRoomId ? '已订阅该房间实时消息' : '订阅未就绪（自动重试中…）'}
+              >
+                {subscribedRoomId === activeRoomId ? '订阅 ✓' : '订阅中…'}
+              </span>
+            )}
             {!offline && (
               <button className="btn ghost small" onClick={connected ? disconnect : connect}>
                 {connected ? '断开' : '连接'}

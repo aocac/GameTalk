@@ -87,7 +87,8 @@ function publicMember(userId: string, username: string, avatarUrl?: string | nul
 
 function joinRoom(conn: Conn, roomId: string, avatarUrl?: string | null): void {
   if (!conn.userId) return;
-  if (conn.rooms.has(roomId)) return;
+  // 幂等：重复加入也总是回复 room:joined —— 否则客户端重试加入会被静默吞掉，
+  // 订阅响应一旦丢失将永远无法收敛（客户端看门狗依赖该回执）
   conn.rooms.add(roomId);
 
   let members = rooms.get(roomId);
