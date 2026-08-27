@@ -36,6 +36,7 @@ type ClientMessage =
   | { type: 'hello'; payload: { token: string } }
   | { type: 'room:join'; payload: { roomId: string } }
   | { type: 'room:leave'; payload: { roomId: string } }
+  | { type: 'room:delete'; payload: { roomId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string } }
   | { type: 'ping' };
 
@@ -216,6 +217,36 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
     }
     case 'room:leave': {
       leaveRoom(conn, sanitizeRoomId(msg.payload.roomId));
+      break;
+    }
+    case 'room:delete': {
+      // 删除房间：仅房主可删；级联删除消息/成员，并广播给所有在线成员
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const roomId = sanitizeRoomId(msg.payload.roomId);
+      const found = await db.query<{ owner_id: string }>('SELECT owner_id FROM rooms WHERE id = $1', [roomId]);
+      if (found.rows.length === 0) {
+        send(conn.socket, { type: 'error', payload: { code: 'room_not_found', message: 'room not found' } });
+        return;
+      }
+      if (found.rows[0].owner_id !== conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'only_owner', message: 'only the room owner can delete the room' } });
+        return;
+      }
+      await db.query('DELETE FROM rooms WHERE id = $1', [roomId]); // messages/room_members 级联删除
+      // 通知所有在线成员（含房主自己），并清理内存订阅
+      const members = rooms.get(roomId);
+      if (members) {
+        const payload = { type: 'room:deleted', payload: { roomId } };
+        for (const entry of members.values()) {
+          for (const s of entry.sockets) {
+            if (s.readyState === s.OPEN) s.send(JSON.stringify(payload));
+          }
+        }
+        rooms.delete(roomId);
+      }
       break;
     }
     case 'message:send': {

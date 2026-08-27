@@ -21,6 +21,7 @@ export type ClientWsMessage =
   | { type: 'hello'; payload: { token: string } }
   | { type: 'room:join'; payload: { roomId: string } }
   | { type: 'room:leave'; payload: { roomId: string } }
+  | { type: 'room:delete'; payload: { roomId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string } }
   | { type: 'ping' };
 
@@ -31,6 +32,7 @@ export type ServerWsMessage =
   | { type: 'member:joined'; payload: { roomId: string; member: UserBrief } }
   | { type: 'member:left'; payload: { roomId: string; userId: string; username: string } }
   | { type: 'message:new'; payload: { roomId: string; message: ChatMessage } }
+  | { type: 'room:deleted'; payload: { roomId: string } }
   | { type: 'error'; payload: { code: string; message: string } }
   | { type: 'pong' };
 

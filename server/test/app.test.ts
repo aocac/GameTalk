@@ -143,6 +143,45 @@ describe('realtime chat loop (two authenticated clients, one room)', () => {
     b.close();
   });
 
+  it('owner deletes room: only_owner enforced, both clients get room:deleted, DB cleaned', async () => {
+    const { token: tokenA } = await registerUser('owner_del');
+    const { token: tokenB } = await registerUser('guest_del');
+    const roomId = await makeRoomForTwo(tokenA, tokenB);
+    const a = await openClient();
+    const b = await openClient();
+    a.send(JSON.stringify({ type: 'hello', payload: { token: tokenA } }));
+    b.send(JSON.stringify({ type: 'hello', payload: { token: tokenB } }));
+    await nextMessage(a, (m) => m.type === 'hello:ok');
+    await nextMessage(b, (m) => m.type === 'hello:ok');
+    a.send(JSON.stringify({ type: 'room:join', payload: { roomId } }));
+    await nextMessage(a, (m) => m.type === 'room:joined' && m.payload.roomId === roomId);
+    b.send(JSON.stringify({ type: 'room:join', payload: { roomId } }));
+    await nextMessage(b, (m) => m.type === 'room:joined' && m.payload.roomId === roomId);
+
+    // 非房主删除 → 拒绝
+    b.send(JSON.stringify({ type: 'room:delete', payload: { roomId } }));
+    const denied = await nextMessage(b, (m) => m.type === 'error');
+    expect(denied.payload.code).toBe('only_owner');
+
+    // 房主删除 → 双方都收到 room:deleted
+    const aDel = nextMessage(a, (m) => m.type === 'room:deleted' && m.payload.roomId === roomId);
+    const bDel = nextMessage(b, (m) => m.type === 'room:deleted' && m.payload.roomId === roomId);
+    a.send(JSON.stringify({ type: 'room:delete', payload: { roomId } }));
+    await aDel;
+    await bDel;
+
+    // DB 级联清理
+    const room = await db.query('SELECT id FROM rooms WHERE id = $1', [roomId]);
+    expect(room.rows).toHaveLength(0);
+    const msgs = await db.query('SELECT COUNT(*)::int AS c FROM messages WHERE room_id = $1', [roomId]);
+    expect(msgs.rows[0].c).toBe(0);
+    const members = await db.query('SELECT COUNT(*)::int AS c FROM room_members WHERE room_id = $1', [roomId]);
+    expect(members.rows[0].c).toBe(0);
+
+    a.close();
+    b.close();
+  });
+
   it('rejects empty messages, truncates long ones, rejects send when not in room', async () => {
     const { token } = await registerUser('tester_ws');
     const created = await app.inject({

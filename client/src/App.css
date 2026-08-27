@@ -368,6 +368,17 @@ body {
   background: var(--surface);
 }
 
+/* 危险操作（删除房间等）：红色系 */
+.btn.danger,
+.btn.ghost.danger {
+  color: var(--danger, #f0514d);
+  border-color: color-mix(in srgb, var(--danger, #f0514d) 45%, transparent);
+}
+
+.btn.ghost.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger, #f0514d) 10%, transparent);
+}
+
 .btn.small {
   padding: 5px 10px;
   font-size: 12px;

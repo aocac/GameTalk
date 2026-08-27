@@ -437,12 +437,14 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     joinRoomByCode,
     selectRoom,
     leaveActiveRoom,
+    deleteActiveRoom,
     sendMessage,
     clearRoomError,
   } = useChat();
   const { user, logout } = useAuth();
   const { soundEnabled, setSoundEnabled } = useSettings();
   const [draft, setDraft] = useState('');
+  const [confirmDeleteRoom, setConfirmDeleteRoom] = useState(false);
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [roomName, setRoomName] = useState('');
@@ -573,6 +575,23 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             {!offline && (
               <button className="btn ghost small" onClick={connected ? disconnect : connect}>
                 {connected ? '断开' : '连接'}
+              </button>
+            )}
+            {!offline && activeRoom && activeRoom.ownerId === me?.id && (
+              <button
+                className="btn ghost small danger"
+                onClick={() => {
+                  if (!confirmDeleteRoom) {
+                    setConfirmDeleteRoom(true);
+                    setTimeout(() => setConfirmDeleteRoom(false), 3000);
+                  } else {
+                    setConfirmDeleteRoom(false);
+                    void deleteActiveRoom();
+                  }
+                }}
+                title="删除房间（仅房主）"
+              >
+                {confirmDeleteRoom ? '确认删除？' : '删除房间'}
               </button>
             )}
             <button className="btn ghost small" onClick={() => setShowSettings(true)}>

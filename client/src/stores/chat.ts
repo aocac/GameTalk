@@ -28,6 +28,7 @@ interface ChatState {
   joinRoomByCode: (code: string) => Promise<api.Room | null>;
   selectRoom: (roomId: string) => Promise<void>;
   leaveActiveRoom: () => Promise<void>;
+  deleteActiveRoom: () => Promise<void>;
   sendMessage: (text: string) => void;
   clearRoomError: () => void;
 }
@@ -121,6 +122,27 @@ export const useChat = create<ChatState>()((set, get) => ({
             }));
           }
           break;
+        case 'room:deleted': {
+          // 房主删除了房间：从本地移除，若正活跃则切到下一个房间
+          const rid = msg.payload.roomId;
+          set((s) => {
+            const rooms = s.rooms.filter((r) => r.id !== rid);
+            const messagesByRoom = { ...s.messagesByRoom };
+            const membersByRoom = { ...s.membersByRoom };
+            delete messagesByRoom[rid];
+            delete membersByRoom[rid];
+            const wasActive = s.activeRoomId === rid;
+            return {
+              rooms,
+              messagesByRoom,
+              membersByRoom,
+              activeRoomId: wasActive ? (rooms[0]?.id ?? null) : s.activeRoomId,
+              subscribedRoomId: wasActive ? null : s.subscribedRoomId,
+            };
+          });
+          if (get().activeRoomId) void get().selectRoom(get().activeRoomId!);
+          break;
+        }
         case 'message:new': {
           set((s) => ({
             messagesByRoom: {
@@ -141,6 +163,10 @@ export const useChat = create<ChatState>()((set, get) => ({
             useAuth.getState().logout();
           } else if (msg.payload.code === 'not_in_room' && msg.payload.message.includes('not a member')) {
             set({ roomError: '你不是该房间成员' });
+          } else if (msg.payload.code === 'only_owner') {
+            set({ roomError: '只有房主才能删除房间' });
+          } else if (msg.payload.code === 'room_not_found') {
+            set({ roomError: '房间不存在或已被删除' });
           }
           break;
         default:
@@ -252,6 +278,17 @@ export const useChat = create<ChatState>()((set, get) => ({
     } catch (e) {
       set({ roomError: e instanceof Error ? e.message : '离开房间失败' });
     }
+  },
+
+  deleteActiveRoom: async () => {
+    const { activeRoomId, status } = get();
+    if (!activeRoomId) return;
+    if (status !== 'open' || !socket) {
+      set({ roomError: '连接未就绪，无法删除房间。请确认已连接服务器。' });
+      return;
+    }
+    // 通过 WS 发送删除请求：服务端校验房主权限，成功后广播 room:deleted
+    socket.send({ type: 'room:delete', payload: { roomId: activeRoomId } });
   },
 
   sendMessage: (text) => {
