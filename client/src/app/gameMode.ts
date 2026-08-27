@@ -45,6 +45,35 @@ function getOverlayWindow(): Promise<WebviewWindow | null> {
   return WebviewWindow.getByLabel(OVERLAY_WINDOW_LABEL);
 }
 
+/**
+ * 确保 Overlay 窗口存在（webview 崩溃/窗口被意外关闭时重建）。
+ * Overlay 平时隐藏，若窗口丢失则消息/预览事件会无人接收——这是"Overlay 完全失效"的兜底。
+ */
+async function ensureOverlayWindow(): Promise<void> {
+  const win = await WebviewWindow.getByLabel(OVERLAY_WINDOW_LABEL);
+  if (win) return;
+  try {
+    new WebviewWindow(OVERLAY_WINDOW_LABEL, {
+      title: 'GameTalk 消息',
+      url: 'overlay.html',
+      width: 380,
+      height: 180,
+      decorations: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      shadow: false,
+      focus: false,
+      visible: false,
+    });
+    // 等窗口与监听器就绪（事件监听在 overlay.tsx mount 时注册）
+    await new Promise((r) => setTimeout(r, 500));
+  } catch {
+    // 重建失败不阻塞主流程
+  }
+}
+
 export function isGameModeRunning(): boolean {
   return started;
 }
@@ -146,6 +175,7 @@ export async function applyOverlayConfig(
  *  注意：show 由 overlay 窗口自身的 preview 监听执行（与 adjust 退出的 hide
  *  同源同序），这里只发事件——跨 webview 直接 show 会与 hide 竞态导致窗口被隐藏 */
 export async function previewOverlay(): Promise<void> {
+  await ensureOverlayWindow();
   await emit('overlay:preview');
 }
 
@@ -225,8 +255,14 @@ async function unregisterEsc(): Promise<void> {
 
 /** 新消息到达时推给 Overlay 显示（由 chat store 调用） */
 export async function pushOverlayMessage(message: ChatMessage): Promise<void> {
+  if (!started) return;
   const win = await getOverlayWindow();
-  if (!win || !started) return;
+  if (!win) {
+    // Overlay 窗口丢失（webview 崩溃等）→ 重建后仍尝试推送
+    await ensureOverlayWindow();
+    const w2 = await getOverlayWindow();
+    if (!w2) return;
+  }
   await emit('overlay:append', message);
 }
 

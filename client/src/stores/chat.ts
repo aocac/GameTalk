@@ -167,6 +167,9 @@ export const useChat = create<ChatState>()((set, get) => ({
           messagesByRoom: Object.fromEntries(
             Object.entries(s.messagesByRoom).map(([rid, msgs]) => [rid, msgs.filter((m) => !m.pending)]),
           ),
+          // 重置历史标记：重连后 selectRoom 会重新拉取历史，
+          // 把断开期间已入库的消息补回来（否则本地会永久丢消息）
+          historyLoadedRooms: {},
         }));
         set({
           connectionError: `无法连接服务器${socket?.lastError ? `（${socket.lastError}）` : ''}。请确认服务器地址正确且服务器已运行`,
@@ -186,7 +189,12 @@ export const useChat = create<ChatState>()((set, get) => ({
             .catch(() => undefined)
             .then(() => {
               const active = get().activeRoomId;
-              if (active) wsRoomSwitch(active);
+              if (active) {
+                wsRoomSwitch(active);
+                // 重连后重新加载活跃房间历史（historyLoadedRooms 已在 reconnecting 时重置），
+                // 把断开期间已入库的消息补回来，避免本地永久丢消息
+                void get().selectRoom(active);
+              }
             });
           break;
         case 'room:joined':
