@@ -245,18 +245,6 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           <button
             className="btn ghost block"
             onClick={() => {
-              // 先退出可能残留的调整态，再进入；不跳位（move:false），从当前位置开始拖
-              void gameMode.stopOverlayAdjust();
-              void gameMode
-                .applyOverlayConfig(undefined, { move: false })
-                .then(() => void gameMode.startOverlayAdjust());
-            }}
-          >
-            拖拽调整 Overlay 位置/大小（在屏幕上直接拖动）
-          </button>
-          <button
-            className="btn ghost block"
-            onClick={() => {
               void gameMode.stopOverlayAdjust();
               setOverlayCustomPosition(null);
               applyAndPreview('top-left');
