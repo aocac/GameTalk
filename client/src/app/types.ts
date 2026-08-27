@@ -14,6 +14,8 @@ export interface ChatMessage {
   avatarUrl?: string | null;
   text: string;
   createdAt: string;
+  /** 客户端本地字段：乐观发送未确认时标记（真实服务器消息无此字段） */
+  pending?: boolean;
 }
 
 // 客户端 -> 服务端

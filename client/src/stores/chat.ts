@@ -17,6 +17,8 @@ interface ChatState {
   subscribedRoomId: string | null;
   messagesByRoom: Record<string, api.RoomMessage[]>;
   membersByRoom: Record<string, UserBrief[]>;
+  /** 每个房间的历史是否已加载（用于展示"加载历史中…"） */
+  historyLoadedRooms: Record<string, boolean>;
   loadingRooms: boolean;
   roomError: string | null;
   /** 连接失败提示（server 不可达时展示） */
@@ -62,6 +64,26 @@ function wsRoomSwitch(roomId: string | null): void {
   if (roomId && roomId !== cur) s.send({ type: 'room:join', payload: { roomId } });
 }
 
+/** 乐观发送队列：roomId -> tempId 列表（用于 message:new 到达时按序校正） */
+const pendingSends: { roomId: string; tempId: string }[] = [];
+let pendingSeq = 0;
+
+function appendPending(roomId: string, tempId: string): void {
+  pendingSends.push({ roomId, tempId });
+}
+
+/** 移除该房间最早的乐观消息（对应一条已确认的 message:new），返回其 tempId */
+function shiftPending(roomId: string): string | null {
+  const i = pendingSends.findIndex((p) => p.roomId === roomId);
+  if (i < 0) return null;
+  const [p] = pendingSends.splice(i, 1);
+  return p.tempId;
+}
+
+function clearPending(): void {
+  pendingSends.length = 0;
+}
+
 export const useChat = create<ChatState>()((set, get) => ({
   status: 'idle',
   me: null,
@@ -70,6 +92,7 @@ export const useChat = create<ChatState>()((set, get) => ({
   subscribedRoomId: null,
   messagesByRoom: {},
   membersByRoom: {},
+  historyLoadedRooms: {},
   loadingRooms: false,
   roomError: null,
   connectionError: null,
@@ -93,6 +116,14 @@ export const useChat = create<ChatState>()((set, get) => ({
         set({ subscribedRoomId: null });
         socket?.send({ type: 'hello', payload: { token } });
       } else if (status === 'reconnecting') {
+        // 连接抖动：未确认的乐观消息可能已发送/未发送，全部清除，
+        // 由 hello:ok 后的历史重载兜底（已发送的会从历史回来）
+        clearPending();
+        set((s) => ({
+          messagesByRoom: Object.fromEntries(
+            Object.entries(s.messagesByRoom).map(([rid, msgs]) => [rid, msgs.filter((m) => !m.pending)]),
+          ),
+        }));
         set({
           connectionError: `无法连接服务器${socket?.lastError ? `（${socket.lastError}）` : ''}。请确认服务器地址正确且服务器已运行`,
         });
@@ -163,12 +194,17 @@ export const useChat = create<ChatState>()((set, get) => ({
           break;
         }
         case 'message:new': {
-          set((s) => ({
-            messagesByRoom: {
-              ...s.messagesByRoom,
-              [msg.payload.roomId]: [...(s.messagesByRoom[msg.payload.roomId] ?? []), msg.payload.message],
-            },
-          }));
+          set((s) => {
+            // 自己发出的消息：先移除对应的乐观占位，再追加服务器确认版本（避免重复）
+            let list = s.messagesByRoom[msg.payload.roomId] ?? [];
+            if (msg.payload.message.userId === s.me?.id) {
+              const tempId = shiftPending(msg.payload.roomId);
+              if (tempId) list = list.filter((m) => m.id !== tempId);
+            }
+            return {
+              messagesByRoom: { ...s.messagesByRoom, [msg.payload.roomId]: [...list, msg.payload.message] },
+            };
+          });
           const isMine = msg.payload.message.userId === state.me?.id;
           const active = get().activeRoomId;
           if (!isMine && (active === null || active === msg.payload.roomId)) {
@@ -178,6 +214,13 @@ export const useChat = create<ChatState>()((set, get) => ({
           break;
         }
         case 'error':
+          // 服务器返回错误：清掉未确认的乐观占位，避免"幽灵消息"卡在界面上
+          clearPending();
+          set((s) => ({
+            messagesByRoom: Object.fromEntries(
+              Object.entries(s.messagesByRoom).map(([rid, msgs]) => [rid, msgs.filter((m) => !m.pending)]),
+            ),
+          }));
           if (msg.payload.code === 'unauthorized') {
             useAuth.getState().logout();
           } else if (msg.payload.code === 'not_in_room' && msg.payload.message.includes('not a member')) {
@@ -263,12 +306,15 @@ export const useChat = create<ChatState>()((set, get) => ({
     set({ activeRoomId: roomId });
     wsRoomSwitch(roomId);
     // 加载历史（若尚未加载）
-    if (!(get().messagesByRoom[roomId]?.length)) {
+    if (!(get().messagesByRoom[roomId]?.length) && !get().historyLoadedRooms[roomId]) {
       try {
         const { messages } = await api.roomMessages(token, roomId, { limit: 50 });
-        set((s) => ({ messagesByRoom: { ...s.messagesByRoom, [roomId]: messages } }));
+        set((s) => ({
+          messagesByRoom: { ...s.messagesByRoom, [roomId]: messages },
+          historyLoadedRooms: { ...s.historyLoadedRooms, [roomId]: true },
+        }));
       } catch (e) {
-        set({ roomError: e instanceof Error ? e.message : '加载历史失败' });
+        set((s) => ({ historyLoadedRooms: { ...s.historyLoadedRooms, [roomId]: true }, roomError: e instanceof Error ? e.message : '加载历史失败' }));
       }
     }
   },
@@ -326,7 +372,33 @@ export const useChat = create<ChatState>()((set, get) => ({
       return;
     }
     const ok = socket?.send({ type: 'message:send', payload: { roomId: activeRoomId, text: trimmed } });
-    if (ok) playSendSound(useSettings.getState().soundEnabled);
+    if (ok) {
+      playSendSound(useSettings.getState().soundEnabled);
+      // 乐观显示：自己的消息立即上屏（服务器确认 message:new 到达后按序校正）
+      const me = get().me;
+      if (me) {
+        const tempId = `tmp-${Date.now()}-${++pendingSeq}`;
+        appendPending(activeRoomId, tempId);
+        set((s) => ({
+          messagesByRoom: {
+            ...s.messagesByRoom,
+            [activeRoomId]: [
+              ...(s.messagesByRoom[activeRoomId] ?? []),
+              {
+                id: tempId,
+                roomId: activeRoomId,
+                userId: me.id,
+                username: me.username,
+                avatarUrl: me.avatarUrl ?? null,
+                text: trimmed,
+                createdAt: new Date().toISOString(),
+                pending: true,
+              },
+            ],
+          },
+        }));
+      }
+    }
   },
 
   clearRoomError: () => set({ roomError: null }),

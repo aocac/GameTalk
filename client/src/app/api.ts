@@ -92,6 +92,8 @@ export interface RoomMessage {
   avatarUrl?: string | null;
   text: string;
   createdAt: string;
+  /** 客户端本地字段：乐观发送未确认时标记（服务器返回的消息无此字段） */
+  pending?: boolean;
 }
 
 export function listRooms(token: string): Promise<{ rooms: Room[] }> {

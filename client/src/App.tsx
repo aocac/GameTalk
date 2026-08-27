@@ -427,6 +427,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     rooms,
     activeRoomId,
     subscribedRoomId,
+    historyLoadedRooms,
     membersByRoom,
     messagesByRoom,
     loadingRooms,
@@ -659,19 +660,25 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               </button>
             </div>
           )}
-          {!offline && activeRoom && messages.length === 0 && (
+          {!offline && activeRoom && messages.length === 0 && !historyLoadedRooms[activeRoom.id] && (
+            <div className="empty">
+              <p className="empty-title">加载历史消息…</p>
+              <p className="empty-sub">正在从服务器拉取该房间的历史记录。</p>
+            </div>
+          )}
+          {!offline && activeRoom && messages.length === 0 && historyLoadedRooms[activeRoom.id] && (
             <div className="empty">
               <p className="empty-title">欢迎来到 #{activeRoom.name}</p>
               <p className="empty-sub">发送第一条消息，开始与房间里的玩家实时沟通。</p>
             </div>
           )}
           {messages.map((m) => (
-            <div key={m.id} className={`message ${m.userId === me?.id ? 'mine' : ''}`}>
+            <div key={m.id} className={`message ${m.userId === me?.id ? 'mine' : ''} ${m.pending ? 'pending' : ''}`}>
               <Avatar name={m.username} url={m.avatarUrl} size={30} />
               <div className="message-body">
                 <div className="message-head">
                   <span className="message-author">{m.username}</span>
-                  <span className="message-time">{new Date(m.createdAt).toLocaleTimeString()}</span>
+                  <span className="message-time">{m.pending ? '发送中…' : new Date(m.createdAt).toLocaleTimeString()}</span>
                 </div>
                 <div className="message-text">{m.text}</div>
               </div>
