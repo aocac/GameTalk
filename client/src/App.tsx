@@ -224,10 +224,12 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                   onClick={() => {
                     if (v === 'custom') {
                       // 选择「自定义」= 进入拖拽调整，保持当前位置，绝不跳位；
-                      // 先同步窗口尺寸（与当前缩放一致），避免内容截断
+                      // 只同步窗口尺寸（move:false），不应用已保存的自定义坐标
                       setOverlayPosition(v);
                       void gameMode.stopOverlayAdjust();
-                      void gameMode.applyOverlayConfig().then(() => void gameMode.startOverlayAdjust());
+                      void gameMode
+                        .applyOverlayConfig(undefined, { move: false })
+                        .then(() => void gameMode.startOverlayAdjust());
                     } else {
                       // 预设：立即应用 + 5 秒预览（每次点击必触发，即使值与当前相同）
                       applyAndPreview(v as OverlayPosition);
@@ -242,9 +244,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           <button
             className="btn ghost block"
             onClick={() => {
-              // 先退出可能残留的调整态，再进入（不切换 preset，避免与预览竞争）
+              // 先退出可能残留的调整态，再进入；不跳位（move:false），从当前位置开始拖
               void gameMode.stopOverlayAdjust();
-              void gameMode.applyOverlayConfig().then(() => void gameMode.startOverlayAdjust());
+              void gameMode
+                .applyOverlayConfig(undefined, { move: false })
+                .then(() => void gameMode.startOverlayAdjust());
             }}
           >
             拖拽调整 Overlay 位置/大小（在屏幕上直接拖动）

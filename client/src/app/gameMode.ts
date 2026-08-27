@@ -99,8 +99,13 @@ function clampToMonitor(
 
 /** 根据设置把消息 Overlay 摆到指定位置并按比例缩放。
  *  positionOverride：显式指定本次要应用的预设（不依赖 store 读取，
- *  避免 select 选择后 store 未及时同步导致应用了旧位置） */
-export async function applyOverlayConfig(positionOverride?: OverlayPosition): Promise<void> {
+ *  避免 select 选择后 store 未及时同步导致应用了旧位置）
+ *  opts.move=false：只同步窗口尺寸，不移动窗口（进入拖拽调整时使用，
+ *  从当前位置开始拖——绝不跳到已保存的自定义坐标） */
+export async function applyOverlayConfig(
+  positionOverride?: OverlayPosition,
+  opts?: { move?: boolean },
+): Promise<void> {
   const { overlayPosition: storedPosition, overlayScale, overlayCustomPosition } = useSettings.getState();
   const overlayPosition = positionOverride ?? storedPosition;
   const win = await getOverlayWindow();
@@ -113,7 +118,9 @@ export async function applyOverlayConfig(positionOverride?: OverlayPosition): Pr
   const winH = Math.round(h * dpr);
   try {
     await win.setSize(new PhysicalSize(winW, winH));
-    if (overlayPosition === 'custom' && overlayCustomPosition) {
+    if (opts?.move === false) {
+      // 进入拖拽调整：仅同步尺寸，保持当前位置（不跳位）
+    } else if (overlayPosition === 'custom' && overlayCustomPosition) {
       // 用户拖拽自定义位置（物理像素，左上角锚点）；越界则夹回屏幕内
       const clamped = clampToMonitor(overlayCustomPosition.x, overlayCustomPosition.y, winW, winH, mon);
       await win.setPosition(new PhysicalPosition(Math.round(clamped.x), Math.round(clamped.y)));
