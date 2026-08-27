@@ -117,7 +117,9 @@ jobs:
         run: find assets -type f
       - uses: softprops/action-gh-release@v2
         with:
+          # 产物 zip 内含嵌套目录（deb/appimage/dmg/macos），用递归 glob 匹配文件
           files: |
-            assets/windows/*
-            assets/linux/*
-            assets/macos/*
+            assets/**/*.exe
+            assets/**/*.deb
+            assets/**/*.AppImage
+            assets/**/*.dmg
