@@ -36,8 +36,9 @@ Thumbs.db
 *.db
 data/
 
-# --- 构建产物（根目录安装包副本） ---
-/GameTalk-Setup.exe
+# --- 构建产物（根目录安装包副本，含版本/架构） ---
+/GameTalk-*-Setup.exe
+/GameTalk-*-setup.exe
 
 # --- Docs generated ---
 *.tmp

@@ -1,0 +1,119 @@
+# 跨平台桌面构建：Windows / Linux / macOS
+# - 手动触发（workflow_dispatch）或推送 v* 标签时运行
+# - 产物上传为 Actions artifacts；打标签时自动挂到对应 GitHub Release
+
+name: Desktop bundles
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  windows:
+    name: Windows (NSIS)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: client
+      - name: Build Windows installer
+        run: npm run tauri build -- --bundles nsis
+        working-directory: client
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: client/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+  linux:
+    name: Linux (deb + AppImage)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+      - name: Install Linux Tauri deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: client
+      - name: Build Linux bundles
+        run: npm run tauri build -- --bundles deb appimage
+        working-directory: client
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            client/src-tauri/target/release/bundle/deb/*.deb
+            client/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+  macos:
+    name: macOS (app + dmg)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: client
+      - name: Build macOS bundles
+        run: npm run tauri build -- --bundles app dmg
+        working-directory: client
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            client/src-tauri/target/release/bundle/dmg/*.dmg
+            client/src-tauri/target/release/bundle/macos/*.app
+          if-no-files-found: error
+
+  release:
+    name: Attach to GitHub Release
+    needs: [windows, linux, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+      - name: List assets
+        run: find assets -type f
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            assets/windows/*
+            assets/linux/*
+            assets/macos/*
