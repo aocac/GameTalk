@@ -18,7 +18,8 @@
         "height": 640,
         "minWidth": 720,
         "minHeight": 480,
-        "center": true
+        "center": true,
+        "additionalBrowserArgs": "--proxy-bypass-list=123.207.234.50;127.0.0.1"
       },
       {
         "label": "input",
