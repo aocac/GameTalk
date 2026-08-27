@@ -477,14 +477,19 @@ body {
   color: var(--text-1);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.15s;
-  outline: none; /* 去掉点击后的焦点环：避免"没点别的按钮却高亮着"的误解 */
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  outline: none; /* 去掉鼠标点击后的焦点环，避免误以为是"卡住的高亮" */
 }
 
+/* Hover 只给极轻背景——避免 accent 边框/文字看起来像"另一个选中态" */
 .chip:hover {
-  border-color: var(--accent);
-  color: var(--accent);
   background: rgba(111, 141, 255, 0.08);
+}
+
+/* 键盘焦点（Tab 导航）给明确轮廓，鼠标点击不触发 */
+.chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .chip.active {
@@ -492,6 +497,10 @@ body {
   border-color: var(--accent);
   color: #fff;
   font-weight: 600;
+}
+
+.chip.active:hover {
+  background: var(--accent); /* active 上的 hover 保持实心，不变色 */
 }
 
 .field input {
