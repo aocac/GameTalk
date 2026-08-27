@@ -4,9 +4,9 @@ export type WsListener = (msg: ServerWsMessage) => void;
 
 /**
  * GameTalk WebSocket 客户端。
- * - 自动重连（指数退避，Phase 6 将完善退避上限与手动重试）
+ * - 自动重连（快速退避：1,1,2,3,5s）
  * - 连接状态通过 onStatus 通知
- * - 心跳 ping（30s）维持连接
+ * - 心跳 ping（15s）维持连接 + pong 超时检测（35s 无 pong = 半开连接，强制重连）
  */
 export class ChatSocket {
   private ws: WebSocket | null = null;
@@ -19,6 +19,8 @@ export class ChatSocket {
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private closedByUser = false;
   private _lastError: string | null = null;
+  /** 最近一次收到 pong 的时间（心跳存活检测：半开连接会在此暴露） */
+  private lastPongAt = 0;
 
   get status(): WsStatus {
     return this.ws ? (this.ws.readyState === WebSocket.OPEN ? 'open' : 'connecting') : this.closedByUser ? 'closed' : 'idle';
@@ -48,6 +50,13 @@ export class ChatSocket {
     }
   }
 
+  /** 强制重连（半开连接/发送超时检测用）：关闭当前连接但不标记用户主动断开，onclose 走自动重连 */
+  forceReconnect(): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.ws?.close();
+  }
+
   private open(): void {
     if (!this.url) return;
     this.emitStatus(this.retryCount > 0 ? 'reconnecting' : 'connecting');
@@ -70,6 +79,7 @@ export class ChatSocket {
     this.ws.onopen = () => {
       this.retryCount = 0;
       this._lastError = null;
+      this.lastPongAt = Date.now();
       this.emitStatus('open');
       this.startHeartbeat();
     };
@@ -80,6 +90,7 @@ export class ChatSocket {
       } catch {
         return;
       }
+      if (msg.type === 'pong') this.lastPongAt = Date.now();
       for (const fn of [...this.listeners]) fn(msg);
     };
     this.ws.onclose = () => {
@@ -101,7 +112,8 @@ export class ChatSocket {
 
   private scheduleReconnect(): void {
     if (this.closedByUser || !this.url) return;
-    const delay = Math.min(1000 * 2 ** this.retryCount, 15000);
+    // 快速重连退避：1,1,2,3,5s（上限 5s，半开/抖动场景尽快恢复）
+    const delay = Math.min(1000 * Math.min(this.retryCount + 1, 5), 5000);
     this.retryCount += 1;
     this.emitStatus('reconnecting');
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -110,11 +122,16 @@ export class ChatSocket {
 
   private startHeartbeat(): void {
     this.stopHeartbeat();
+    // 心跳 15s 一次；若超过 35s 未收到任何 pong → 连接半开，强制重连
     this.heartbeatTimer = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.send({ type: 'ping' });
+        if (Date.now() - this.lastPongAt > 35000) {
+          this._lastError = '心跳超时（连接半开）';
+          this.ws.close();
+        }
       }
-    }, 30000);
+    }, 15000);
   }
 
   private stopHeartbeat(): void {

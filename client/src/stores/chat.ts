@@ -49,6 +49,10 @@ function startSubWatchdog(): void {
         socket?.send({ type: 'room:join', payload: { roomId: activeRoomId } });
       }
     }
+    // 发送超时自愈：消息发出 5s 仍未确认且连接显示 open → 连接疑似半开（TCP 假活），强制重连
+    if (status === 'open' && pendingSends.some((p) => Date.now() - p.at > 5000)) {
+      socket?.forceReconnect();
+    }
   }, 2000);
 }
 
@@ -69,12 +73,12 @@ function wsRoomSwitch(roomId: string | null): void {
   if (roomId && roomId !== cur) s.send({ type: 'room:join', payload: { roomId } });
 }
 
-/** 乐观发送队列：roomId -> tempId 列表（用于 message:new 到达时按序校正） */
-const pendingSends: { roomId: string; tempId: string }[] = [];
+/** 乐观发送队列：roomId -> {tempId, at}（用于 message:new 按序校正 + 超时强制重连检测） */
+const pendingSends: { roomId: string; tempId: string; at: number }[] = [];
 let pendingSeq = 0;
 
 function appendPending(roomId: string, tempId: string): void {
-  pendingSends.push({ roomId, tempId });
+  pendingSends.push({ roomId, tempId, at: Date.now() });
 }
 
 /** 移除该房间最早的乐观消息（对应一条已确认的 message:new），返回其 tempId */
