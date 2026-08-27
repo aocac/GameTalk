@@ -13,6 +13,10 @@ on:
 env:
   NODE_VERSION: 22
 
+# 需要写权限：release job 用 GITHUB_TOKEN 创建 Release 并上传产物
+permissions:
+  contents: write
+
 jobs:
   windows:
     name: Windows (NSIS)
