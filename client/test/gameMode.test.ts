@@ -148,7 +148,7 @@ describe('gameMode manager', () => {
     const posCall = mockWindow.setPosition.mock.calls[0][0];
     expect(posCall.x).toBe(1920 - Math.round(380 * 1.5) - 20);
     expect(posCall.y).toBe(20);
-    expect(emitted).toContainEqual({ event: 'overlay:config', payload: { scale: 1.5 } });
+    expect(emitted).toContainEqual({ event: 'overlay:config', payload: { scale: 1.5, durationSec: 6 } });
   });
 
   it('pushOverlayMessage emits append only while game mode started', async () => {

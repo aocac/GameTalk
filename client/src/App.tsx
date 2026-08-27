@@ -285,7 +285,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               max={15}
               step={1}
               value={overlayDurationSec}
-              onChange={(e) => setOverlayDurationSec(parseInt(e.target.value, 10))}
+              onChange={(e) => {
+                setOverlayDurationSec(parseInt(e.target.value, 10));
+                // 显式传播新时长到 Overlay（不移动窗口）
+                void gameMode.applyOverlayConfig(undefined, { move: false });
+              }}
             />
           </label>
         </div>
@@ -473,7 +477,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   }, [offline]);
 
   // 游戏模式生命周期：启停快捷键 + Overlay 事件监听
-  const { gameModeEnabled, overlayPosition, overlayScale, overlayDurationSec } = useSettings();
+  const { gameModeEnabled } = useSettings();
   useEffect(() => {
     gameMode.setOnSend((text) => {
       useChat.getState().sendMessage(text);
@@ -487,11 +491,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       if (gameModeEnabled) void gameMode.stopGameMode();
     };
   }, [gameModeEnabled]);
-
-  // Overlay 位置/缩放/时长变化时立即生效
-  useEffect(() => {
-    if (gameModeEnabled) void gameMode.applyOverlayConfig();
-  }, [gameModeEnabled, overlayPosition, overlayScale, overlayDurationSec]);
 
   const submitRoomModal = async (kind: 'create' | 'join') => {
     if (kind === 'create') {

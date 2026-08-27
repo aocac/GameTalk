@@ -106,7 +106,8 @@ export async function applyOverlayConfig(
   positionOverride?: OverlayPosition,
   opts?: { move?: boolean },
 ): Promise<void> {
-  const { overlayPosition: storedPosition, overlayScale, overlayCustomPosition } = useSettings.getState();
+  const { overlayPosition: storedPosition, overlayScale, overlayCustomPosition, overlayDurationSec } =
+    useSettings.getState();
   const overlayPosition = positionOverride ?? storedPosition;
   const win = await getOverlayWindow();
   const mon = await primaryMonitor();
@@ -138,7 +139,7 @@ export async function applyOverlayConfig(
     // 否则 setPosition 异常会导致 applyAndPreview 的 .then(preview) 永不执行
     console.error('applyOverlayConfig window op failed:', e);
   }
-  await emit('overlay:config', { scale: overlayScale });
+  await emit('overlay:config', { scale: overlayScale, durationSec: overlayDurationSec });
 }
 
 /** 位置预览：通知 Overlay 显示 5 秒确认位置/大小效果。
