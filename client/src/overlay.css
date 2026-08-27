@@ -84,16 +84,40 @@ body {
   line-height: 1.4;
 }
 
-/* 位置预览占位 */
+/* 位置预览占位（可拖拽：拖动按钮把预览框移到新位置，自动切换为自定义） */
 .overlay-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   background: rgba(16, 18, 22, 0.72);
   border: 1px dashed rgba(255, 255, 255, 0.45);
   border-radius: 10px;
-  padding: 18px 20px;
+  padding: 14px 16px;
+}
+
+.overlay-preview-text {
   font-size: 14px;
   font-weight: 600;
   color: #e6ecf5;
   text-align: center;
+  flex: 1;
+}
+
+.overlay-drag-btn {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 12px;
+  cursor: move;
+  transition: background 0.15s;
+}
+
+.overlay-drag-btn:hover {
+  background: rgba(111, 141, 255, 0.45);
 }
 
 /* 调整模式工具条 */

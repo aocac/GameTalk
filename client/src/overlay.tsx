@@ -119,12 +119,54 @@ function OverlayApp() {
         setFading(true);
         hideTimer.current = setTimeout(() => {
           const win = winRef.current;
-          if (win) void win.hide();
+          if (win) {
+            // 预览/消息结束后恢复点击穿透（预览期间为了可拖拽暂时关闭）
+            void win.setIgnoreCursorEvents(true);
+            void win.hide();
+          }
           setFading(false);
           setPreviewing(false);
           setItems([]);
         }, FADE_MS);
       }, Math.max(durMs - FADE_MS, 100));
+  };
+
+  // 预览框拖拽：OS 级 startDragging 绝对跟手；通过轮询位置稳定检测拖拽结束，
+  // 结束后保存为自定义位置（主窗口监听 adjust-done 会自动切换 overlayPosition 为 custom）
+  const onPreviewDragStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const win = winRef.current;
+    if (!win) return;
+    clearTimers(); // 拖拽期间不自动隐藏
+    setFading(false);
+    void win.startDragging();
+    void (async () => {
+      let last = await win.outerPosition();
+      let stable = 0;
+      const t0 = Date.now();
+      const iv = setInterval(async () => {
+        try {
+          const now = await win.outerPosition();
+          if (Math.abs(now.x - last.x) < 3 && Math.abs(now.y - last.y) < 3) stable++;
+          else stable = 0;
+          last = now;
+          // 位置连续 ~300ms 不变视为拖拽结束
+          if (stable >= 2 || Date.now() - t0 > 15000) {
+            clearInterval(iv);
+            const pos = { x: Math.round(now.x), y: Math.round(now.y) };
+            lastPos.current = pos;
+            void emit('overlay:adjust-done', {
+              position: pos,
+              scale: Math.round(scaleRef.current * 100) / 100,
+            });
+            // 保持预览 5 秒，让用户确认新位置（主窗口侧会把位置夹回屏内并切换为 custom）
+            scheduleHide(5000);
+          }
+        } catch {
+          clearInterval(iv);
+        }
+      }, 150);
+    })();
   };
 
   useEffect(() => {
@@ -148,6 +190,8 @@ function OverlayApp() {
           stopClampPoll();
           void win.setIgnoreCursorEvents(true);
         }
+        // 消息始终点击穿透（预览期间可能被关掉了）
+        void win.setIgnoreCursorEvents(true);
         // 窗口若在屏幕外（曾被拖出）则先拉回
         void pullIntoView(win, scaleRef.current).then(() => void win.show());
       }
@@ -177,6 +221,8 @@ function OverlayApp() {
       // 保证先 hide 后 show，窗口最终可见——消除跨 webview 的 hide/show 竞态
       // 强制置顶（防御：alwaysOnTop 配置失效时防止被主窗口遮挡）
       void win.setAlwaysOnTop(true);
+      // 预览期间允许鼠标交互（可点击预览框上的「拖动」按钮）
+      void win.setIgnoreCursorEvents(false);
       void win.show();
       scheduleHide(5000);
     }).then((off) => (unlistenPreview = off));
@@ -285,7 +331,16 @@ function OverlayApp() {
         </div>
       )}
       {previewing && items.length === 0 && !adjusting && (
-        <div className="overlay-preview">消息将显示在这里</div>
+        <div className="overlay-preview">
+          <span className="overlay-preview-text">消息将显示在这里</span>
+          <button
+            className="overlay-drag-btn"
+            onMouseDown={onPreviewDragStart}
+            title="拖动预览框到新位置，将自动切换为「自定义」位置"
+          >
+            ✥ 拖动
+          </button>
+        </div>
       )}
       {items.length > 0 && !adjusting && (
         <>
