@@ -100,11 +100,12 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
   });
 
   // 头像上传：接收 data URL，服务端校验类型/大小/魔数后入库
-  app.post('/api/auth/avatar', { preHandler: [auth] }, async (req, reply) => {
+  // bodyLimit：3MB 图片的 base64 ≈ 4MB，需覆盖默认 1MB
+  app.post('/api/auth/avatar', { preHandler: [auth], bodyLimit: 5 * 1024 * 1024 }, async (req, reply) => {
     const body = (req.body ?? {}) as { dataUrl?: unknown };
     const result = validateAvatarDataUrl(body.dataUrl);
     if (!result.ok) {
-      await reply.code(400).send({ error: { code: result.error, message: '头像格式不支持（仅 PNG/JPEG/WebP/GIF，且 ≤512KB）' } });
+      await reply.code(400).send({ error: { code: result.error, message: '头像格式不支持（仅 PNG/JPEG/WebP/GIF，且 ≤3MB）' } });
       return;
     }
     const updated = await db.query<UserRow>(

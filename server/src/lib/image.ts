@@ -1,5 +1,5 @@
 // 头像 data URL 校验：格式、大小、magic bytes
-const MAX_AVATAR_BYTES = 512 * 1024; // 512KB
+const MAX_AVATAR_BYTES = 3 * 1024 * 1024; // 3MB
 
 const MAGIC: Array<{ bytes: number[]; mime: string }> = [
   { bytes: [0x89, 0x50, 0x4e, 0x47], mime: 'image/png' },

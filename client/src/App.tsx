@@ -61,7 +61,7 @@ const POSITION_LABELS: Record<OverlayPosition, string> = {
   custom: '自定义（拖拽）',
 };
 
-const MAX_AVATAR_BYTES = 512 * 1024;
+const MAX_AVATAR_BYTES = 3 * 1024 * 1024; // 3MB
 
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const {
@@ -115,7 +115,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     setAvatarMsg(null);
     if (!file) return;
     if (file.size > MAX_AVATAR_BYTES) {
-      setAvatarMsg('图片需 ≤512KB，请换一张更小的图');
+      setAvatarMsg('图片需 ≤3MB，请换一张更小的图');
       return;
     }
     const reader = new FileReader();

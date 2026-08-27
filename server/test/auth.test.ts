@@ -198,8 +198,8 @@ describe('auth', () => {
     });
     expect(res.statusCode).toBe(400);
 
-    // 超大（>512KB）
-    const huge = Buffer.alloc(600 * 1024, 0x89).toString('base64');
+    // 超大（>3MB）
+    const huge = Buffer.alloc(3 * 1024 * 1024 + 1024, 0x89).toString('base64');
     const res2 = await app.inject({
       method: 'POST',
       url: '/api/auth/avatar',
