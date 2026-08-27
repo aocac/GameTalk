@@ -58,22 +58,26 @@ function computePosition(
 ): PhysicalPosition {
   const x0 = mon.position.x;
   const y0 = mon.position.y;
+  // 关键：居中预设的 x = (屏宽 - 窗宽) / 2 可能是小数（如 1492.5），
+  // 传给 Tauri setPosition 会导致窗口应用失败、preview 链中断。
+  // 所有坐标统一取整后再返回。
+  const r = (x: number, y: number) => new PhysicalPosition(Math.round(x), Math.round(y));
   switch (pos) {
     case 'top-left':
-      return new PhysicalPosition(x0 + margin, y0 + margin);
+      return r(x0 + margin, y0 + margin);
     case 'top-center':
-      return new PhysicalPosition(x0 + (mon.size.width - w) / 2, y0 + margin);
+      return r(x0 + (mon.size.width - w) / 2, y0 + margin);
     case 'top-right':
-      return new PhysicalPosition(x0 + mon.size.width - w - margin, y0 + margin);
+      return r(x0 + mon.size.width - w - margin, y0 + margin);
     case 'bottom-left':
-      return new PhysicalPosition(x0 + margin, y0 + mon.size.height - h - margin);
+      return r(x0 + margin, y0 + mon.size.height - h - margin);
     case 'bottom-center':
-      return new PhysicalPosition(x0 + (mon.size.width - w) / 2, y0 + mon.size.height - h - margin);
+      return r(x0 + (mon.size.width - w) / 2, y0 + mon.size.height - h - margin);
     case 'bottom-right':
-      return new PhysicalPosition(x0 + mon.size.width - w - margin, y0 + mon.size.height - h - margin);
+      return r(x0 + mon.size.width - w - margin, y0 + mon.size.height - h - margin);
     case 'custom':
       // 自定义位置走单独分支（applyOverlayConfig 已处理），此处兜底为左下
-      return new PhysicalPosition(x0 + margin, y0 + mon.size.height - h - margin);
+      return r(x0 + margin, y0 + mon.size.height - h - margin);
   }
 }
 
@@ -107,48 +111,33 @@ export async function applyOverlayConfig(positionOverride?: OverlayPosition): Pr
   const h = Math.round(OVERLAY_BASE_HEIGHT * overlayScale);
   const winW = Math.round(w * dpr);
   const winH = Math.round(h * dpr);
-  await win.setSize(new PhysicalSize(winW, winH));
-  let posX = 0;
-  let posY = 0;
-  if (overlayPosition === 'custom' && overlayCustomPosition) {
-    // 用户拖拽自定义位置（物理像素，左上角锚点）；越界则夹回屏幕内
-    const clamped = clampToMonitor(overlayCustomPosition.x, overlayCustomPosition.y, winW, winH, mon);
-    posX = clamped.x;
-    posY = clamped.y;
-    await win.setPosition(new PhysicalPosition(posX, posY));
-  } else if (overlayPosition === 'custom') {
-    // 「自定义」但尚未保存过坐标：保持当前位置不动（只改大小），
-    // 等待用户进入拖拽调整——绝不擅自把窗口挪走
-  } else {
-    const p = computePosition(mon, winW, winH, overlayPosition, OVERLAY_MARGIN * dpr);
-    // 所有预设都夹取到主屏内：即使坐标计算异常，窗口也保证可见（最多贴边）
-    const clamped = clampToMonitor(p.x, p.y, winW, winH, mon);
-    posX = clamped.x;
-    posY = clamped.y;
-    await win.setPosition(new PhysicalPosition(clamped.x, clamped.y));
+  try {
+    await win.setSize(new PhysicalSize(winW, winH));
+    if (overlayPosition === 'custom' && overlayCustomPosition) {
+      // 用户拖拽自定义位置（物理像素，左上角锚点）；越界则夹回屏幕内
+      const clamped = clampToMonitor(overlayCustomPosition.x, overlayCustomPosition.y, winW, winH, mon);
+      await win.setPosition(new PhysicalPosition(Math.round(clamped.x), Math.round(clamped.y)));
+    } else if (overlayPosition === 'custom') {
+      // 「自定义」但尚未保存过坐标：保持当前位置不动（只改大小），
+      // 等待用户进入拖拽调整——绝不擅自把窗口挪走
+    } else {
+      const p = computePosition(mon, winW, winH, overlayPosition, OVERLAY_MARGIN * dpr);
+      // 所有预设都夹取到主屏内：即使坐标计算异常，窗口也保证可见（最多贴边）
+      const clamped = clampToMonitor(p.x, p.y, winW, winH, mon);
+      await win.setPosition(new PhysicalPosition(Math.round(clamped.x), Math.round(clamped.y)));
+    }
+  } catch (e) {
+    // 窗口操作失败不应中断 preview 链：记录后继续发事件，
+    // 否则 setPosition 异常会导致 applyAndPreview 的 .then(preview) 永不执行
+    console.error('applyOverlayConfig window op failed:', e);
   }
   await emit('overlay:config', { scale: overlayScale });
-  // 调试信息：预览时显示实际计算值，便于远程定位位置问题
-  await emit('overlay:debug', {
-    pos: overlayPosition,
-    x: posX,
-    y: posY,
-    w: winW,
-    h: winH,
-    dpr,
-    scale: overlayScale,
-    monW: mon.size.width,
-    monH: mon.size.height,
-    monX: mon.position.x,
-    monY: mon.position.y,
-  });
 }
 
-/** 位置预览：显示 Overlay 3 秒，方便确认位置/大小效果（Overlay 平时隐藏） */
+/** 位置预览：通知 Overlay 显示 5 秒确认位置/大小效果。
+ *  注意：show 由 overlay 窗口自身的 preview 监听执行（与 adjust 退出的 hide
+ *  同源同序），这里只发事件——跨 webview 直接 show 会与 hide 竞态导致窗口被隐藏 */
 export async function previewOverlay(): Promise<void> {
-  const win = await getOverlayWindow();
-  if (!win) return;
-  await win.show();
   await emit('overlay:preview');
 }
 

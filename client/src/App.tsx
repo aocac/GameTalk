@@ -101,17 +101,6 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     onClose();
   };
 
-  // 调试：显示 Overlay 位置计算值（临时，用于定位居中位置异常）
-  const [debugInfo, setDebugInfo] = useState<string | null>(null);
-  useEffect(() => {
-    let off: UnlistenFn | undefined;
-    void listen<Record<string, unknown>>('overlay:debug', (e) => {
-      const d = e.payload as { pos?: string; x?: number; y?: number; w?: number; h?: number; dpr?: number; scale?: number; monW?: number; monH?: number; monX?: number; monY?: number };
-      setDebugInfo(`pos=${d.pos} x=${d.x} y=${d.y} w=${d.w} h=${d.h} dpr=${d.dpr} scale=${d.scale} mon=${d.monW}x${d.monH}@${d.monX},${d.monY}`);
-    }).then((fn) => (off = fn));
-    return () => off?.();
-  }, []);
-
   const saveProfile = async () => {
     setProfileMsg(null);
     try {
@@ -225,30 +214,30 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         <div className="settings-section">
           <span className="section-title">消息 Overlay</span>
           <label className="field">
-            <span>显示位置</span>
-            <select
-              value={overlayPosition}
-              onChange={(e) => {
-                const v = e.target.value as OverlayPosition;
-                if (v === 'custom') {
-                  // 选择「自定义」= 进入拖拽调整，保持当前位置，绝不跳位；
-                  // 先同步窗口尺寸（与当前缩放一致），避免内容截断
-                  setOverlayPosition(v);
-                  void gameMode.stopOverlayAdjust();
-                  void gameMode.applyOverlayConfig().then(() => void gameMode.startOverlayAdjust());
-                } else {
-                  // 预设：立即应用 + 5 秒预览（Overlay 平时隐藏，必须主动显示确认效果）
-                  // 不依赖游戏模式开关——位置配置在任何状态下都应生效
-                  applyAndPreview(v);
-                }
-              }}
-            >
+            <span>显示位置（点击即应用并预览 5 秒）</span>
+            <div className="position-chips">
               {Object.entries(POSITION_LABELS).map(([v, label]) => (
-                <option key={v} value={v}>
+                <button
+                  key={v}
+                  type="button"
+                  className={`chip ${v === overlayPosition ? 'active' : ''}`}
+                  onClick={() => {
+                    if (v === 'custom') {
+                      // 选择「自定义」= 进入拖拽调整，保持当前位置，绝不跳位；
+                      // 先同步窗口尺寸（与当前缩放一致），避免内容截断
+                      setOverlayPosition(v);
+                      void gameMode.stopOverlayAdjust();
+                      void gameMode.applyOverlayConfig().then(() => void gameMode.startOverlayAdjust());
+                    } else {
+                      // 预设：立即应用 + 5 秒预览（每次点击必触发，即使值与当前相同）
+                      applyAndPreview(v as OverlayPosition);
+                    }
+                  }}
+                >
                   {label}
-                </option>
+                </button>
               ))}
-            </select>
+            </div>
           </label>
           <button
             className="btn ghost block"
@@ -300,12 +289,6 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         <button className="btn primary block" onClick={closeModal}>
           完成
         </button>
-
-        {debugInfo && (
-          <div className="overlay-debug-inline" title="Overlay 位置调试信息（临时）">
-            {debugInfo}
-          </div>
-        )}
       </div>
     </div>
   );

@@ -462,6 +462,38 @@ body {
   color: var(--text-2);
 }
 
+/* 位置预设按钮组（替代原生 select：解决"重复点击同值不触发"问题） */
+.position-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  outline: none; /* 去掉点击后的焦点环：避免"没点别的按钮却高亮着"的误解 */
+}
+
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(111, 141, 255, 0.08);
+}
+
+.chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
 .field input {
   padding: 9px 12px;
   border: 1px solid var(--border);
@@ -769,18 +801,6 @@ body {
   font-size: 13px;
   color: var(--text-2);
   line-height: 1.6;
-}
-
-/* Overlay 位置调试信息（临时，验证后移除） */
-.overlay-debug-inline {
-  font-size: 11px;
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  color: var(--pending);
-  background: var(--surface-2);
-  border-radius: 6px;
-  padding: 6px 8px;
-  word-break: break-all;
-  line-height: 1.5;
 }
 
 /* ============ 侧边栏用户块 ============ */
