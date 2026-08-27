@@ -67,6 +67,10 @@ export const useChat = create<ChatState>()((set, get) => ({
       set({ status });
       if (status === 'open') {
         set({ connectionError: null });
+        // 关键：每次（重）连接都必须清空订阅状态——否则重连时 subscribedRoomId
+        // 残留旧房间 id，wsRoomSwitch 会认为已订阅而跳过 room:join，导致新连接
+        // 在服务器侧没有订阅（发送/收消息都失效）
+        set({ subscribedRoomId: null });
         socket?.send({ type: 'hello', payload: { token } });
       } else if (status === 'reconnecting') {
         set({
@@ -81,11 +85,14 @@ export const useChat = create<ChatState>()((set, get) => ({
       switch (msg.type) {
         case 'hello:ok':
           set({ me: msg.payload.me });
-          // 登录后加载房间列表，并订阅当前活跃房间
-          void get().refreshRooms().then(() => {
-            const active = get().activeRoomId;
-            if (active) wsRoomSwitch(active);
-          });
+          // 登录后加载房间列表，并订阅当前活跃房间（refreshRooms 失败也要重订阅）
+          void get()
+            .refreshRooms()
+            .catch(() => undefined)
+            .then(() => {
+              const active = get().activeRoomId;
+              if (active) wsRoomSwitch(active);
+            });
           break;
         case 'room:joined':
           set((s) => ({
