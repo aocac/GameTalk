@@ -84,6 +84,41 @@ function clearPending(): void {
   pendingSends.length = 0;
 }
 
+/** 待发送队列：订阅未就绪时先排队，room:joined 后自动发出（游戏内呼出发送场景） */
+let queuedSend: { roomId: string; text: string } | null = null;
+
+/** 乐观上屏：把用户刚发的消息立即显示（pending 标记），服务器确认后校正 */
+function appendOptimistic(roomId: string, text: string): void {
+  const me = useChat.getState().me;
+  if (!me) return;
+  const tempId = `tmp-${Date.now()}-${++pendingSeq}`;
+  appendPending(roomId, tempId);
+  useChat.setState((s) => ({
+    messagesByRoom: {
+      ...s.messagesByRoom,
+      [roomId]: [
+        ...(s.messagesByRoom[roomId] ?? []),
+        {
+          id: tempId,
+          roomId,
+          userId: me.id,
+          username: me.username,
+          avatarUrl: me.avatarUrl ?? null,
+          text,
+          createdAt: new Date().toISOString(),
+          pending: true,
+        },
+      ],
+    },
+  }));
+}
+
+/** 真正发送（不负责乐观上屏，由调用方决定） */
+function doSend(roomId: string, text: string): void {
+  const ok = socket?.send({ type: 'message:send', payload: { roomId, text } });
+  if (ok) playSendSound(useSettings.getState().soundEnabled);
+}
+
 export const useChat = create<ChatState>()((set, get) => ({
   status: 'idle',
   me: null,
@@ -150,6 +185,12 @@ export const useChat = create<ChatState>()((set, get) => ({
             subscribedRoomId: msg.payload.roomId,
             membersByRoom: { ...s.membersByRoom, [msg.payload.roomId]: msg.payload.members },
           }));
+          // 订阅就绪：若有待发送消息（自动选房/订阅未就绪时排队的），立即发出
+          if (queuedSend && queuedSend.roomId === msg.payload.roomId) {
+            const q = queuedSend;
+            queuedSend = null;
+            doSend(q.roomId, q.text);
+          }
           break;
         case 'member:joined':
           if (msg.payload.roomId === state.subscribedRoomId) {
@@ -214,8 +255,9 @@ export const useChat = create<ChatState>()((set, get) => ({
           break;
         }
         case 'error':
-          // 服务器返回错误：清掉未确认的乐观占位，避免"幽灵消息"卡在界面上
+          // 服务器返回错误：清掉未确认的乐观占位与排队消息，避免"幽灵消息"卡在界面上
           clearPending();
+          queuedSend = null;
           set((s) => ({
             messagesByRoom: Object.fromEntries(
               Object.entries(s.messagesByRoom).map(([rid, msgs]) => [rid, msgs.filter((m) => !m.pending)]),
@@ -361,44 +403,31 @@ export const useChat = create<ChatState>()((set, get) => ({
   sendMessage: (text) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    const { activeRoomId, subscribedRoomId, status } = get();
-    if (!activeRoomId || activeRoomId !== subscribedRoomId) {
-      // 订阅未就绪：明确提示而不是静默失败（用户曾反馈"点击发送无效"）
-      set({ roomError: '当前房间未订阅成功，无法发送。请稍候重试或重新选择房间。' });
-      return;
-    }
-    if (status !== 'open') {
-      set({ roomError: '连接未就绪，消息未发送。请确认已连接服务器。' });
-      return;
-    }
-    const ok = socket?.send({ type: 'message:send', payload: { roomId: activeRoomId, text: trimmed } });
-    if (ok) {
-      playSendSound(useSettings.getState().soundEnabled);
-      // 乐观显示：自己的消息立即上屏（服务器确认 message:new 到达后按序校正）
-      const me = get().me;
-      if (me) {
-        const tempId = `tmp-${Date.now()}-${++pendingSeq}`;
-        appendPending(activeRoomId, tempId);
-        set((s) => ({
-          messagesByRoom: {
-            ...s.messagesByRoom,
-            [activeRoomId]: [
-              ...(s.messagesByRoom[activeRoomId] ?? []),
-              {
-                id: tempId,
-                roomId: activeRoomId,
-                userId: me.id,
-                username: me.username,
-                avatarUrl: me.avatarUrl ?? null,
-                text: trimmed,
-                createdAt: new Date().toISOString(),
-                pending: true,
-              },
-            ],
-          },
-        }));
+    const { activeRoomId, subscribedRoomId, status, rooms } = get();
+    let target = activeRoomId;
+
+    // 未选择房间：游戏内呼出发送时自动选中第一个房间（并排队，订阅建立后发出）
+    if (!target) {
+      if (rooms.length === 0) {
+        set({ roomError: '还没有房间，请先创建或加入房间再发送。' });
+        return;
       }
+      target = rooms[0].id;
+      set({ activeRoomId: target });
+      wsRoomSwitch(target);
+      void get().selectRoom(target);
     }
+
+    // 订阅/连接未就绪：乐观上屏 + 排队，就绪（room:joined）后自动发送
+    if (target !== subscribedRoomId || status !== 'open') {
+      appendOptimistic(target, trimmed);
+      queuedSend = { roomId: target, text: trimmed };
+      set({ roomError: null });
+      return;
+    }
+
+    doSend(target, trimmed);
+    appendOptimistic(target, trimmed);
   },
 
   clearRoomError: () => set({ roomError: null }),
