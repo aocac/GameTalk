@@ -3,14 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { getCurrentWindow, primaryMonitor } from '@tauri-apps/api/window';
 import { PhysicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
 import './overlay.css';
 import type { ChatMessage } from './app/types';
-
-function odiag(...args: unknown[]): void {
-  const ts = new Date().toISOString().slice(11, 23);
-  void invoke('diag_log', { msg: `[${ts}][overlay] ${args.map(String).join(' ')}` }).catch(() => undefined);
-}
 
 interface OverlayConfig {
   scale: number;
@@ -181,11 +175,9 @@ function OverlayApp() {
     let unlistenAdjust: UnlistenFn | undefined;
     let unlistenPreview: UnlistenFn | undefined;
     let cancelled = false;
-    odiag('overlay mounted, registering listeners');
 
     void listen<ChatMessage>('overlay:append', (e) => {
       if (cancelled) return;
-      odiag('append received:', e.payload.text?.slice(0, 20));
       setItems((prev) => [...prev, e.payload].slice(-MAX_ITEMS));
       setFading(false);
       clearTimers();
@@ -215,7 +207,6 @@ function OverlayApp() {
     // 位置预览：设置里调整位置/大小后显示 5 秒确认效果（Overlay 平时隐藏）
     void listen('overlay:preview', () => {
       if (cancelled) return;
-      odiag('preview received');
       const win = winRef.current;
       if (!win) return;
       setFading(false);

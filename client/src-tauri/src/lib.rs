@@ -10,22 +10,6 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
-/// 诊断日志：追加到应用数据目录下的 diag.log（排查游戏模式/窗口问题的临时手段）
-#[tauri::command]
-fn diag_log(app: tauri::AppHandle, msg: String) {
-    use std::io::Write;
-    if let Ok(mut dir) = app.path().app_data_dir() {
-        let _ = std::fs::create_dir_all(&dir);
-        dir.push("diag.log");
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&dir) {
-            let _ = writeln!(f, "{}", msg);
-        }
-    }
-}
-
-/// 运行时设置 WebView 代理（立即生效，无需重启）：
-/// - enabled=true 且 addr 非空 → Network.setProxyOverride 走该代理
-/// - enabled=false → 直连（绕过系统代理，默认行为）
 /// 运行时设置 WebView 代理（立即生效，无需重启）：
 /// - enabled=true 且 addr 非空 → Network.setProxyOverride 走指定代理
 /// - enabled=false → 不干预（保持 WebView2 默认行为 = 跟随系统代理）
@@ -68,7 +52,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![quit_app, set_proxy, diag_log])
+        .invoke_handler(tauri::generate_handler![quit_app, set_proxy])
         .setup(|app| {
             // 系统托盘：显示主窗口 / 退出
             let show = MenuItem::with_id(app, "show", "显示 GameTalk", true, None::<&str>)?;

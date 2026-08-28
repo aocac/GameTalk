@@ -101,3 +101,16 @@
   - 全局 ESC：输入框显示期间注册 'Esc' 全局快捷键（失焦也能关），隐藏后注销（不干扰游戏内 ESC）；单测覆盖
   - 浏览器验证：无 server 时登录显示明确中文提示 ✅；启动 server 后登录进入聊天 + WS 已连接 ✅
 - 关键坑位记录：① Node 22 undici WebSocket 的 addEventListener('message') 不触发，测试必须用 onmessage+派发队列；② @tauri-apps/plugin-global-hotkey 包不存在，正确名是 @tauri-apps/plugin-global-shortcut（crate 同名）；③ migrations 必须放包根目录（src/dist 双路径一致解析）；④ PGlite 的 query 泛型无约束，Db 接口用 pg 的 QueryResultRow 约束需在实现里显式声明。
+
+## 2026-08-27~28（Phase 9+：功能增强 + 稳定性 + 三端 Release）
+- 2026-08-27：删除房间（WS room:delete，房主校验 only_owner、级联删、广播 room:deleted）；服务端 26 测试绿。
+- 2026-08-27：修复「未订阅」——服务端 joinRoom 幂等化（重复 join 也回 room:joined，原 `conn.rooms.has` 早退吞响应）；客户端 2s 订阅看门狗自愈。
+- 2026-08-27：乐观发送（自己消息即时上屏 pending 样式，message:new 按序校正去重）；历史加载占位；无房间时游戏内发送自动选首房+排队补发。
+- 2026-08-27：半开连接自愈（心跳 15s + 35s 无 pong 强制重连；发送 5s 未确认强制重连；重连退避上限 5s）。
+- 2026-08-27：重连后强制重载历史（selectRoom forceReload），补回断开期间消息；not_in_room 错误带 roomId 自动移除失效房间。
+- 2026-08-27：三端 Release 流水线（Windows NSIS / Linux deb+AppImage / macOS dmg，GitHub runner 构建，v* 标签自动挂 Release）。坑：需 `permissions: contents: write`；产物 zip 嵌套目录需递归 glob；标签需 `git tag -f` 移到最新 main。
+- 2026-08-28：代理设置项（useProxy/proxyAddress，set_proxy 命令经 WebView2 CDP Network.setProxyOverride，仅启用时生效）。
+- 2026-08-28（重大根因）：Overlay/快捷键全失效 = 我加的主窗口 `additionalBrowserArgs: "--proxy-bypass-list=*"` 作用于共享 WebView2 浏览器进程，弄坏 overlay/input 窗口内容加载（overlay.tsx 从不挂载）。移除该参数后恢复。教训：additionalBrowserArgs 是全局副作用，慎用；此前误判的"半开连接"极可能也是它。
+- 2026-08-28：Contributors 修复——历史提交原用假身份 GameTalk Dev，重写为 AppDuck <132205345+aocac@users.noreply.github.com>（filter-branch + force push）。
+- 2026-08-28：清理临时诊断日志（diag_log/diag/odiag）；README 特性、PROGRESS 更新。
+- 当前：服务端 27 测试 + 客户端 11 测试绿；三端 Release v0.1.0 资产已发布。
