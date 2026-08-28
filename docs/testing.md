@@ -79,4 +79,4 @@ cd client/src-tauri && cargo check
 
 ## 6. 验收结论记录
 
-每轮 Phase 验收结果写入 PROGRESS.md 的 Phase 状态表与变更日志。
+每轮验收结果记录在仓库的 commit 历史与 GitHub Release 说明中。

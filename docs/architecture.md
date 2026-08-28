@@ -16,7 +16,7 @@
                                                                           └────────────────┘
 ```
 
-**产品形态（ADR-008）**：客户端是纯终端（连远程 Linux 服务器），玩家安装即用、零服务端负担；服务端由房主/社区独立部署（Linux VPS + Docker + HTTPS/WSS）。
+**产品形态**：客户端是纯终端（连远程 Linux 服务器），玩家安装即用、零服务端负担；服务端由房主/社区独立部署（Linux VPS + Docker + HTTPS/WSS）。
 
 **核心原则**：客户端永不直连数据库；一切数据经服务端 REST + WebSocket。
 
@@ -65,23 +65,25 @@ gametalk/
 {"type":"room:join","payload":{"roomId":"..."}}
 {"type":"room:leave","payload":{"roomId":"..."}}
 {"type":"room:delete","payload":{"roomId":"..."}}
+{"type":"member:kick","payload":{"roomId":"...","userId":"..."}}
 {"type":"message:send","payload":{"roomId":"...","text":"hi"}}
 {"type":"ping"}
 ```
 
 **服务端 → 客户端**
 ```json
-{"type":"hello:ok","payload":{"me":{"id":"...","username":"Alice","avatarUrl":null}}}
+{"type":"hello:ok","payload":{"me":{"id":"...","username":"Alice","avatarUrl":"https://.../api/avatars/..."}}}
 {"type":"room:joined","payload":{"roomId":"...","members":[...]}}
 {"type":"member:joined","payload":{"roomId":"...","member":{...}}}
 {"type":"member:left","payload":{"roomId":"...","userId":"...","username":"..."}}
+{"type":"member:kicked","payload":{"roomId":"...","userId":"...","username":"..."}}
 {"type":"message:new","payload":{"roomId":"...","message":{...}}}
 {"type":"room:deleted","payload":{"roomId":"..."}}
 {"type":"error","payload":{"code":"...","message":"...","roomId":"..."}}
 {"type":"pong"}
 ```
 
-**房间模型**：服务端内存 `roomId -> userId -> {sockets}`（同一用户可多端连接）。消息先持久化再广播；`joinRoom` 幂等（重复 join 也回 `room:joined`，客户端有 2s 订阅看门狗自愈）；`room:delete` 仅房主可调用，级联删除并广播 `room:deleted`。**客户端订阅其全部房间**（非活跃房间也能实时收消息，UI 显示未读角标，Overlay 标注来源房间）。
+**房间模型**：服务端内存 `roomId -> userId -> {sockets}`（同一用户可多端连接）。消息先持久化再广播；`joinRoom` 幂等（重复 join 也回 `room:joined`，客户端有 2s 订阅看门狗自愈）；`room:delete` 仅房主可调用，级联删除并广播 `room:deleted`；`member:kick` 仅房主可调用，把成员移出房间（DB 删除 + 全员通知 `member:kicked` + 被踢者订阅清理），被踢者客户端自动移除房间并切换。**客户端订阅其全部房间**（非活跃房间也能实时收消息，UI 显示未读角标，Overlay 标注来源房间）。
 
 **头像分发**：`users.avatar_url` 存 data URL，但所有对外接口（REST 响应 / WS 广播 / 成员表）一律转换
 为 `GET /api/avatars/<userId>` 绝对 URL（按请求头推导 base，反代后走 X-Forwarded-Proto），
@@ -98,7 +100,7 @@ gametalk/
 - Phase 3: `users`（注册/登录）
 - Phase 4: `rooms` / `room_members` / `messages`（房间、成员、历史）
 
-## 6. 游戏 Overlay（ADR-003 妥协方案）
+## 6. 游戏 Overlay（透明置顶窗口方案）
 
 不做 Direct3D/OpenGL 挂钩、不做 DLL 注入。使用 Tauri 原生能力，三窗口架构（Vite 多页入口：index/input/overlay）：
 

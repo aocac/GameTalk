@@ -1,85 +1,133 @@
+<div align="center">
+
+<img src="client/src-tauri/icons/icon.png" width="88" alt="GameTalk" />
+
 # GameTalk
 
-面向 PC 游戏玩家的轻量级桌面群组通信工具。
+**为 PC 玩家打造的轻量级游戏内群组通信工具**
 
-**核心体验**：按全局快捷键 → 呼出输入框 → 输入文字 → Enter 发送 → 自动关闭输入框 → 尽可能恢复游戏 → 房间成员实时收到消息 → 游戏内显示轻量 Overlay → 播放提示音。
+游戏中一键呼出 · 实时送达 · 绝对透明的消息悬浮层
 
-**下载**：[GitHub Releases](https://github.com/aocac/GameTalk/releases/latest)（Windows / Linux / macOS 安装包）
+[![Release](https://img.shields.io/github/v/release/aocac/GameTalk?style=flat-square&label=%E6%9C%80%E6%96%B0%E7%89%88)](https://github.com/aocac/GameTalk/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/aocac/GameTalk/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/aocac/GameTalk/actions/workflows/ci.yml)
+[![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%20%7C%20Linux%20%7C%20macOS-blue?style=flat-square)](https://github.com/aocac/GameTalk/releases/latest)
+[![License: MIT](https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-MIT-green?style=flat-square)](LICENSE)
 
-## 产品形态
+[下载安装包](https://github.com/aocac/GameTalk/releases/latest) · [部署自己的服务器](docs/deployment.md) · [架构文档](docs/architecture.md) · [问题反馈](https://github.com/aocac/GameTalk/issues)
 
-- **客户端**：Windows 桌面应用（Tauri 2），安装即用，玩家**无需**安装任何服务端或运行时。
-- **服务端**：独立部署在 **Linux 服务器**（VPS/云主机，Docker 一键部署，自动 HTTPS/WSS）。
-- 玩家在客户端「设置 - 服务器地址」填入服务器地址即可连接；好友间通过房间邀请码加入。
-- **平台说明**：游戏模式（全局快捷键 / Overlay / 焦点恢复）针对 Windows 设计并完成真机验收；
-  Linux/macOS 安装包由 CI 产出，但尚未做这两个平台的专项验收。
+</div>
 
-## 特性
+---
 
-- 账号：注册、登录、头像（≤3MB，服务端魔数校验，经专用端点分发不占消息带宽）、昵称、用户 ID
-- 房间：创建房间、邀请码、加入房间、成员列表、删除房间（房主）
-- 群聊：实时消息、消息历史（支持向上翻页）、乐观发送（消息即时上屏）、断线重连后自动补齐消息
-- 多房间：同时订阅全部房间，非活跃房间显示未读角标，Overlay 标注来源房间
-- 游戏模式：全局快捷键（换键旧键自动失效）、输入 Overlay、Enter 发送 / Esc 取消（兼容中文输入法）、消息 Overlay（**绝对透明背景** + 自定义位置/缩放）、提示音、自动恢复游戏焦点
-- 可靠连接：快速退避重连、双向心跳 + 半开连接自愈、断线后历史补齐
-- 服务端加固：WS/REST 双限流（登录注册加严防爆破）、超大帧防护、协议层心跳清理死连接
-- 离线试用：不连接服务器即可体验界面与设置
-- 基本设置：服务器地址、快捷键、Overlay 位置/缩放、声音开关、代理（默认不干预）
-- 运维：服务器主人可用 `npm run reset-password` 重置用户密码
+## ✨ 它解决什么问题
 
-## 技术栈
+玩游戏时想跟队友打字，却要 Alt+Tab 切窗口？GameTalk 把群聊做成**游戏内的一等公民**：
 
-| 层 | 技术 |
-|---|---|
-| 客户端 | Tauri 2 + React + TypeScript（Windows，CI 另产 Linux/macOS 包） |
-| 服务端 | Node.js + TypeScript + Fastify + WebSocket（Linux） |
-| 数据库 | PostgreSQL（生产）/ PGlite（开发测试，同源 migration） |
-| 部署 | Docker + docker-compose + Caddy + HTTPS/WSS |
+> 按下全局快捷键 → 底部弹出输入框 → 输入文字回车发送 → 输入框自动关闭、焦点交还游戏
+> → 队友实时收到消息 → 他们的消息以**绝对透明的悬浮层**叠加在你的游戏画面上，附带提示音。
 
-## 仓库结构
+全程双手不离键盘，视线不离游戏。
 
-```
-gametalk/
-├── client/          # Tauri 2 桌面客户端（React + TS）
-├── server/          # Fastify API + WebSocket 服务端（Node + TS）
-├── docs/            # 架构 / 部署 / 测试文档
-├── docker/          # 生产部署（Dockerfile / compose / Caddyfile / deploy.sh）
-└── .github/workflows/ # CI + 三端 Release
-```
+| ![房间聊天](docs/ui-chat-owner.png) |
+|:---:|
+| **房间聊天**：多房间 · 未读角标 · 成员列表（👑 房主）· 消息气泡 |
 
-## 部署一台服务器（房主/社区）
+## 🎮 核心特性
+
+**游戏模式**
+- 全局快捷键呼出输入框（可自定义录制，改键后旧键自动失效）
+- Enter 发送 / Esc 取消（兼容中文输入法组词）
+- 消息悬浮层：绝对透明背景、点击穿透、六种位置预设、可拖拽自定义、滚轮缩放
+- 发送后自动恢复游戏焦点（建议游戏使用无边框窗口化）
+
+**群组通信**
+- 房间制：创建房间 → 8 位邀请码邀请好友 → 实时群聊
+- 成员管理：在线成员列表、👑 房主标注、房主可移出成员 / 删除房间
+- 消息可靠：乐观发送即时上屏、断线秒级重连、重连后自动补齐离线消息、历史消息向上翻页
+- 多房间并行：同时接收所有房间消息，未读角标提示
+
+**账号与体验**
+- 注册 / 登录 / 头像（≤3MB，服务端魔数校验）/ 昵称
+- 消息提示音（WebAudio 合成，零资源文件）、离线试用模式
+- 网络代理设置（默认直连，需要时一键切换）
+
+**服务端加固**
+- WS：单连接限流、64KB 单帧上限、协议层心跳自动清理死连接
+- REST：全局限流 + 登录/注册防爆破限流
+- 数据：PostgreSQL + 纯 SQL 迁移，启动自动建表
+
+## 📦 安装
+
+前往 [**Releases**](https://github.com/aocac/GameTalk/releases/latest) 下载对应平台安装包：
+
+| 平台 | 格式 | 说明 |
+|---|---|---|
+| Windows | `-x64-setup.exe` | 推荐安装方式，内置一切依赖 |
+| Linux | `.deb` / `.AppImage` | 游戏模式针对 Windows 设计，Linux/macOS 包未经专项验收 |
+| macOS | `.dmg` (Apple Silicon) | 同上 |
+
+安装后在「设置 → 服务器地址」填入服务器地址（见下节），注册账号即可开黑。
+
+## 🚀 部署一台服务器（3 分钟）
+
+任何一台装了 Docker 的 Linux 机器（VPS / 云主机）都可以：
 
 ```bash
-# 在 Linux VPS 上（已装 Docker）：
 git clone https://github.com/aocac/GameTalk
 cd GameTalk/docker
-bash deploy.sh            # 首次运行生成 .env，填入域名后再次运行即完成上线
+bash deploy.sh        # 首次运行生成 .env，按提示填入域名后再次运行即完成
 ```
 
-完成后服务器地址即 `https://你的域名`，客户端填写该地址即可连接。
-详见 [docs/deployment.md](docs/deployment.md)。
+完成后你会得到一个 `https://你的域名` 的服务器（Caddy 自动签发 HTTPS/WSS 证书），
+把它填进客户端「设置 → 服务器地址」即可。和朋友们共用一台服务器，邀请码互通。
 
-## 本地开发
+> 已有自己的域名和 VPS？完整指引见 [部署文档](docs/deployment.md)。
+
+## 🖥️ 本地开发
 
 ```bash
-# 服务端（开发：PGlite 文件持久化，默认 127.0.0.1:8787）
+# 服务端（开发模式：PGlite 零依赖数据库，默认 127.0.0.1:8787）
 cd server && npm install && npm run dev
-# 或 Windows 下双击仓库根目录 dev/start-local.cmd（开发辅助，非产品形态）
 
-# 客户端（Tauri 桌面，需要 Rust + MSVC）
+# 客户端（Tauri 桌面应用，需要 Rust + MSVC）
 cd client && npm install && npm run tauri dev
+
+# 测试 / 检查（两个目录各自执行）
+npm test && npm run lint && npm run typecheck
 ```
 
-详见 [docs/architecture.md](docs/architecture.md)。
+Windows 下也可以直接双击仓库根目录的 `dev/start-local.cmd` 一键启动本地服务端。
 
-## 文档
+## 🏗️ 技术架构
 
-- [PROGRESS.md](PROGRESS.md) — 开发状态与决策记录（AI 外挂大脑）
-- [AGENTS.md](AGENTS.md) — Agent 协作说明
-- [docs/architecture.md](docs/architecture.md) — 架构文档
-- [docs/deployment.md](docs/deployment.md) — 部署文档
-- [docs/testing.md](docs/testing.md) — 测试与验收文档
+```
+客户端（Tauri 2 三窗口）                    服务端（Node 22 + Fastify 5）
+├─ main    聊天主界面        ──REST(JWT)──►  REST 路由（认证 / 房间 / 头像）
+├─ input   游戏内输入框      ──WS(JWT)────►  WS 网关（房间广播 / 限流 / 心跳）
+└─ overlay 消息悬浮层        ◄─实时推送────  PostgreSQL 16（消息 / 房间 / 用户）
+```
 
-## License
+- **客户端**：Tauri 2 + React 19 + TypeScript + zustand；Rust 侧仅保留托盘 / 单实例等系统能力
+- **服务端**：Fastify 5 + WebSocket + `pg`；开发测试用 PGlite（与生产同源 SQL 迁移）
+- **部署**：Docker Compose + Caddy（自动 HTTPS/WSS）
+- **测试**：server 31 + client 12 vitest 用例（含真实 WebSocket 集成测试）、ESLint、CI 全绿门禁
+
+更多细节见 [架构文档](docs/architecture.md) 与 [测试文档](docs/testing.md)。
+
+## 🗺️ 路线图
+
+- [x] 游戏模式（快捷键 / 输入框 / 透明悬浮层 / 焦点恢复）
+- [x] 多房间并行 + 未读角标
+- [x] 房主管理（移出成员 / 删除房间）
+- [x] 服务端限流与连接加固
+- [ ] 消息图片 / 表情
+- [ ] @提及 与 通知中心
+- [ ] 服务器数据库自动备份
+
+## 🤝 参与贡献
+
+欢迎 Issue 和 PR！提交前请确保 `npm test && npm run lint` 通过。
+
+## 📄 许可证
 
 [MIT](LICENSE)
