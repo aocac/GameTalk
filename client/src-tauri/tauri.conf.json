@@ -18,8 +18,7 @@
         "height": 640,
         "minWidth": 720,
         "minHeight": 480,
-        "center": true,
-        "additionalBrowserArgs": "--proxy-bypass-list=*"
+        "center": true
       },
       {
         "label": "input",

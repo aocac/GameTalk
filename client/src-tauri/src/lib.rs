@@ -10,23 +10,40 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// 诊断日志：追加到应用数据目录下的 diag.log（排查游戏模式/窗口问题的临时手段）
+#[tauri::command]
+fn diag_log(app: tauri::AppHandle, msg: String) {
+    use std::io::Write;
+    if let Ok(mut dir) = app.path().app_data_dir() {
+        let _ = std::fs::create_dir_all(&dir);
+        dir.push("diag.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&dir) {
+            let _ = writeln!(f, "{}", msg);
+        }
+    }
+}
+
 /// 运行时设置 WebView 代理（立即生效，无需重启）：
 /// - enabled=true 且 addr 非空 → Network.setProxyOverride 走该代理
 /// - enabled=false → 直连（绕过系统代理，默认行为）
+/// 运行时设置 WebView 代理（立即生效，无需重启）：
+/// - enabled=true 且 addr 非空 → Network.setProxyOverride 走指定代理
+/// - enabled=false → 不干预（保持 WebView2 默认行为 = 跟随系统代理）
+/// 注意：绝不能用 proxyBypassList:["*"] 之类全局破坏性参数，会导致共享的
+/// WebView2 浏览器进程异常、overlay/input 窗口内容加载失败。
 #[tauri::command]
 fn set_proxy(window: tauri::WebviewWindow, enabled: bool, addr: Option<String>) {
+    if !enabled {
+        return;
+    }
     let _ = window.with_webview(move |webview| {
         #[cfg(windows)]
         {
             use windows_core::{w, HSTRING, PCWSTR};
             let controller = webview.controller();
             if let Ok(core) = unsafe { controller.CoreWebView2() } {
-                let params = if enabled {
-                    let rules = addr.unwrap_or_default();
-                    format!(r#"{{"proxyRules":"{}","proxyBypassList":[]}}"#, rules)
-                } else {
-                    r#"{"proxyRules":"","proxyBypassList":["*"]}"#.to_string()
-                };
+                let rules = addr.unwrap_or_default();
+                let params = format!(r#"{{"proxyRules":"{}","proxyBypassList":[]}}"#, rules);
                 let params_h = HSTRING::from(params);
                 let params_pcw = PCWSTR(params_h.as_ptr());
                 let _ = unsafe { core.CallDevToolsProtocolMethod(w!("Network.setProxyOverride"), params_pcw, None) };
@@ -51,7 +68,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![quit_app, set_proxy])
+        .invoke_handler(tauri::generate_handler![quit_app, set_proxy, diag_log])
         .setup(|app| {
             // 系统托盘：显示主窗口 / 退出
             let show = MenuItem::with_id(app, "show", "显示 GameTalk", true, None::<&str>)?;

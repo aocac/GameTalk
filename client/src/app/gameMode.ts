@@ -3,6 +3,7 @@ import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { primaryMonitor } from '@tauri-apps/api/window';
 import { isRegistered, register, unregister } from '@tauri-apps/plugin-global-shortcut';
+import { invoke } from '@tauri-apps/api/core';
 import {
   OVERLAY_BASE_HEIGHT,
   OVERLAY_BASE_WIDTH,
@@ -10,6 +11,12 @@ import {
   type OverlayPosition,
 } from './settings';
 import type { ChatMessage } from './types';
+
+/** 诊断日志（写入 AppData/diag.log，用于排查游戏模式/窗口问题） */
+function diag(...args: unknown[]): void {
+  const ts = new Date().toISOString().slice(11, 23);
+  void invoke('diag_log', { msg: `[${ts}] ${args.map(String).join(' ')}` }).catch(() => undefined);
+}
 
 /**
  * 游戏模式管理器（Phase 5）：
@@ -52,6 +59,7 @@ function getOverlayWindow(): Promise<WebviewWindow | null> {
 async function ensureOverlayWindow(): Promise<void> {
   const win = await WebviewWindow.getByLabel(OVERLAY_WINDOW_LABEL);
   if (win) return;
+  diag('ensureOverlayWindow: window missing, recreating');
   try {
     new WebviewWindow(OVERLAY_WINDOW_LABEL, {
       title: 'GameTalk 消息',
@@ -84,6 +92,7 @@ export function isGameModeRunning(): boolean {
 async function ensureInputWindow(): Promise<void> {
   const win = await WebviewWindow.getByLabel(INPUT_WINDOW_LABEL);
   if (win) return;
+  diag('ensureInputWindow: window missing, recreating');
   try {
     new WebviewWindow(INPUT_WINDOW_LABEL, {
       title: 'GameTalk 输入',
@@ -202,8 +211,10 @@ export async function applyOverlayConfig(
  *  注意：show 由 overlay 窗口自身的 preview 监听执行（与 adjust 退出的 hide
  *  同源同序），这里只发事件——跨 webview 直接 show 会与 hide 竞态导致窗口被隐藏 */
 export async function previewOverlay(): Promise<void> {
+  diag('previewOverlay call');
   await ensureOverlayWindow();
   await emit('overlay:preview');
+  diag('previewOverlay emitted');
 }
 
 /** 进入 Overlay 调整模式：可拖拽移动 + 滚轮缩放（overlay 窗口内操作） */
@@ -223,7 +234,11 @@ export async function showInputWindow(): Promise<void> {
   await ensureInputWindow();
   const win = await getInputWindow();
   const mon = await primaryMonitor();
-  if (!win || !mon) return;
+  if (!win || !mon) {
+    diag('showInputWindow abort: win=', !!win, 'mon=', !!mon);
+    return;
+  }
+  diag('showInputWindow: showing + focus');
   const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
   const x = mon.position.x + (mon.size.width - INPUT_WIDTH * dpr) / 2;
   const y = mon.position.y + mon.size.height - INPUT_HEIGHT * dpr - INPUT_BOTTOM_MARGIN * dpr;
@@ -283,13 +298,20 @@ async function unregisterEsc(): Promise<void> {
 
 /** 新消息到达时推给 Overlay 显示（由 chat store 调用） */
 export async function pushOverlayMessage(message: ChatMessage): Promise<void> {
-  if (!started) return;
+  if (!started) {
+    diag('pushOverlayMessage skipped: game mode not started');
+    return;
+  }
   const win = await getOverlayWindow();
   if (!win) {
     // Overlay 窗口丢失（webview 崩溃等）→ 重建后仍尝试推送
+    diag('pushOverlayMessage: overlay window missing, recreating');
     await ensureOverlayWindow();
     const w2 = await getOverlayWindow();
-    if (!w2) return;
+    if (!w2) {
+      diag('pushOverlayMessage: recreation failed, abort');
+      return;
+    }
   }
   await emit('overlay:append', message);
 }
@@ -301,7 +323,9 @@ async function registerHotkey(): Promise<void> {
     await register(hotkey, (event) => {
       if (event.state === 'Pressed') void showInputWindow();
     });
+    diag('hotkey registered:', hotkey);
   } catch (e) {
+    diag('register hotkey FAILED:', hotkey, String(e));
     console.error('register hotkey failed:', e);
   }
 }
@@ -315,6 +339,11 @@ export async function reapplyHotkey(): Promise<void> {
 export async function startGameMode(): Promise<void> {
   if (started) return;
   started = true;
+  diag('startGameMode begin');
+  // 诊断：报告 overlay/input 窗口是否存在
+  const ov = await WebviewWindow.getByLabel(OVERLAY_WINDOW_LABEL).catch(() => null);
+  const inp = await WebviewWindow.getByLabel(INPUT_WINDOW_LABEL).catch(() => null);
+  diag('window existence: overlay=', !!ov, 'input=', !!inp);
   await registerHotkey();
   unlisteners.push(
     await listen('game-input-send', (e) => {
