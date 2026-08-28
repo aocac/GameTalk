@@ -11,8 +11,8 @@ jobs:
     name: Server (test + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -22,6 +22,9 @@ jobs:
         working-directory: server
       - name: Typecheck
         run: npm run typecheck
+        working-directory: server
+      - name: Lint
+        run: npm run lint
         working-directory: server
       - name: Test (PGlite + real WS)
         run: npm test
@@ -34,14 +37,17 @@ jobs:
     name: Client (typecheck + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: client/package-lock.json
       - name: Install
         run: npm ci
+        working-directory: client
+      - name: Lint
+        run: npm run lint
         working-directory: client
       - name: Build frontend (tsc + vite)
         run: npm run build
@@ -51,11 +57,11 @@ jobs:
     name: Tauri shell (cargo check)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -75,6 +81,6 @@ jobs:
     name: Server Docker image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build image
         run: docker build -f docker/server.Dockerfile -t gametalk-server:ci .

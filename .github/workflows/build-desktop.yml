@@ -22,8 +22,8 @@ jobs:
     name: Windows (NSIS)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -38,7 +38,7 @@ jobs:
       - name: Build Windows installer
         run: npm run tauri build -- --bundles nsis
         working-directory: client
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: client/src-tauri/target/release/bundle/nsis/*-setup.exe
@@ -48,8 +48,8 @@ jobs:
     name: Linux (deb + AppImage)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -68,7 +68,7 @@ jobs:
       - name: Build Linux bundles
         run: npm run tauri build -- --bundles deb appimage
         working-directory: client
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux
           path: |
@@ -80,8 +80,8 @@ jobs:
     name: macOS (app + dmg)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -96,7 +96,7 @@ jobs:
       - name: Build macOS bundles
         run: npm run tauri build -- --bundles app dmg
         working-directory: client
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: |
@@ -110,12 +110,12 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: assets
       - name: List assets
         run: find assets -type f
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           # 产物 zip 内含嵌套目录（deb/appimage/dmg/macos），用递归 glob 匹配文件
           files: |
