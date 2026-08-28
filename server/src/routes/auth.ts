@@ -5,6 +5,7 @@ import type { Db } from '../db/db.js';
 import type { JwtService } from '../lib/jwt.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
 import { validateAvatarDataUrl } from '../lib/image.js';
+import { avatarHttpUrlOf, httpBaseOf } from '../lib/avatar.js';
 import { makeAuthPreHandler } from '../plugins/auth.js';
 
 export interface AuthDeps {
@@ -28,8 +29,8 @@ interface UserRow extends QueryResultRow {
   created_at: string;
 }
 
-function toPublicUser(u: UserRow): PublicUser {
-  return { id: u.id, username: u.username, avatarUrl: u.avatar_url, createdAt: u.created_at };
+function toPublicUser(u: UserRow, httpBase: string): PublicUser {
+  return { id: u.id, username: u.username, avatarUrl: avatarHttpUrlOf(httpBase, u.id, u.avatar_url), createdAt: u.created_at };
 }
 
 const USERNAME_RE = /^[\w\u4e00-\u9fa5-]{3,24}$/;
@@ -45,10 +46,32 @@ function validateCredentials(username: string, password: string): string | null 
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
-  const { db, jwt } = deps;
+  const { db, jwt, config } = deps;
   const auth = makeAuthPreHandler(jwt);
+  // 认证类路由加严限流（防爆破/批量注册）；全局默认限流见 app.ts
+  const strictLimit = { config: { rateLimit: { max: config.authRateLimitMax, timeWindow: '1 minute' } } };
 
-  app.post('/api/auth/register', async (req, reply) => {
+  // 头像端点（公开但 id 为不可枚举的 UUID）：把 data URL 从广播/消息流里解耦出去
+  app.get('/api/avatars/:id', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      await reply.code(404).send();
+      return;
+    }
+    const found = await db.query<{ avatar_url: string | null }>('SELECT avatar_url FROM users WHERE id = $1', [id]);
+    const stored = found.rows[0]?.avatar_url;
+    const m = stored ? /^data:([^;]+);base64,(.+)$/s.exec(stored) : null;
+    if (!m) {
+      await reply.code(404).send();
+      return;
+    }
+    await reply
+      .header('content-type', m[1])
+      .header('cache-control', 'public, max-age=300')
+      .send(Buffer.from(m[2], 'base64'));
+  });
+
+  app.post('/api/auth/register', strictLimit, async (req, reply) => {
     const body = (req.body ?? {}) as { username?: unknown; password?: unknown };
     const username = String(body.username ?? '').trim();
     const password = String(body.password ?? '');
@@ -81,10 +104,10 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     }
     const user = inserted.rows[0];
     const token = await jwt.sign({ sub: user.id, username: user.username });
-    await reply.code(201).send({ token, user: toPublicUser(user) });
+    await reply.code(201).send({ token, user: toPublicUser(user, httpBaseOf(req.headers)) });
   });
 
-  app.post('/api/auth/login', async (req, reply) => {
+  app.post('/api/auth/login', strictLimit, async (req, reply) => {
     const body = (req.body ?? {}) as { username?: unknown; password?: unknown };
     const username = String(body.username ?? '').trim();
     const password = String(body.password ?? '');
@@ -96,7 +119,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
       return;
     }
     const token = await jwt.sign({ sub: user.id, username: user.username });
-    await reply.send({ token, user: toPublicUser(user) });
+    await reply.send({ token, user: toPublicUser(user, httpBaseOf(req.headers)) });
   });
 
   app.get('/api/auth/me', { preHandler: [auth] }, async (req, reply) => {
@@ -106,29 +129,33 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
       await reply.code(404).send({ error: { code: 'user_not_found', message: '用户不存在' } });
       return;
     }
-    await reply.send({ user: toPublicUser(user) });
+    await reply.send({ user: toPublicUser(user, httpBaseOf(req.headers)) });
   });
 
   // 头像上传：接收 data URL，服务端校验类型/大小/魔数后入库
   // bodyLimit：3MB 图片的 base64 ≈ 4MB，需覆盖默认 1MB
-  app.post('/api/auth/avatar', { preHandler: [auth], bodyLimit: 5 * 1024 * 1024 }, async (req, reply) => {
-    const body = (req.body ?? {}) as { dataUrl?: unknown };
-    const result = validateAvatarDataUrl(body.dataUrl);
-    if (!result.ok) {
-      await reply.code(400).send({ error: { code: result.error, message: '头像格式不支持（仅 PNG/JPEG/WebP/GIF，且 ≤3MB）' } });
-      return;
-    }
-    const updated = await db.query<UserRow>(
-      'UPDATE users SET avatar_url = $1, updated_at = now() WHERE id = $2 RETURNING *',
-      [result.dataUrl, req.userId],
-    );
-    const user = updated.rows[0];
-    if (!user) {
-      await reply.code(404).send({ error: { code: 'user_not_found', message: '用户不存在' } });
-      return;
-    }
-    await reply.send({ user: toPublicUser(user) });
-  });
+  app.post(
+    '/api/auth/avatar',
+    { preHandler: [auth], bodyLimit: 5 * 1024 * 1024, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const body = (req.body ?? {}) as { dataUrl?: unknown };
+      const result = validateAvatarDataUrl(body.dataUrl);
+      if (!result.ok) {
+        await reply.code(400).send({ error: { code: result.error, message: '头像格式不支持（仅 PNG/JPEG/WebP/GIF，且 ≤3MB）' } });
+        return;
+      }
+      const updated = await db.query<UserRow>(
+        'UPDATE users SET avatar_url = $1, updated_at = now() WHERE id = $2 RETURNING *',
+        [result.dataUrl, req.userId],
+      );
+      const user = updated.rows[0];
+      if (!user) {
+        await reply.code(404).send({ error: { code: 'user_not_found', message: '用户不存在' } });
+        return;
+      }
+      await reply.send({ user: toPublicUser(user, httpBaseOf(req.headers)) });
+    },
+  );
 
   app.patch('/api/auth/me', { preHandler: [auth] }, async (req, reply) => {
     const body = (req.body ?? {}) as { username?: unknown; avatarUrl?: unknown };
@@ -165,7 +192,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
         await reply.code(404).send({ error: { code: 'user_not_found', message: '用户不存在' } });
         return;
       }
-      await reply.send({ user: toPublicUser(u) });
+      await reply.send({ user: toPublicUser(u, httpBaseOf(req.headers)) });
       return;
     }
     params.push(req.userId);
@@ -179,6 +206,6 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
       await reply.code(404).send({ error: { code: 'user_not_found', message: '用户不存在' } });
       return;
     }
-    await reply.send({ user: toPublicUser(user) });
+    await reply.send({ user: toPublicUser(user, httpBaseOf(req.headers)) });
   });
 }

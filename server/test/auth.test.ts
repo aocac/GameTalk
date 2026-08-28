@@ -140,7 +140,7 @@ describe('auth', () => {
       headers: { authorization: `Bearer ${token}` },
       payload: { avatarUrl: '' },
     });
-    expect(res2.json().user.avatarUrl).toBe('');
+    expect(res2.json().user.avatarUrl).toBeNull(); // 清空头像（''）归一化为 null
   });
 
   it('rejects duplicate rename', async () => {
@@ -177,7 +177,29 @@ describe('auth', () => {
       payload: { dataUrl: `data:image/png;base64,${pngBase64}` },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().user.avatarUrl).toContain('data:image/png;base64,');
+    // 对外不再回传 base64：data URL 转成 /api/avatars/:id 端点 URL
+    const avatarUrl = res.json().user.avatarUrl as string;
+    expect(avatarUrl).toMatch(/\/api\/avatars\/[0-9a-f-]{36}$/);
+    expect(avatarUrl).not.toContain('data:image');
+
+    // 头像端点：公开可取，返回原始图片字节 + 正确 content-type + 缓存头
+    const userId = res.json().user.id as string;
+    const img = await app.inject({ method: 'GET', url: `/api/avatars/${userId}` });
+    expect(img.statusCode).toBe(200);
+    expect(img.headers['content-type']).toBe('image/png');
+    expect(img.headers['cache-control']).toContain('max-age');
+    expect(img.rawPayload).toEqual(Buffer.from(pngBase64, 'base64'));
+
+    // 无头像/非法 id → 404
+    const reg2 = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'avatar_none', password: 'password123' },
+    });
+    const none = await app.inject({ method: 'GET', url: `/api/avatars/${reg2.json().user.id}` });
+    expect(none.statusCode).toBe(404);
+    const bad = await app.inject({ method: 'GET', url: '/api/avatars/not-a-uuid' });
+    expect(bad.statusCode).toBe(404);
   });
 
   it('rejects non-image avatar payload', async () => {
@@ -207,5 +229,34 @@ describe('auth', () => {
       payload: { dataUrl: `data:image/png;base64,${huge}` },
     });
     expect(res2.statusCode).toBe(400);
+  });
+
+  it('rate limits auth endpoints (429 with unified error shape)', async () => {
+    // 独立 app 实例：低配额验证登录爆破防护（主实例测试模式已放开限流）
+    const cfg = loadConfig({
+      NODE_ENV: 'production',
+      JWT_SECRET: 'test-secret-for-rate-limit',
+      RATE_LIMIT_AUTH_MAX: '2',
+    });
+    const rlApp = await buildApp({ config: cfg, db, jwt: createJwtService(cfg.jwtSecret, '1h') });
+    try {
+      for (let i = 0; i < 2; i++) {
+        const res = await rlApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          payload: { username: 'rl_user', password: 'wrong-password' },
+        });
+        expect(res.statusCode).toBe(401);
+      }
+      const third = await rlApp.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'rl_user', password: 'wrong-password' },
+      });
+      expect(third.statusCode).toBe(429);
+      expect(third.json().error.code).toBe('rate_limited');
+    } finally {
+      await rlApp.close();
+    }
   });
 });

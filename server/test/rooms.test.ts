@@ -211,7 +211,8 @@ describe('realtime + persistence', () => {
       const got = nextMessage(ws, (m) => m.type === 'message:new');
       ws.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: `msg-${i}` } }));
       const msg = await got;
-      expect(msg.payload.message.avatarUrl).toContain('data:image/png;base64,');
+      // 头像已改为 HTTP 端点 URL，不再内嵌 base64
+      expect(msg.payload.message.avatarUrl).toMatch(/\/api\/avatars\/[0-9a-f-]{36}$/);
     }
 
     // 历史拉取
@@ -220,7 +221,7 @@ describe('realtime + persistence', () => {
     const { messages } = res.json();
     expect(messages.map((m: any) => m.text)).toEqual(['msg-1', 'msg-2', 'msg-3']);
     expect(messages[0].username).toBe('hist_owner');
-    expect(messages[0].avatarUrl).toContain('data:image/png;base64,');
+    expect(messages[0].avatarUrl).toMatch(/\/api\/avatars\/[0-9a-f-]{36}$/);
     ws.close();
   });
 

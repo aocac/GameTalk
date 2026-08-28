@@ -3,6 +3,7 @@ import type { QueryResultRow } from 'pg';
 import type { Db } from '../db/db.js';
 import type { JwtService } from '../lib/jwt.js';
 import { generateInviteCode } from '../lib/invite.js';
+import { avatarHttpUrlOf, httpBaseOf } from '../lib/avatar.js';
 import { makeAuthPreHandler } from '../plugins/auth.js';
 
 export interface RoomsDeps {
@@ -159,7 +160,15 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
        ORDER BY rm.joined_at ASC`,
       [roomId],
     );
-    await reply.send({ room: toPublicRoom(room), members: members.rows });
+    const base = httpBaseOf(req.headers);
+    await reply.send({
+      room: toPublicRoom(room),
+      members: members.rows.map((u) => ({
+        id: u.id,
+        username: u.username,
+        avatarUrl: avatarHttpUrlOf(base, u.id, u.avatar_url),
+      })),
+    });
   });
 
   // 消息历史（游标分页：before=消息id，返回该消息之前的最早 limit 条，按时间升序）
@@ -190,12 +199,13 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
 
     const rows = res.rows;
     const hasMore = rows.length > limit;
+    const base = httpBaseOf(req.headers);
     const messages = (hasMore ? rows.slice(0, limit) : rows).map((m) => ({
       id: m.id,
       roomId: m.room_id,
       userId: m.user_id,
       username: m.username,
-      avatarUrl: m.avatar_url,
+      avatarUrl: avatarHttpUrlOf(base, m.user_id, m.avatar_url),
       text: m.text,
       createdAt: m.created_at,
     }));

@@ -14,11 +14,14 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "migrate": "tsx src/db/migrate.ts"
+    "migrate": "tsx src/db/migrate.ts",
+    "reset-password": "tsx src/cli/reset-password.ts",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.2.0",
     "@fastify/cors": "^10.0.0",
+    "@fastify/rate-limit": "^10.3.0",
     "@fastify/websocket": "^11.0.0",
     "@node-rs/argon2": "^2.1.0",
     "fastify": "^5.0.0",
@@ -26,11 +29,14 @@
     "pg": "^8.13.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.11.0",
     "@types/ws": "^8.18.1",
+    "eslint": "^10.9.1",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
+    "typescript-eslint": "^8.68.0",
     "vitest": "^3.0.0"
   }
 }

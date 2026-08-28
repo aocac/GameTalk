@@ -8,10 +8,12 @@ Fastify + WebSocket + PostgreSQL 服务端，面向 Linux 部署（Windows 仅�
 npm install
 npm run dev          # 开发模式（tsx watch，PGlite 文件持久化到 data/）
 npm test             # vitest（PGlite 内存库 + 真实 WS 客户端）
+npm run lint         # ESLint
 npm run typecheck    # tsc --noEmit
 npm run build        # tsc → dist/
 npm start            # 生产模式（node dist/index.js，需 DATABASE_URL + JWT_SECRET）
 npm run migrate      # 手动执行 migrations/*.sql（服务启动时也会自动执行）
+npm run reset-password -- <用户名> <新密码>   # 服务器主人重置用户密码（PGlite 模式需先停服）
 ```
 
 ## 环境变量

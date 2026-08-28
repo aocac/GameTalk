@@ -1,9 +1,10 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { RawData, WebSocket } from 'ws';
 import type { QueryResultRow } from 'pg';
 import type { Config } from '../config.js';
 import type { Db } from '../db/db.js';
 import type { JwtService } from '../lib/jwt.js';
+import { avatarHttpUrlOf, httpBaseOf } from '../lib/avatar.js';
 
 /**
  * WebSocket 网关（Phase 3+）：JWT 认证 + 内存房间表。
@@ -28,6 +29,8 @@ interface Conn {
   username: string;
   avatarUrl: string | null;
   rooms: Set<string>;
+  /** 连接升级时推导的对外 http base（头像等资源绝对 URL 用） */
+  httpBase: string;
   /** 最近一次收到协议层 pong 的时间（服务端心跳存活检测） */
   lastPongAt: number;
   /** 限流滑动窗口内的消息时间戳 */
@@ -72,14 +75,6 @@ function safeText(text: string): string {
 function send(socket: WebSocket, msg: unknown): void {
   if (socket.readyState === socket.OPEN) {
     socket.send(JSON.stringify(msg));
-  }
-}
-
-function sendToUser(roomId: string, userId: string, msg: unknown, except?: WebSocket): void {
-  const entry = rooms.get(roomId)?.get(userId);
-  if (!entry) return;
-  for (const s of entry.sockets) {
-    if (s !== except) send(s, msg);
   }
 }
 
@@ -174,13 +169,14 @@ export function registerWsRoutes(app: FastifyInstance, deps: { config: Config; d
     clearInterval(heartbeat);
   });
 
-  app.get('/ws', { websocket: true }, (socket) => {
+  app.get('/ws', { websocket: true }, (socket, request: FastifyRequest) => {
     const conn: Conn = {
       socket,
       userId: null,
       username: 'Player',
       avatarUrl: null,
       rooms: new Set(),
+      httpBase: httpBaseOf(request.headers),
       lastPongAt: Date.now(),
       sentAt: [],
     };
@@ -230,8 +226,9 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           if (!user) throw new Error('user not found');
           conn.userId = user.id;
           conn.username = user.username;
-          conn.avatarUrl = user.avatar_url;
-          send(conn.socket, { type: 'hello:ok', payload: { me: publicMember(user.id, user.username, user.avatar_url) } });
+          // data URL 头像一律转成 HTTP 端点 URL，避免 base64 随广播/成员表内嵌
+          conn.avatarUrl = avatarHttpUrlOf(conn.httpBase, user.id, user.avatar_url);
+          send(conn.socket, { type: 'hello:ok', payload: { me: publicMember(user.id, user.username, conn.avatarUrl) } });
         } catch {
           send(conn.socket, { type: 'error', payload: { code: 'unauthorized', message: 'invalid token' } });
           conn.socket.close();
@@ -260,7 +257,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       const avatar = await db.query<{ avatar_url: string | null }>('SELECT avatar_url FROM users WHERE id = $1', [
         conn.userId,
       ]);
-      conn.avatarUrl = avatar.rows[0]?.avatar_url ?? null;
+      conn.avatarUrl = avatarHttpUrlOf(conn.httpBase, conn.userId, avatar.rows[0]?.avatar_url ?? null);
       joinRoom(conn, roomId, conn.avatarUrl);
       break;
     }
