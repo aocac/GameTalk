@@ -133,3 +133,4 @@
   - 测试基线：server 30 + client 12 全绿；lint 双工作区绿。
   - 追加：copy-artifacts.mjs 修 bug——bundle 目录残留旧版本产物时"取第一个匹配"会把旧安装包复制成新版本（本地构建 0.2.0 时实锤：产物哈希 = 旧 0.1.0）；改为优先精确匹配当前版本号、否则取 mtime 最新。
   - 发布：v0.2.0（用户真机验收通过；CI 4 job 绿 → 三端构建绿 → Release 4 资产挂载完成）。版本号已全部同步 0.2.0。
+  - 生产更新：真实服务器已滚动更新至 v0.2.0（2026-08-28，SSH 通道建立，部署细节见本地工作日志不入库）。坑位：VPS 克隆是贡献者历史重写前的旧链 → git pull 报 unrelated histories，需 reset --hard origin/main + 单独保留 VPS 本地自定义 compose（去 caddy/公网端口）；验证铁证 = 连打 12 次登录第 11 次起 429（限流为新代码行为）。遗留小项：/health 的 version 恒为 0.1.0（Docker 运行时无 npm_package_version），下次修为构建时烘焙。
