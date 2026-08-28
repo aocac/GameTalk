@@ -374,8 +374,9 @@ export const useChat = create<ChatState>()((set, get) => ({
     socket?.close();
     socket = null;
     queuedSends = [];
-    // 保留 rooms/messages 等状态，便于重新连接后恢复订阅
-    set({ status: 'closed', me: null, subscribedRoomIds: [] });
+    // 保留 me（认证身份，与连接状态无关）与 rooms/messages：
+    // 清掉 me 会导致断开期间自己的消息被渲染到左边、成员列表失去自身定位
+    set({ status: 'closed', subscribedRoomIds: [] });
   },
 
   refreshRooms: async () => {

@@ -743,7 +743,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             </label>
             <span className="member-count">{offline ? '未连接' : `${members.length} 人在线`}</span>
             <StatusDot status={status} />
-            {!offline && activeRoom && (
+            {/* 订阅状态只在已连接时有意义；断开/重连中由状态灯表达 */}
+            {!offline && connected && activeRoom && (
               <span
                 className={`sub-tag ${activeSubscribed ? 'ok' : 'pending'}`}
                 title={activeSubscribed ? '已订阅该房间实时消息' : '订阅未就绪（自动重试中…）'}
