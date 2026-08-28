@@ -1,6 +1,6 @@
 // tauri build 完成后把安装包复制到项目根目录，方便取用。
 // 保留版本号与架构信息（不简化文件名），如 GameTalk-0.1.0-x64-Setup.exe
-import { copyFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,13 +19,19 @@ try {
   // 读取失败则沿用默认
 }
 
-// 找到实际产物（_x64_ / _arm64_ 由文件名自动识别）
-const files = existsSync(bundleDir)
-  ? readdirSync(bundleDir).filter((f) => /\.(exe|msi)$/i.test(f))
-  : [];
-const src = files
-  .map((f) => join(bundleDir, f))
-  .find((p) => /-setup\.exe$/i.test(p) || /\.msi$/i.test(p));
+// 找到实际产物（_x64_ / _arm64_ 由文件名自动识别）。
+// bundle 目录可能残留旧版本产物（readdir 顺序不保证最新在前），优先精确匹配当前版本，
+// 否则取修改时间最新的一份——否则会把旧安装包当成新构建复制出去。
+function isBundled(f) {
+  return /-setup\.exe$/i.test(f) || /\.msi$/i.test(f);
+}
+const candidates = existsSync(bundleDir) ? readdirSync(bundleDir).filter(isBundled) : [];
+const byVersion = candidates.find((f) => f.includes(version));
+const newest = [...candidates].sort(
+  (a, b) => statSync(join(bundleDir, b)).mtimeMs - statSync(join(bundleDir, a)).mtimeMs,
+)[0];
+const picked = byVersion ?? newest;
+const src = picked ? join(bundleDir, picked) : undefined;
 
 if (!src) {
   console.warn('[copy-artifacts] 未找到安装包产物，跳过复制');
