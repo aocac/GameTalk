@@ -92,7 +92,7 @@ export const useSettings = create<AppSettings>()(
       overlayDurationSec: 6,
       useProxy: false,
       proxyAddress: '',
-      setServerUrl: (serverUrl) => set({ serverUrl: serverUrl.trim() }),
+      setServerUrl: (serverUrl) => set({ serverUrl: serverUrl.trim().replace(/\/+$/, '') }),
       setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
       setGameModeEnabled: (gameModeEnabled) => set({ gameModeEnabled }),
       setHotkey: (hotkey) => set({ hotkey: hotkey.trim() || DEFAULT_HOTKEY }),

@@ -36,14 +36,15 @@ async function request<T>(
   path: string,
   options: { method?: string; body?: unknown; token?: string; timeoutMs?: number } = {},
 ): Promise<T> {
-  const { serverUrl } = useSettings.getState();
+  // 防御：历史持久化的地址可能带尾斜杠，拼接前统一去掉，避免 //api/... 双斜杠 404
+  const base = useSettings.getState().serverUrl.replace(/\/+$/, '');
   let res: Response;
   try {
     // 请求超时（默认 10s）：防止服务器/网络挂起时 UI 永远卡在"加载中…"
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10000);
     try {
-      res = await fetch(`${serverUrl}${path}`, {
+      res = await fetch(`${base}${path}`, {
         method: options.method ?? 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -60,7 +61,7 @@ async function request<T>(
     throw new ApiError(
       0,
       'network_error',
-      `无法连接服务器（${serverUrl}）。请确认服务器地址正确且服务器已运行；自建服务器请参阅部署文档。`,
+      `无法连接服务器（${base}）。请确认服务器地址正确且服务器已运行；自建服务器请参阅部署文档。`,
     );
   }
 

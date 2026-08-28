@@ -87,6 +87,17 @@ describe('health', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().status).toBe('ok');
   });
+
+  it('tolerates trailing and duplicate slashes (user-entered server URLs)', async () => {
+    const health = await app.inject({ method: 'GET', url: '//health' });
+    expect(health.statusCode).toBe(200);
+    const reg = await app.inject({
+      method: 'POST',
+      url: '//api/auth/register',
+      payload: { username: 'slash_user', password: 'password123' },
+    });
+    expect([201, 409]).toContain(reg.statusCode);
+  });
 });
 
 describe('realtime chat loop (two authenticated clients, one room)', () => {

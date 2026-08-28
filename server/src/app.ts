@@ -24,6 +24,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     // 信任反代头：compose 中仅 Caddy 能通过 127.0.0.1:8787 访问本服务，
     // 按 X-Forwarded-For 取真实客户端 IP 做限流（不设则所有人共享 Caddy 的 IP，一个桶全服限流）
     trustProxy: true,
+    // 用户在客户端填的服务器地址常带尾斜杠（如 http://ip:8787/），
+    // 拼接后会出现 //api/... 双斜杠路径——默认会 404，这里统一容忍
+    ignoreTrailingSlash: true,
+    ignoreDuplicateSlashes: true,
   });
 
   await app.register(cors, { origin: config.corsOrigin === '*' ? true : config.corsOrigin.split(',') });
