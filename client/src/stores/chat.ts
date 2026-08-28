@@ -93,8 +93,8 @@ function clearPending(): void {
   pendingSends.length = 0;
 }
 
-/** 待发送队列：订阅未就绪时先排队，room:joined 后自动发出（游戏内呼出发送场景） */
-let queuedSend: { roomId: string; text: string } | null = null;
+/** 待发送队列：订阅未就绪时先排队（可多条），room:joined 后按序自动发出（游戏内呼出发送场景） */
+let queuedSends: { roomId: string; text: string }[] = [];
 
 /** 乐观上屏：把用户刚发的消息立即显示（pending 标记），服务器确认后校正 */
 function appendOptimistic(roomId: string, text: string): void {
@@ -160,9 +160,10 @@ export const useChat = create<ChatState>()((set, get) => ({
         set({ subscribedRoomId: null });
         socket?.send({ type: 'hello', payload: { token } });
       } else if (status === 'reconnecting') {
-        // 连接抖动：未确认的乐观消息可能已发送/未发送，全部清除，
+        // 连接抖动：未确认的乐观消息可能已发送/未发送，全部清除（含排队消息），
         // 由 hello:ok 后的历史重载兜底（已发送的会从历史回来）
         clearPending();
+        queuedSends = [];
         set((s) => ({
           messagesByRoom: Object.fromEntries(
             Object.entries(s.messagesByRoom).map(([rid, msgs]) => [rid, msgs.filter((m) => !m.pending)]),
@@ -202,11 +203,13 @@ export const useChat = create<ChatState>()((set, get) => ({
             subscribedRoomId: msg.payload.roomId,
             membersByRoom: { ...s.membersByRoom, [msg.payload.roomId]: msg.payload.members },
           }));
-          // 订阅就绪：若有待发送消息（自动选房/订阅未就绪时排队的），立即发出
-          if (queuedSend && queuedSend.roomId === msg.payload.roomId) {
-            const q = queuedSend;
-            queuedSend = null;
-            doSend(q.roomId, q.text);
+          // 订阅就绪：把排队的该房间消息按序发出（自动选房/订阅未就绪时排队的）
+          {
+            const ready = queuedSends.filter((q) => q.roomId === msg.payload.roomId);
+            if (ready.length > 0) {
+              queuedSends = queuedSends.filter((q) => q.roomId !== msg.payload.roomId);
+              for (const q of ready) doSend(q.roomId, q.text);
+            }
           }
           break;
         case 'member:joined':
@@ -274,7 +277,7 @@ export const useChat = create<ChatState>()((set, get) => ({
         case 'error':
           // 服务器返回错误：清掉未确认的乐观占位与排队消息，避免"幽灵消息"卡在界面上
           clearPending();
-          queuedSend = null;
+          queuedSends = [];
           set((s) => ({
             messagesByRoom: Object.fromEntries(
               Object.entries(s.messagesByRoom).map(([rid, msgs]) => [rid, msgs.filter((m) => !m.pending)]),
@@ -308,6 +311,8 @@ export const useChat = create<ChatState>()((set, get) => ({
             }
           } else if (msg.payload.code === 'only_owner') {
             set({ roomError: '只有房主才能删除房间' });
+          } else if (msg.payload.code === 'rate_limited') {
+            set({ roomError: '发送过于频繁，请稍候再试' });
           } else if (msg.payload.code === 'room_not_found') {
             set({ roomError: '房间不存在或已被删除' });
           }
@@ -325,6 +330,7 @@ export const useChat = create<ChatState>()((set, get) => ({
     stopSubWatchdog();
     socket?.close();
     socket = null;
+    queuedSends = [];
     // 保留 rooms/messages 等状态，便于重新连接后恢复订阅
     set({ status: 'closed', me: null, subscribedRoomId: null });
   },
@@ -457,10 +463,10 @@ export const useChat = create<ChatState>()((set, get) => ({
       void get().selectRoom(target);
     }
 
-    // 订阅/连接未就绪：乐观上屏 + 排队，就绪（room:joined）后自动发送
+    // 订阅/连接未就绪：乐观上屏 + 排队，就绪（room:joined）后按序自动发送
     if (target !== subscribedRoomId || status !== 'open') {
       appendOptimistic(target, trimmed);
-      queuedSend = { roomId: target, text: trimmed };
+      queuedSends.push({ roomId: target, text: trimmed });
       set({ roomError: null });
       return;
     }

@@ -55,7 +55,15 @@ async function request<T>(
   }
 
   const text = await res.text();
-  const data = text ? (JSON.parse(text) as { error?: { code: string; message: string } } & T) : undefined;
+  let data: ({ error?: { code: string; message: string } } & T) | undefined;
+  if (text) {
+    try {
+      data = JSON.parse(text) as { error?: { code: string; message: string } } & T;
+    } catch {
+      // 非 JSON 响应（反向代理 502 页面、网关 HTML 错误页等）：不能让 SyntaxError 裸抛
+      throw new ApiError(res.status, 'bad_response', `服务器返回异常内容（HTTP ${res.status}），请稍后重试`);
+    }
+  }
 
   if (!res.ok) {
     const err = data?.error;
