@@ -23,6 +23,8 @@ interface ChatState {
   historyLoadedRooms: Record<string, boolean>;
   /** 每个房间是否还有更早的历史（向上翻页按钮显隐） */
   hasMoreByRoom: Record<string, boolean>;
+  /** 每个房间的最新一条消息摘要（侧栏预览用，实时更新） */
+  previewByRoom: Record<string, { username: string; userId: string; text: string; createdAt: string }>;
   /** 正在加载更早历史的房间（按钮 loading 态） */
   loadingOlderRooms: Record<string, boolean>;
   loadingRooms: boolean;
@@ -36,8 +38,9 @@ interface ChatState {
   joinRoomByCode: (code: string) => Promise<api.Room | null>;
   selectRoom: (roomId: string, forceReload?: boolean) => Promise<void>;
   loadOlderMessages: (roomId: string) => Promise<void>;
+  loadRoomPreviews: () => Promise<void>;
+  deleteRoom: (roomId: string) => void;
   leaveActiveRoom: () => Promise<void>;
-  deleteActiveRoom: () => Promise<void>;
   kickMember: (roomId: string, userId: string) => void;
   sendMessage: (text: string) => void;
   clearRoomError: () => void;
@@ -97,15 +100,18 @@ function removeRoomLocal(roomId: string): void {
     const messagesByRoom = { ...s.messagesByRoom };
     const membersByRoom = { ...s.membersByRoom };
     const unreadByRoom = { ...s.unreadByRoom };
+    const previewByRoom = { ...s.previewByRoom };
     delete messagesByRoom[roomId];
     delete membersByRoom[roomId];
     delete unreadByRoom[roomId];
+    delete previewByRoom[roomId];
     const wasActive = s.activeRoomId === roomId;
     return {
       rooms,
       messagesByRoom,
       membersByRoom,
       unreadByRoom,
+      previewByRoom,
       activeRoomId: wasActive ? (rooms[0]?.id ?? null) : s.activeRoomId,
       subscribedRoomIds: s.subscribedRoomIds.filter((r) => r !== roomId),
     };
@@ -178,6 +184,7 @@ export const useChat = create<ChatState>()((set, get) => ({
   membersByRoom: {},
   historyLoadedRooms: {},
   hasMoreByRoom: {},
+  previewByRoom: {},
   loadingOlderRooms: {},
   loadingRooms: false,
   roomError: null,
@@ -230,6 +237,7 @@ export const useChat = create<ChatState>()((set, get) => ({
           // 登录后加载房间列表，并订阅全部房间（refreshRooms 失败也要重订阅）
           void get()
             .refreshRooms()
+            .then(() => void get().loadRoomPreviews())
             .catch(() => undefined)
             .then(() => {
               subscribeAllRooms();
@@ -325,6 +333,18 @@ export const useChat = create<ChatState>()((set, get) => ({
             }
             playMessageSound(useSettings.getState().soundEnabled);
           }
+          // 侧栏预览实时更新（多房间订阅使非活跃房间也能即时刷新）
+          set((s) => ({
+            previewByRoom: {
+              ...s.previewByRoom,
+              [msg.payload.roomId]: {
+                username: msg.payload.message.username,
+                userId: msg.payload.message.userId,
+                text: msg.payload.message.text,
+                createdAt: msg.payload.message.createdAt,
+              },
+            },
+          }));
           // Overlay 显示所有新消息（含自己发送的，便于游戏内确认消息已发出）
           const room = get().rooms.find((r) => r.id === msg.payload.roomId);
           void pushOverlayMessage(msg.payload.message, room?.name, isMine);
@@ -482,6 +502,31 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
   },
 
+  // 为所有房间拉取最新一条消息做侧栏预览（limit=1，进入应用时一次性补齐，
+  // 之后由 message:new 实时更新；已删除/失效房间静默忽略）
+  loadRoomPreviews: async () => {
+    const { token } = useAuth.getState();
+    if (!token) return;
+    const rooms = get().rooms;
+    await Promise.all(
+      rooms.map(async (r) => {
+        try {
+          const { messages } = await api.roomMessages(token, r.id, { limit: 1 });
+          const last = messages[messages.length - 1];
+          if (!last) return;
+          set((s) => ({
+            previewByRoom: {
+              ...s.previewByRoom,
+              [r.id]: { username: last.username, userId: last.userId, text: last.text, createdAt: last.createdAt },
+            },
+          }));
+        } catch {
+          // 单个房间失败不影响其他
+        }
+      }),
+    );
+  },
+
   leaveActiveRoom: async () => {
     const { token } = useAuth.getState();
     const { activeRoomId } = get();
@@ -496,15 +541,14 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
   },
 
-  deleteActiveRoom: async () => {
-    const { activeRoomId, status } = get();
-    if (!activeRoomId) return;
+  deleteRoom: (roomId) => {
+    const { status } = get();
     if (status !== 'open' || !socket) {
       set({ roomError: '连接未就绪，无法删除房间。请确认已连接服务器。' });
       return;
     }
-    // 通过 WS 发送删除请求：服务端校验房主权限，成功后广播 room:deleted
-    socket.send({ type: 'room:delete', payload: { roomId: activeRoomId } });
+    // 服务端校验房主权限，成功后广播 room:deleted（各端自行移除）
+    socket.send({ type: 'room:delete', payload: { roomId } });
   },
 
   kickMember: (roomId, userId) => {

@@ -644,6 +644,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     historyLoadedRooms,
     hasMoreByRoom,
     loadingOlderRooms,
+    previewByRoom,
     membersByRoom,
     messagesByRoom,
     loadingRooms,
@@ -656,15 +657,17 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     selectRoom,
     loadOlderMessages,
     leaveActiveRoom,
-    deleteActiveRoom,
+    deleteRoom,
     kickMember,
     sendMessage,
     clearRoomError,
   } = useChat();
   const { user, logout } = useAuth();
-  const { soundEnabled, setSoundEnabled } = useSettings();
+  const { gameModeEnabled, hotkey, soundEnabled } = useSettings();
   const [draft, setDraft] = useState('');
-  const [confirmDeleteRoom, setConfirmDeleteRoom] = useState(false);
+  /** 房间右键菜单：所在位置 + 目标房间 */
+  const [roomMenu, setRoomMenu] = useState<{ id: string; invite: string; isOwner: boolean; x: number; y: number } | null>(null);
+  const [confirmDeleteInMenu, setConfirmDeleteInMenu] = useState(false);
   /** 踢出二次确认：记录待确认的成员 userId（3s 内再点一次生效） */
   const [confirmKickId, setConfirmKickId] = useState<string | null>(null);
   const kickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -724,7 +727,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   }, []);
 
   // 游戏模式生命周期：启停快捷键 + Overlay 事件监听
-  const { gameModeEnabled } = useSettings();
   useEffect(() => {
     gameMode.setOnSend((text) => {
       useChat.getState().sendMessage(text);
@@ -777,7 +779,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             className="icon-btn"
             title={offline ? '离线模式不可创建/加入房间' : '创建/加入房间'}
             disabled={offline}
-            onClick={() => setShowRoomModal(true)}
+            onClick={() => {
+              setRoomName('');
+              setInviteCode('');
+              setShowRoomModal(true);
+            }}
           >
             +
           </button>
@@ -799,14 +805,22 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             </div>
           )}
           {rooms.map((r) => {
-            const confirmed = (messagesByRoom[r.id] ?? []).filter((x) => !x.pending);
-            const lastMsg = confirmed.length > 0 ? confirmed[confirmed.length - 1] : undefined;
             return (
               <div
                 key={r.id}
                 className={`room-item ${r.id === activeRoomId ? 'active' : ''}`}
                 onClick={() => void selectRoom(r.id)}
-                title={r.inviteCode}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setConfirmDeleteInMenu(false);
+                  setRoomMenu({
+                    id: r.id,
+                    invite: r.inviteCode,
+                    isOwner: r.ownerId === me?.id,
+                    x: Math.min(e.clientX, window.innerWidth - 190),
+                    y: Math.min(e.clientY, window.innerHeight - 110),
+                  });
+                }}
               >
                 <div className="room-main">
                   <div className="room-line1">
@@ -814,11 +828,13 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                     {!!unreadByRoom[r.id] && (
                       <span className="room-badge">{unreadByRoom[r.id] > 99 ? '99+' : unreadByRoom[r.id]}</span>
                     )}
-                    {lastMsg && <span className="room-time">{formatRoomTime(lastMsg.createdAt)}</span>}
+                    {previewByRoom[r.id] && (
+                      <span className="room-time">{formatRoomTime(previewByRoom[r.id].createdAt)}</span>
+                    )}
                   </div>
-                  {lastMsg && (
+                  {previewByRoom[r.id] && (
                     <div className="room-preview">
-                      {lastMsg.username}：{lastMsg.text}
+                      {previewByRoom[r.id].username}：{previewByRoom[r.id].text}
                     </div>
                   )}
                 </div>
@@ -886,11 +902,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           </div>
           <div className="topbar-right">
             {offline && <span className="offline-tag">离线模式</span>}
-            {!offline && gameModeEnabled && <span className="game-mode-tag">游戏模式</span>}
-            <label className="sound-toggle" title="消息提示音">
-              <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
-              声音
-            </label>
             <span className="member-count">{offline ? '未连接' : `${members.length} 人在线`}</span>
             <StatusDot status={status} />
             {/* 订阅状态只在已连接时有意义；断开/重连中由状态灯表达 */}
@@ -905,23 +916,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             {!offline && (
               <button className="btn ghost small" onClick={connected ? disconnect : connect}>
                 {connected ? '断开' : '连接'}
-              </button>
-            )}
-            {!offline && activeRoom && activeRoom.ownerId === me?.id && (
-              <button
-                className="btn ghost small danger"
-                onClick={() => {
-                  if (!confirmDeleteRoom) {
-                    setConfirmDeleteRoom(true);
-                    setTimeout(() => setConfirmDeleteRoom(false), 3000);
-                  } else {
-                    setConfirmDeleteRoom(false);
-                    void deleteActiveRoom();
-                  }
-                }}
-                title="删除房间（仅房主）"
-              >
-                {confirmDeleteRoom ? '确认删除？' : '删除房间'}
               </button>
             )}
             {offline && (
@@ -1062,6 +1056,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             </button>
           )}
         </footer>
+
+        <footer className="status-bar">
+          <button className="status-item" title="在设置中管理" onClick={() => setShowSettings(true)}>
+            游戏模式 {offline ? '未登录' : gameModeEnabled ? `已开启 · ${hotkey}` : '已关闭'}
+          </button>
+          <button className="status-item" title="在设置中管理" onClick={() => setShowSettings(true)}>
+            提示音 {soundEnabled ? '已开启' : '已关闭'}
+          </button>
+        </footer>
       </main>
 
       {/* 成员面板（QQ 式）：在线成员 + 房主标注 + 房主踢人 */}
@@ -1116,6 +1119,37 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         </aside>
       )}
 
+      {roomMenu && (
+        <>
+          <div className="menu-mask" onClick={() => setRoomMenu(null)} />
+          <div className="ctx-menu" style={{ left: roomMenu.x, top: roomMenu.y }}>
+            <button
+              className="ctx-menu-item"
+              onClick={async () => {
+                await copyText(roomMenu.invite);
+                setRoomMenu(null);
+              }}
+            >
+              复制邀请码
+            </button>
+            {roomMenu.isOwner && (
+              <button
+                className="ctx-menu-item danger"
+                onClick={() => {
+                  if (!confirmDeleteInMenu) {
+                    setConfirmDeleteInMenu(true);
+                    return;
+                  }
+                  deleteRoom(roomMenu.id);
+                  setRoomMenu(null);
+                }}
+              >
+                {confirmDeleteInMenu ? '确认删除？' : '删除房间'}
+              </button>
+            )}
+          </div>
+        </>
+      )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
       {cardMember && activeRoom && (
