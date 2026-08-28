@@ -112,7 +112,7 @@
 - 2026-08-28（重大根因）：Overlay/快捷键全失效 = 我加的主窗口 `additionalBrowserArgs: "--proxy-bypass-list=*"` 作用于共享 WebView2 浏览器进程，弄坏 overlay/input 窗口内容加载（overlay.tsx 从不挂载）。移除该参数后恢复。教训：additionalBrowserArgs 是全局副作用，慎用；此前误判的"半开连接"极可能也是它。
 - 2026-08-28：Contributors 修复——历史提交原用假身份 GameTalk Dev，重写为 AppDuck <132205345+aocac@users.noreply.github.com>（filter-branch + force push）。
 - 2026-08-28：清理临时诊断日志（diag_log/diag/odiag）；README 特性、PROGRESS 更新。
-- 当前：服务端 29 测试 + 客户端 11 测试绿；v0.1.0 资产已发布。
+- 当前：服务端 29 测试 + 客户端 11 测试绿；三端 Release v0.1.1 资产已发布（win exe / linux deb+AppImage / macOS dmg）。
 - 2026-08-28（接管：隐私审计 + 历史清除 + 安全加固 + 文档完善 + v0.1.1）：
   - 隐私审计：`.workbuddy/` 开发日志曾入库（已核实内容无密钥/真实域名），filter-branch 全历史清除 + `--prune-empty` + 强推 main 与 v0.1.0；全量跟踪文件扫描无密钥/真实 IP/可疑域名；docs 截图均为测试账号（browser_alpha 等）可保留。注意：GitHub 侧旧 commit 对象在 GC 前仍可按 SHA 直取，彻底擦除需联系 GitHub Support（低风险，内容无害）。
   - 服务端加固：WS 单连接限流（5s 滑动窗口 25 条 → `rate_limited`）、单帧 64KB 上限（超限 1009 断连）、协议层心跳巡检（30s ping / 70s 无 pong terminate，清理半开"幽灵成员"）、注册并发竞态由唯一索引兜底（23505 → 409）；gateway 连接清理统一收敛到 close 事件 + 修复格式粘连。
@@ -120,3 +120,4 @@
   - 部署：compose `CORS_ORIGIN` 可经 .env 覆盖（默认 `*`，桌面客户端不受浏览器同源限制）。
   - 文档：README（Releases 下载、MIT License 落地）、architecture（协议补 room:delete/rate_limited/心跳、目录树纠偏、可靠性参数更新）、testing（29+11、物理验收勾选、3MB 头像勘误、章节重编号）、deployment（CORS 变量、三端 Release、部署状态）、client/README 与 server/README 重写、新增 LICENSE。
   - 坑位补充：限流把 hello/ping 一并计数——写测试打满配额时要扣除 hello 占的 1 条。
+  - 发布：v0.1.1（CI 4 job 绿 → tag 触发三端构建绿 → Release 4 资产挂载完成）。
