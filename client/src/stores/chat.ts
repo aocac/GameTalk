@@ -38,6 +38,7 @@ interface ChatState {
   loadOlderMessages: (roomId: string) => Promise<void>;
   leaveActiveRoom: () => Promise<void>;
   deleteActiveRoom: () => Promise<void>;
+  kickMember: (roomId: string, userId: string) => void;
   sendMessage: (text: string) => void;
   clearRoomError: () => void;
 }
@@ -282,6 +283,22 @@ export const useChat = create<ChatState>()((set, get) => ({
           if (get().activeRoomId) void get().selectRoom(get().activeRoomId!);
           break;
         }
+        case 'member:kicked': {
+          const { roomId, userId } = msg.payload;
+          if (userId === state.me?.id) {
+            // 我被移出房间：本地清理 + 自动切换 + 明确提示
+            removeRoomLocal(roomId);
+            set({ roomError: '你已被房主移出该房间' });
+            if (get().activeRoomId) void get().selectRoom(get().activeRoomId!);
+          } else {
+            set((s) => {
+              const members = s.membersByRoom[roomId];
+              if (!members) return s;
+              return { membersByRoom: { ...s.membersByRoom, [roomId]: members.filter((m) => m.id !== userId) } };
+            });
+          }
+          break;
+        }
         case 'message:new': {
           set((s) => {
             // 自己发出的消息：先移除对应的乐观占位，再追加服务器确认版本（避免重复）
@@ -486,6 +503,16 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
     // 通过 WS 发送删除请求：服务端校验房主权限，成功后广播 room:deleted
     socket.send({ type: 'room:delete', payload: { roomId: activeRoomId } });
+  },
+
+  kickMember: (roomId, userId) => {
+    const { status } = get();
+    if (status !== 'open' || !socket) {
+      set({ roomError: '连接未就绪，无法操作。请确认已连接服务器。' });
+      return;
+    }
+    // 服务端校验房主权限，成功后广播 member:kicked（各端含被踢者自行清理）
+    socket.send({ type: 'member:kick', payload: { roomId, userId } });
   },
 
   sendMessage: (text) => {

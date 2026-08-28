@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -62,6 +62,18 @@ const POSITION_LABELS: Record<OverlayPosition, string> = {
 };
 
 const MAX_AVATAR_BYTES = 3 * 1024 * 1024; // 3MB
+
+/** 消息日期分隔文案：今天 / 昨天 / M月D日 */
+function formatDay(ts: string): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (sameDay(d, now)) return '今天';
+  if (sameDay(d, yesterday)) return '昨天';
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
 
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const {
@@ -488,6 +500,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     loadOlderMessages,
     leaveActiveRoom,
     deleteActiveRoom,
+    kickMember,
     sendMessage,
     clearRoomError,
   } = useChat();
@@ -495,6 +508,9 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const { soundEnabled, setSoundEnabled } = useSettings();
   const [draft, setDraft] = useState('');
   const [confirmDeleteRoom, setConfirmDeleteRoom] = useState(false);
+  /** 踢出二次确认：记录待确认的成员 userId（3s 内再点一次生效） */
+  const [confirmKickId, setConfirmKickId] = useState<string | null>(null);
+  const kickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [roomName, setRoomName] = useState('');
@@ -561,6 +577,19 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     };
   }, [gameModeEnabled]);
 
+  const handleKick = (m: { id: string }) => {
+    if (!activeRoom) return;
+    if (confirmKickId !== m.id) {
+      setConfirmKickId(m.id);
+      if (kickTimer.current) clearTimeout(kickTimer.current);
+      kickTimer.current = setTimeout(() => setConfirmKickId(null), 3000);
+      return;
+    }
+    if (kickTimer.current) clearTimeout(kickTimer.current);
+    setConfirmKickId(null);
+    kickMember(activeRoom.id, m.id);
+  };
+
   const submitRoomModal = async (kind: 'create' | 'join') => {
     if (kind === 'create') {
       if (!roomName.trim()) return;
@@ -619,7 +648,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               {!!unreadByRoom[r.id] && (
                 <span className="room-badge">{unreadByRoom[r.id] > 99 ? '99+' : unreadByRoom[r.id]}</span>
               )}
-              <span className="room-count">{r.memberCount}</span>
             </div>
           ))}
         </nav>
@@ -760,18 +788,30 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               <p className="empty-sub">发送第一条消息，开始与房间里的玩家实时沟通。</p>
             </div>
           )}
-          {messages.map((m) => (
-            <div key={m.id} className={`message ${m.userId === me?.id ? 'mine' : ''} ${m.pending ? 'pending' : ''}`}>
-              <Avatar name={m.username} url={m.avatarUrl} size={30} />
-              <div className="message-body">
-                <div className="message-head">
-                  <span className="message-author">{m.username}</span>
-                  <span className="message-time">{m.pending ? '发送中…' : new Date(m.createdAt).toLocaleTimeString()}</span>
+          {messages.map((m, i) => {
+            const showDay =
+              i === 0 ||
+              new Date(m.createdAt).toDateString() !== new Date(messages[i - 1].createdAt).toDateString();
+            return (
+              <Fragment key={m.id}>
+                {showDay && (
+                  <div className="day-divider">
+                    <span>{formatDay(m.createdAt)}</span>
+                  </div>
+                )}
+                <div className={`message ${m.userId === me?.id ? 'mine' : ''} ${m.pending ? 'pending' : ''}`}>
+                  <Avatar name={m.username} url={m.avatarUrl} size={30} />
+                  <div className="message-body">
+                    <div className="message-head">
+                      <span className="message-author">{m.username}</span>
+                      <span className="message-time">{m.pending ? '发送中…' : new Date(m.createdAt).toLocaleTimeString()}</span>
+                    </div>
+                    <div className="message-text">{m.text}</div>
+                  </div>
                 </div>
-                <div className="message-text">{m.text}</div>
-              </div>
-            </div>
-          ))}
+              </Fragment>
+            );
+          })}
         </div>
 
         <footer className="composer">
@@ -811,6 +851,49 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           )}
         </footer>
       </main>
+
+      {/* 成员面板（QQ 式）：在线成员 + 房主标注 + 房主踢人 */}
+      {!offline && activeRoom && (
+        <aside className="members-panel">
+          <div className="members-header">
+            <span>成员</span>
+            <span className="members-count">{members.length}</span>
+          </div>
+          <div className="members-list">
+            {members.map((m) => {
+              const isOwner = m.id === activeRoom.ownerId;
+              const isSelf = m.id === me?.id;
+              const canKick = activeRoom.ownerId === me?.id && !isOwner;
+              return (
+                <div key={m.id} className={`member-item ${isSelf ? 'self' : ''}`} title={isOwner ? '房主' : m.username}>
+                  <span className="member-avatar">
+                    <Avatar name={m.username} url={m.avatarUrl} size={26} />
+                  </span>
+                  <span className="member-name">
+                    {m.username}
+                    {isSelf ? '（我）' : ''}
+                  </span>
+                  {isOwner && (
+                    <span className="owner-chip" title="房主">
+                      👑
+                    </span>
+                  )}
+                  {canKick && (
+                    <button
+                      className={`kick-btn ${confirmKickId === m.id ? 'confirm' : ''}`}
+                      onClick={() => handleKick(m)}
+                      title={confirmKickId === m.id ? '再次点击确认移出' : '移出房间'}
+                    >
+                      {confirmKickId === m.id ? '确认?' : '移出'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {activeRoom.ownerId === me?.id && <div className="members-hint">你是房主 · 可移出成员 / 删除房间</div>}
+        </aside>
+      )}
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 

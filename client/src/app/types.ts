@@ -24,6 +24,7 @@ export type ClientWsMessage =
   | { type: 'room:join'; payload: { roomId: string } }
   | { type: 'room:leave'; payload: { roomId: string } }
   | { type: 'room:delete'; payload: { roomId: string } }
+  | { type: 'member:kick'; payload: { roomId: string; userId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string } }
   | { type: 'ping' };
 
@@ -33,6 +34,7 @@ export type ServerWsMessage =
   | { type: 'room:joined'; payload: { roomId: string; members: UserBrief[] } }
   | { type: 'member:joined'; payload: { roomId: string; member: UserBrief } }
   | { type: 'member:left'; payload: { roomId: string; userId: string; username: string } }
+  | { type: 'member:kicked'; payload: { roomId: string; userId: string; username: string } }
   | { type: 'message:new'; payload: { roomId: string; message: ChatMessage } }
   | { type: 'room:deleted'; payload: { roomId: string } }
   | { type: 'error'; payload: { code: string; message: string; roomId?: string } }
