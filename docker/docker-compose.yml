@@ -11,7 +11,8 @@ services:
       DATABASE_URL: postgres://gametalk:${POSTGRES_PASSWORD}@postgres:5432/gametalk
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: 7d
-      CORS_ORIGIN: "*"
+      # 默认 *（桌面客户端不受浏览器同源限制，够用）；如需收紧在 .env 里设置 CORS_ORIGIN
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
       LOG_LEVEL: info
     depends_on:
       postgres:
