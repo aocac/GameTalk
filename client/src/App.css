@@ -1452,3 +1452,17 @@ body {
   cursor: pointer;
   text-decoration: underline;
 }
+
+/* 品牌图标（应用图标本体，替代 GT 文字占位） */
+.logo-img {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.logo-img.big {
+  width: 52px;
+  height: 52px;
+  margin-bottom: 10px;
+}

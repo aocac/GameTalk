@@ -10,6 +10,7 @@ import { useAuth } from './stores/auth';
 import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
 import * as gameMode from './app/gameMode';
 import HotkeyRecorder from './components/HotkeyRecorder';
+import appIcon from './assets/app-icon.png';
 
 function Avatar({ name, url, size = 28 }: { name: string; url?: string | null; size?: number }) {
   if (url) {
@@ -531,7 +532,7 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
     <div className="auth-wrap">
       <form className="auth-card" onSubmit={submit}>
         <div className="auth-brand">
-          <span className="logo big">GT</span>
+          <img src={appIcon} alt="GameTalk" className="logo-img big" draggable={false} />
           <h1>GameTalk</h1>
           <p>游戏玩家的轻量群组通信</p>
         </div>
@@ -767,7 +768,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     <div className="app">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <span className="logo">GT</span>
+          <img src={appIcon} alt="GameTalk" className="logo-img" draggable={false} />
           <span className="brand-name">GameTalk</span>
         </div>
         <div className="rooms-header">
