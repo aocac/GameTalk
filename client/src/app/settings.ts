@@ -84,7 +84,7 @@ export const useSettings = create<AppSettings>()(
     (set) => ({
       serverUrl: DEFAULT_SERVER_URL,
       soundEnabled: true,
-      gameModeEnabled: false,
+      gameModeEnabled: true,
       hotkey: DEFAULT_HOTKEY,
       overlayPosition: 'top-left',
       overlayCustomPosition: null,
