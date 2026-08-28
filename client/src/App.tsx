@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useChat } from './stores/chat';
+import * as api from './app/api';
+import type { UserBrief } from './app/types';
 import type { RoomMessage } from './app/api';
 import { useAuth } from './stores/auth';
 import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
@@ -94,11 +96,201 @@ function isGroupedWithPrev(prev: RoomMessage | undefined, cur: RoomMessage): boo
   return new Date(cur.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60 * 1000;
 }
 
+/** 剪贴板复制（webview 安全上下文下可用），成功返回 true */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 个人资料：头像 / 昵称 / 个性签名 / ID / 注册时间（与软件设置分离） */
+function ProfileModal({ onClose }: { onClose: () => void }) {
+  const { user, updateProfile, uploadAvatar, busy } = useAuth();
+  const [username, setUsername] = useState(user?.username ?? '');
+  const [bio, setBio] = useState(user?.bio ?? '');
+  const [msg, setMsg] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const onAvatarFile = async (file: File | undefined) => {
+    setMsg(null);
+    if (!file) return;
+    if (file.size > MAX_AVATAR_BYTES) {
+      setMsg('图片需 ≤3MB，请换一张更小的图');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUrl = String(reader.result ?? '');
+      try {
+        await uploadAvatar(dataUrl);
+        setMsg('头像已更新');
+      } catch {
+        setMsg('上传失败（仅支持 PNG/JPEG/WebP/GIF）');
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const save = async () => {
+    setMsg(null);
+    try {
+      await updateProfile({ username: username.trim() || user?.username, bio });
+      setMsg('已保存');
+    } catch {
+      setMsg(null);
+    }
+  };
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal profile-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>个人资料</h3>
+        <div className="profile-hero">
+          <button className="avatar-btn" title="点击更换头像" onClick={() => fileRef.current?.click()}>
+            <Avatar name={username || user?.username || ''} url={user?.avatarUrl} size={60} />
+          </button>
+          <div className="profile-hero-info">
+            <div className="profile-name">{user?.username}</div>
+            <button
+              className="id-row"
+              title="点击复制 ID"
+              onClick={async () => {
+                if (user && (await copyText(user.id))) {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }
+              }}
+            >
+              <span className="user-id">#{user?.id.slice(0, 8)}</span>
+              <span className="id-copy">{copied ? '已复制 ✓' : '复制 ID'}</span>
+            </button>
+            <div className="profile-meta">注册于 {user ? new Date(user.createdAt).toLocaleDateString() : '—'}</div>
+          </div>
+        </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            void onAvatarFile(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+        />
+        {msg && <span className={msg.includes('失败') || msg.includes('需') ? 'err-text' : 'ok-text'}>{msg}</span>}
+        <label className="field">
+          <span>昵称</span>
+          <input value={username} maxLength={24} onChange={(e) => setUsername(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>个性签名</span>
+          <textarea
+            className="bio-input"
+            value={bio}
+            maxLength={100}
+            rows={2}
+            placeholder="写一句话介绍自己…"
+            onChange={(e) => setBio(e.target.value)}
+          />
+          <span className="field-hint bio-count">{bio.length}/100</span>
+        </label>
+        <button className="btn primary block" disabled={busy} onClick={() => void save()}>
+          {busy ? '保存中…' : '保存'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 成员卡片：点击成员查看公开资料；房主可直接移出 */
+function MemberCardModal({
+  member,
+  isOwner,
+  canKick,
+  onKick,
+  onClose,
+}: {
+  member: UserBrief;
+  isOwner: boolean;
+  canKick: boolean;
+  onKick: () => void;
+  onClose: () => void;
+}) {
+  const { token } = useAuth();
+  const [profile, setProfile] = useState<api.MemberProfile | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [confirmKick, setConfirmKick] = useState(false);
+  const kickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (token) {
+      api
+        .getUserProfile(token, member.id)
+        .then((r) => {
+          if (!cancelled) setProfile(r.user);
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [token, member.id]);
+
+  const handleKick = () => {
+    if (!confirmKick) {
+      setConfirmKick(true);
+      kickTimer.current = setTimeout(() => setConfirmKick(false), 3000);
+      return;
+    }
+    if (kickTimer.current) clearTimeout(kickTimer.current);
+    onKick();
+  };
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal member-card" onClick={(e) => e.stopPropagation()}>
+        <div className="card-hero">
+          <Avatar name={member.username} url={profile?.avatarUrl ?? member.avatarUrl} size={56} />
+          <div className="card-name-row">
+            <span className="card-name">{member.username}</span>
+            {isOwner && <span className="owner-chip">房主</span>}
+          </div>
+        </div>
+        <div className="card-bio">{profile ? profile.bio || '这个人很神秘，什么都没有写' : '加载中…'}</div>
+        <button
+          className="id-row"
+          title="点击复制 ID"
+          onClick={async () => {
+            if (await copyText(member.id)) {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }
+          }}
+        >
+          <span className="user-id">#{member.id.slice(0, 8)}</span>
+          <span className="id-copy">{copied ? '已复制 ✓' : '复制 ID'}</span>
+        </button>
+        {profile && <div className="card-meta">注册于 {new Date(profile.createdAt).toLocaleDateString()}</div>}
+        {canKick && (
+          <button className={`btn ghost block danger ${confirmKick ? 'confirming' : ''}`} onClick={handleKick}>
+            {confirmKick ? '确认移出该成员？' : '移出房间'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 软件设置：服务器 / 声音 / 代理 / 游戏模式 / Overlay（个人资料在头像菜单单独入口） */
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const {
     serverUrl,
     setServerUrl,
-    soundEnabled,
     setSoundEnabled,
     gameModeEnabled,
     setGameModeEnabled,
@@ -115,13 +307,9 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     setUseProxy,
     proxyAddress,
     setProxyAddress,
+    soundEnabled,
   } = useSettings();
-  const { user, updateProfile, uploadAvatar, busy } = useAuth();
-  const [username, setUsername] = useState(user?.username ?? '');
-  const [profileMsg, setProfileMsg] = useState<string | null>(null);
-  const [avatarMsg, setAvatarMsg] = useState<string | null>(null);
   const [proxyMsg, setProxyMsg] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   // 用户主动调整位置/缩放：立即应用 + 5 秒预览（Overlay 平时隐藏，必须主动显示让用户看到效果）
   // 显式传入 position，不依赖 store 中转（修复 select 选择后位置未应用的问题）
@@ -137,36 +325,6 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     onClose();
   };
 
-  const saveProfile = async () => {
-    setProfileMsg(null);
-    try {
-      await updateProfile({ username: username.trim() || user?.username });
-      setProfileMsg('已保存');
-    } catch {
-      setProfileMsg(null);
-    }
-  };
-
-  const onAvatarFile = async (file: File | undefined) => {
-    setAvatarMsg(null);
-    if (!file) return;
-    if (file.size > MAX_AVATAR_BYTES) {
-      setAvatarMsg('图片需 ≤3MB，请换一张更小的图');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const dataUrl = String(reader.result ?? '');
-      try {
-        await uploadAvatar(dataUrl);
-        setAvatarMsg('头像已更新');
-      } catch {
-        setAvatarMsg('上传失败（仅支持 PNG/JPEG/WebP/GIF）');
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
   const onHotkeyChange = (v: string) => {
     setHotkey(v);
     if (gameModeEnabled) void gameMode.reapplyHotkey();
@@ -176,43 +334,6 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     <div className="modal-mask" onClick={closeModal}>
       <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
         <h3>设置</h3>
-
-        <div className="settings-section">
-          <span className="section-title">个人资料</span>
-          <div className="profile-row">
-            <button className="avatar-btn" title="点击更换头像" onClick={() => fileRef.current?.click()}>
-              <Avatar name={username || user?.username || ''} url={user?.avatarUrl} size={48} />
-            </button>
-            <div className="user-info">
-              <div className="user-name">{user?.username}</div>
-              <div className="user-id">#{user?.id.slice(0, 8)}</div>
-              <button className="btn ghost small" onClick={() => fileRef.current?.click()}>
-                {busy ? '上传中…' : '更换头像'}
-              </button>
-            </div>
-          </div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              void onAvatarFile(e.target.files?.[0]);
-              e.target.value = '';
-            }}
-          />
-          {avatarMsg && <span className={avatarMsg.includes('失败') ? 'err-text' : 'ok-text'}>{avatarMsg}</span>}
-          <label className="field">
-            <span>昵称</span>
-            <input value={username} maxLength={24} onChange={(e) => setUsername(e.target.value)} />
-          </label>
-          <div className="row-between">
-            <button className="btn primary small" disabled={busy} onClick={() => void saveProfile()}>
-              {busy ? '保存中…' : '保存昵称'}
-            </button>
-            {profileMsg && <span className="ok-text">{profileMsg}</span>}
-          </div>
-        </div>
 
         <label className="field">
           <span>服务器地址</span>
@@ -530,8 +651,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   /** 踢出二次确认：记录待确认的成员 userId（3s 内再点一次生效） */
   const [confirmKickId, setConfirmKickId] = useState<string | null>(null);
   const kickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** 左下角头像二级菜单（设置 / 退出登录） */
+  /** 左下角头像二级菜单（个人资料 / 设置 / 退出登录） */
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  /** 成员卡片：当前查看的成员 */
+  const [cardMember, setCardMember] = useState<UserBrief | null>(null);
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [roomName, setRoomName] = useState('');
@@ -702,6 +826,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <>
             <div className="menu-mask" onClick={() => setUserMenuOpen(false)} />
             <div className="user-menu">
+              <button
+                className="user-menu-item"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  setShowProfile(true);
+                }}
+              >
+                个人资料
+              </button>
               <button
                 className="user-menu-item"
                 onClick={() => {
@@ -929,7 +1062,12 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               const isSelf = m.id === me?.id;
               const canKick = activeRoom.ownerId === me?.id && !isOwner;
               return (
-                <div key={m.id} className={`member-item ${isSelf ? 'self' : ''}`} title={isOwner ? '房主' : m.username}>
+                <div
+                  key={m.id}
+                  className={`member-item ${isSelf ? 'self' : ''}`}
+                  title="查看资料"
+                  onClick={() => setCardMember(m)}
+                >
                   <span className="member-avatar">
                     <Avatar name={m.username} url={m.avatarUrl} size={26} />
                   </span>
@@ -945,7 +1083,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   {canKick && (
                     <button
                       className={`kick-btn ${confirmKickId === m.id ? 'confirm' : ''}`}
-                      onClick={() => handleKick(m)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleKick(m);
+                      }}
                       title={confirmKickId === m.id ? '再次点击确认移出' : '移出房间'}
                     >
                       {confirmKickId === m.id ? '确认?' : '移出'}
@@ -959,6 +1100,19 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       )}
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
+      {cardMember && activeRoom && (
+        <MemberCardModal
+          member={cardMember}
+          isOwner={cardMember.id === activeRoom.ownerId}
+          canKick={activeRoom.ownerId === me?.id && cardMember.id !== me?.id}
+          onKick={() => {
+            kickMember(activeRoom.id, cardMember.id);
+            setCardMember(null);
+          }}
+          onClose={() => setCardMember(null)}
+        />
+      )}
 
       {showRoomModal && (
         <div className="modal-mask" onClick={() => setShowRoomModal(false)}>

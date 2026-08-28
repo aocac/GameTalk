@@ -4,6 +4,16 @@ export interface PublicUser {
   id: string;
   username: string;
   avatarUrl: string | null;
+  bio: string | null;
+  createdAt: string;
+}
+
+/** 成员卡片公开资料 */
+export interface MemberProfile {
+  id: string;
+  username: string;
+  bio: string | null;
+  avatarUrl: string | null;
   createdAt: string;
 }
 
@@ -87,8 +97,13 @@ export function fetchMe(token: string): Promise<{ user: PublicUser }> {
   return request<{ user: PublicUser }>('/api/auth/me', { token });
 }
 
-export function patchMe(token: string, patch: { username?: string; avatarUrl?: string }): Promise<{ user: PublicUser }> {
+export function patchMe(token: string, patch: { username?: string; avatarUrl?: string; bio?: string }): Promise<{ user: PublicUser }> {
   return request<{ user: PublicUser }>('/api/auth/me', { method: 'PATCH', token, body: patch });
+}
+
+/** 查看成员公开资料（成员卡片） */
+export function getUserProfile(token: string, userId: string): Promise<{ user: MemberProfile }> {
+  return request<{ user: MemberProfile }>(`/api/users/${userId}`, { token });
 }
 
 export function uploadAvatar(token: string, dataUrl: string): Promise<{ user: PublicUser }> {

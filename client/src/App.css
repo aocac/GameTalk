@@ -1312,3 +1312,127 @@ body {
   opacity: 0.55;
   cursor: default;
 }
+
+/* ============ 个人资料 Modal ============ */
+.profile-modal {
+  width: 380px;
+}
+
+.profile-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.profile-hero-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.profile-name {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.id-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+  width: fit-content;
+}
+
+.id-row:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.id-copy {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.profile-meta {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.bio-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  transition: border-color 0.14s;
+}
+
+.bio-input:focus {
+  border-color: var(--accent);
+}
+
+.bio-count {
+  text-align: right;
+  margin-top: -2px;
+}
+
+/* ============ 成员卡片 ============ */
+.member-card {
+  width: 300px;
+  gap: 10px;
+}
+
+.card-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 2px;
+}
+
+.card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-name {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.card-bio {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.card-meta {
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.btn.ghost.block.danger.confirming {
+  background: var(--danger);
+  color: #fff;
+}
+
+.member-item {
+  cursor: pointer;
+}

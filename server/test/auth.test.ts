@@ -231,6 +231,58 @@ describe('auth', () => {
     expect(res2.statusCode).toBe(400);
   });
 
+  it('updates bio and serves public profile via /api/users/:id', async () => {
+    const reg = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'bio_user', password: 'password123' },
+    });
+    const { token, user } = reg.json();
+
+    // 签名写入（trim）+ 超长截断到 100
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: '/api/auth/me',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { bio: '  主打打野位 🐺  ' },
+    });
+    expect(patch.statusCode).toBe(200);
+    expect(patch.json().user.bio).toBe('主打打野位 🐺');
+    const patch2 = await app.inject({
+      method: 'PATCH',
+      url: '/api/auth/me',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { bio: 'x'.repeat(150) },
+    });
+    expect(patch2.json().user.bio).toHaveLength(100);
+
+    // 公开资料端点：包含 bio/avatarUrl/createdAt，不泄漏密码字段
+    const prof = await app.inject({
+      method: 'GET',
+      url: `/api/users/${user.id}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(prof.statusCode).toBe(200);
+    expect(prof.json().user.username).toBe('bio_user');
+    expect(prof.json().user.bio).toHaveLength(100);
+    expect(prof.json().user.createdAt).toBeTruthy();
+    expect(prof.json().user.password_hash).toBeUndefined();
+
+    // 不存在的用户 → 404；非法 id → 404
+    const none = await app.inject({
+      method: 'GET',
+      url: '/api/users/11111111-1111-1111-1111-111111111111',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(none.statusCode).toBe(404);
+    const bad = await app.inject({
+      method: 'GET',
+      url: '/api/users/not-a-uuid',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(bad.statusCode).toBe(404);
+  });
+
   it('rate limits auth endpoints (429 with unified error shape)', async () => {
     // 独立 app 实例：低配额验证登录爆破防护（主实例测试模式已放开限流）
     const cfg = loadConfig({

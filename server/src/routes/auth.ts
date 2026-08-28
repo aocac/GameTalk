@@ -18,6 +18,7 @@ export interface PublicUser {
   id: string;
   username: string;
   avatarUrl: string | null;
+  bio: string | null;
   createdAt: string;
 }
 
@@ -26,11 +27,18 @@ interface UserRow extends QueryResultRow {
   username: string;
   password_hash: string;
   avatar_url: string | null;
+  bio: string | null;
   created_at: string;
 }
 
 function toPublicUser(u: UserRow, httpBase: string): PublicUser {
-  return { id: u.id, username: u.username, avatarUrl: avatarHttpUrlOf(httpBase, u.id, u.avatar_url), createdAt: u.created_at };
+  return {
+    id: u.id,
+    username: u.username,
+    avatarUrl: avatarHttpUrlOf(httpBase, u.id, u.avatar_url),
+    bio: u.bio ?? null,
+    createdAt: u.created_at,
+  };
 }
 
 const USERNAME_RE = /^[\w\u4e00-\u9fa5-]{3,24}$/;
@@ -157,10 +165,39 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     },
   );
 
+  // 用户公开资料（成员卡片用）：需登录，id 为不可枚举 UUID
+  app.get('/api/users/:id', { preHandler: [auth] }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      await reply.code(404).send({ error: { code: 'user_not_found', message: '用户不存在' } });
+      return;
+    }
+    const found = await db.query<UserRow>(
+      'SELECT id, username, avatar_url, bio, created_at FROM users WHERE id = $1',
+      [id],
+    );
+    const u = found.rows[0];
+    if (!u) {
+      await reply.code(404).send({ error: { code: 'user_not_found', message: '用户不存在' } });
+      return;
+    }
+    const base = httpBaseOf(req.headers);
+    await reply.send({
+      user: {
+        id: u.id,
+        username: u.username,
+        bio: u.bio ?? null,
+        avatarUrl: avatarHttpUrlOf(base, u.id, u.avatar_url),
+        createdAt: u.created_at,
+      },
+    });
+  });
+
   app.patch('/api/auth/me', { preHandler: [auth] }, async (req, reply) => {
-    const body = (req.body ?? {}) as { username?: unknown; avatarUrl?: unknown };
+    const body = (req.body ?? {}) as { username?: unknown; avatarUrl?: unknown; bio?: unknown };
     const username = body.username === undefined ? undefined : String(body.username).trim();
     const avatarUrl = body.avatarUrl === undefined ? undefined : String(body.avatarUrl).trim().slice(0, 500);
+    const bio = body.bio === undefined ? undefined : String(body.bio).trim().slice(0, 100) || null;
 
     if (username !== undefined) {
       if (!USERNAME_RE.test(username)) {
@@ -174,7 +211,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
       }
     }
 
-    // 动态构建 SET：undefined = 不修改；null/字符串 = 显式设置（可用于清空头像）
+    // 动态构建 SET：undefined = 不修改；null/字符串 = 显式设置（可用于清空头像/签名）
     const sets: string[] = [];
     const params: unknown[] = [];
     if (username !== undefined) {
@@ -184,6 +221,10 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     if (avatarUrl !== undefined) {
       params.push(avatarUrl);
       sets.push(`avatar_url = $${params.length}`);
+    }
+    if (bio !== undefined) {
+      params.push(bio);
+      sets.push(`bio = $${params.length}`);
     }
     if (sets.length === 0) {
       const current = await db.query<UserRow>('SELECT * FROM users WHERE id = $1', [req.userId]);

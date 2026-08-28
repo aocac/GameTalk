@@ -10,7 +10,7 @@ interface AuthState {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
   refreshMe: () => Promise<void>;
-  updateProfile: (patch: { username?: string; avatarUrl?: string }) => Promise<void>;
+  updateProfile: (patch: { username?: string; avatarUrl?: string; bio?: string }) => Promise<void>;
   uploadAvatar: (dataUrl: string) => Promise<void>;
   logout: () => void;
   clearError: () => void;

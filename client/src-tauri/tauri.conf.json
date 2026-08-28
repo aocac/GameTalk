@@ -14,10 +14,10 @@
       {
         "label": "main",
         "title": "GameTalk",
-        "width": 1080,
-        "height": 720,
-        "minWidth": 880,
-        "minHeight": 600,
+        "width": 1200,
+        "height": 800,
+        "minWidth": 920,
+        "minHeight": 620,
         "center": true
       },
       {
