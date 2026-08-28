@@ -121,3 +121,13 @@
   - 文档：README（Releases 下载、MIT License 落地）、architecture（协议补 room:delete/rate_limited/心跳、目录树纠偏、可靠性参数更新）、testing（29+11、物理验收勾选、3MB 头像勘误、章节重编号）、deployment（CORS 变量、三端 Release、部署状态）、client/README 与 server/README 重写、新增 LICENSE。
   - 坑位补充：限流把 hello/ping 一并计数——写测试打满配额时要扣除 hello 占的 1 条。
   - 发布：v0.1.1（CI 4 job 绿 → tag 触发三端构建绿 → Release 4 资产挂载完成）。
+- 2026-08-28（第二轮：双 Bug 修复 + 多房间 + 加固 + 工程化）：
+  - 真机反馈 Bug：① 换快捷键后旧键仍生效——根因 registerHotkey 只注销新键，新增 `registeredHotkey` 追踪并注销旧键（含 stopGameMode 双保险）+ 有状态 mock 测试；② 中文输入法组词 Enter 误发送——composer 与游戏输入框 onKeyDown 增加 `isComposing || keyCode===229` 守卫。
+  - 多房间订阅：客户端从"单房间订阅"改为订阅全部房间（服务端本就支持多房间），新增未读角标（unreadByRoom，选中清零）、Overlay 标注来源房间（pushOverlayMessage 带 roomName）、看门狗补订全部房间；成员事件不再按活跃房间过滤。**注意坑位**：message:new 的提示音/Overlay 现在对所有房间生效（这正是多房间订阅的意义）。
+  - 历史向上翻页：loadOlderMessages（before 游标 + 去重合并），UI「加载更早的消息」按钮 + prepend 后滚动锚定（anchorRef 方案，翻页不触发自动滚底）。
+  - REST 限流：@fastify/rate-limit（全局 300/分钟，注册/登录 10/分钟可配 RATE_LIMIT_*_MAX，测试模式自动放开），trustProxy 按反代头取真实 IP；坑位：errorResponseBuilder 返回值是 **throw** 的 error，必须带 `statusCode: 429` 才不会变 500。清空头像 '' 归一化为 null。
+  - 头像带宽治理：新增 `GET /api/avatars/:id`（公开，UUID 不可枚举，5 分钟缓存），REST/WS 全链路把 data URL 转换为该端点绝对 URL（httpBase 取 Host + X-Forwarded-Proto）——3MB 头像不再随每条消息广播。语义：外链 URL 原样返回，无头像 null。
+  - 运维：`npm run reset-password -- <用户名> <新密码>` CLI（服务器主人重置密码，PGlite 模式需先停服）。
+  - 工程化：ESLint flat config 双工作区（client 含 react-hooks 规则），CI server/client job 加 lint 步骤；actions 全量升级（checkout v7 / setup-node v7 / upload-artifact v7 / download-artifact v8 / gh-release v3）消除 Node20 弃用警告；gateway 死代码 sendToUser 清理。
+  - 坑位补充：vitest 的 vi.mock 工厂若引用已删除的模块级变量（registered.push），会在 mock 内部抛 ReferenceError 并被 SUT 的 try/catch 吞掉，表现为"快捷键静默注册不上"——mock 改动后必须同步清理工厂闭包。
+  - 测试基线：server 30 + client 12 全绿；lint 双工作区绿。

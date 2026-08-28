@@ -4,8 +4,9 @@
 
 | 范围 | 工具 | 内容 |
 |---|---|---|
-| 服务端单测/集成 | vitest | REST 路由、WS 网关（双客户端实时收发、房主删房、幂等 join）、WS 加固（限流 / 超大帧断连）、migration 幂等、输入校验 |
-| 客户端逻辑 | vitest | gameMode 管理器（mock Tauri）、真实 server 集成测试（双端聊天 / not_in_room / 断线重连） |
+| 服务端单测/集成 | vitest | REST 路由、WS 网关（双客户端实时收发、房主删房、幂等 join）、WS 加固（限流 / 超大帧断连）、REST 限流（登录 429）、头像端点（data URL → HTTP 端点）、migration 幂等、输入校验 |
+| 客户端逻辑 | vitest | gameMode 管理器（mock Tauri，含换键后旧键注销）、真实 server 集成测试（双端聊天 / not_in_room / 断线重连） |
+| Lint | ESLint（双工作区） | `npm run lint` |
 | 前端构建 | `npm run build`（tsc + vite） | 类型安全 + 产物可构建 |
 | Rust 侧 | `cargo check` | Tauri 壳编译通过 |
 
@@ -32,7 +33,7 @@ cd client/src-tauri && cargo check
 | 9 | Linux 服务端 Docker 构建 | ✅ CI 真实执行 | — |
 | 10 | WS 滥用防护（限流/超大帧） | ✅（app.test.ts ws hardening，2 例） | — |
 
-当前实测：server 29 测试 + client 11 测试（3 集成 + 8 单测）全绿；生产模式冒烟（health/register/login）通过。
+当前实测：server 30 测试 + client 12 测试（3 集成 + 9 单测）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
 
 ## 3. 物理环境验收（需人类执行）
 

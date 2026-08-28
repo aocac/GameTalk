@@ -81,7 +81,11 @@ gametalk/
 {"type":"pong"}
 ```
 
-**房间模型**：服务端内存 `roomId -> userId -> {sockets}`（同一用户可多端连接）。消息先持久化再广播；`joinRoom` 幂等（重复 join 也回 `room:joined`，客户端有 2s 订阅看门狗自愈）；`room:delete` 仅房主可调用，级联删除并广播 `room:deleted`。
+**房间模型**：服务端内存 `roomId -> userId -> {sockets}`（同一用户可多端连接）。消息先持久化再广播；`joinRoom` 幂等（重复 join 也回 `room:joined`，客户端有 2s 订阅看门狗自愈）；`room:delete` 仅房主可调用，级联删除并广播 `room:deleted`。**客户端订阅其全部房间**（非活跃房间也能实时收消息，UI 显示未读角标，Overlay 标注来源房间）。
+
+**头像分发**：`users.avatar_url` 存 data URL，但所有对外接口（REST 响应 / WS 广播 / 成员表）一律转换
+为 `GET /api/avatars/<userId>` 绝对 URL（按请求头推导 base，反代后走 X-Forwarded-Proto），
+避免 base64 随每条消息广播与成员表内嵌。
 
 **WS 加固与保活**：
 - 单连接限流：5s 滑动窗口最多 25 条消息，超出回 `error(code=rate_limited)`。
@@ -121,8 +125,12 @@ gametalk/
 
 - 密码 argon2 哈希；JWT HS256，`JWT_SECRET` 生产必配（默认值启动即报错）。
 - 输入长度/内容校验（消息 ≤2000 字符、房间 id ≤64、用户名 3-24 位白名单）；WS 消息类型白名单。
-- WS 加固：单连接限流（5s/25 条）、单帧 64KB 上限（见第 4 节）。
-- 头像上传：data URL 类型/大小（≤3MB）/魔数三重校验后入库。
+- 限流：REST 全局每 IP 每分钟 300 次（`RATE_LIMIT_MAX`），注册/登录加严到每分钟 10 次
+  （`RATE_LIMIT_AUTH_MAX`，防爆破），WS 单连接每 5s 25 条；超限统一回 `rate_limited`/HTTP 429。
+  反代后按 X-Forwarded-For 取真实 IP（`trustProxy`，8787 端口仅绑 127.0.0.1）。
+- WS 加固：单帧 64KB 上限（见第 4 节）。
+- 头像：上传 data URL 类型/大小（≤3MB）/魔数三重校验；分发走 `/api/avatars/:id`（公开端点，
+  id 为不可枚举 UUID），带 5 分钟缓存头。
 - 注册并发竞态由用户名唯一索引兜底（冲突返回 409）。
 - CORS 可配置：compose 默认 `*`（桌面客户端不受浏览器同源限制），可经 `CORS_ORIGIN` 收紧。
-- 无硬编码 secret；`.env.example` 提供模板。
+- 无硬编码 secret；`.env.example` 提供模板；忘记密码由服务器主人用 `npm run reset-password` 重置。
