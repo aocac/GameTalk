@@ -155,13 +155,15 @@ describe('gameMode manager', () => {
 
   it('pushOverlayMessage emits append only while game mode started', async () => {
     await gameMode.pushOverlayMessage(sampleMessage); // 未启动：不 emit
-    expect(emitted).toHaveLength(0);
+    expect(emitted.filter((e) => e.event === 'overlay:append')).toHaveLength(0);
     await gameMode.startGameMode();
     await gameMode.pushOverlayMessage(sampleMessage);
     await gameMode.pushOverlayMessage(sampleMessage, '开黑小队', true); // 自己发送的消息也进 Overlay
-    expect(emitted).toHaveLength(2);
-    expect(emitted[0]).toEqual({ event: 'overlay:append', payload: { ...sampleMessage, isSelf: false } });
-    expect(emitted[1]).toEqual({
+    // 只统计 overlay:append（startGameMode 自身的 overlay:config 不算）
+    const appends = emitted.filter((e) => e.event === 'overlay:append');
+    expect(appends).toHaveLength(2);
+    expect(appends[0]).toEqual({ event: 'overlay:append', payload: sampleMessage });
+    expect(appends[1]).toEqual({
       event: 'overlay:append',
       payload: { ...sampleMessage, roomName: '开黑小队', isSelf: true },
     });

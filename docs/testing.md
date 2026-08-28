@@ -32,8 +32,11 @@ cd client/src-tauri && cargo check
 | 8 | Windows 客户端构建 | ✅（本机 tauri build，NSIS） | — |
 | 9 | Linux 服务端 Docker 构建 | ✅ CI 真实执行 | — |
 | 10 | WS 滥用防护（限流/超大帧） | ✅（app.test.ts ws hardening，2 例） | — |
+| 11 | 房主移出成员（kick） | ✅（通知/DB/权限/被踢者自愈，全流程） | — |
+| 12 | 成员资料卡片（/api/users/:id + bio） | ✅ | — |
+| 13 | 服务器地址尾斜杠容忍 | ✅（//api 双斜杠用例） | — |
 
-当前实测：server 30 测试 + client 12 测试（3 集成 + 9 单测）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
+当前实测：server 33 测试 + client 12 测试（3 集成 + 9 单测）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
 
 ## 3. 物理环境验收（需人类执行）
 

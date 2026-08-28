@@ -85,6 +85,9 @@ gametalk/
 
 **房间模型**：服务端内存 `roomId -> userId -> {sockets}`（同一用户可多端连接）。消息先持久化再广播；`joinRoom` 幂等（重复 join 也回 `room:joined`，客户端有 2s 订阅看门狗自愈）；`room:delete` 仅房主可调用，级联删除并广播 `room:deleted`；`member:kick` 仅房主可调用，把成员移出房间（DB 删除 + 全员通知 `member:kicked` + 被踢者订阅清理），被踢者客户端自动移除房间并切换。**客户端订阅其全部房间**（非活跃房间也能实时收消息，UI 显示未读角标，Overlay 标注来源房间）。
 
+**用户资料**：`users` 含个性签名 `bio`（≤100 字，PATCH /api/auth/me 维护）；成员卡片经
+`GET /api/users/:id`（登录态、UUID 不可枚举）读取公开资料。
+
 **头像分发**：`users.avatar_url` 存 data URL，但所有对外接口（REST 响应 / WS 广播 / 成员表）一律转换
 为 `GET /api/avatars/<userId>` 绝对 URL（按请求头推导 base，反代后走 X-Forwarded-Proto），
 避免 base64 随每条消息广播与成员表内嵌。
@@ -126,7 +129,7 @@ gametalk/
 ## 8. 安全
 
 - 密码 argon2 哈希；JWT HS256，`JWT_SECRET` 生产必配（默认值启动即报错）。
-- 输入长度/内容校验（消息 ≤2000 字符、房间 id ≤64、用户名 3-24 位白名单）；WS 消息类型白名单。
+- 输入长度/内容校验（消息 ≤2000 字符、房间 id ≤64、用户名 3-24 位白名单、签名 ≤100）；WS 消息类型白名单。
 - 限流：REST 全局每 IP 每分钟 300 次（`RATE_LIMIT_MAX`），注册/登录加严到每分钟 10 次
   （`RATE_LIMIT_AUTH_MAX`，防爆破），WS 单连接每 5s 25 条；超限统一回 `rate_limited`/HTTP 429。
   反代后按 X-Forwarded-For 取真实 IP（`trustProxy`，8787 端口仅绑 127.0.0.1）。
