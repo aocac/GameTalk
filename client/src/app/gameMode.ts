@@ -78,6 +78,33 @@ export function isGameModeRunning(): boolean {
   return started;
 }
 
+/**
+ * 确保输入窗口存在（webview 崩溃/窗口被意外关闭时重建）——否则全局快捷键会静默失效。
+ */
+async function ensureInputWindow(): Promise<void> {
+  const win = await WebviewWindow.getByLabel(INPUT_WINDOW_LABEL);
+  if (win) return;
+  try {
+    new WebviewWindow(INPUT_WINDOW_LABEL, {
+      title: 'GameTalk 输入',
+      url: 'input.html',
+      width: INPUT_WIDTH,
+      height: INPUT_HEIGHT,
+      decorations: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      shadow: false,
+      focus: true,
+      visible: false,
+    });
+    await new Promise((r) => setTimeout(r, 500));
+  } catch {
+    // 重建失败不阻塞主流程
+  }
+}
+
 function computePosition(
   mon: { position: { x: number; y: number }; size: { width: number; height: number } },
   w: number,
@@ -193,6 +220,7 @@ export async function stopOverlayAdjust(): Promise<void> {
 export async function showInputWindow(): Promise<void> {
   // 先注册全局 ESC（确保用户紧接着按 ESC 时已就绪，避免注册未完成的时序窗口）
   await registerEsc();
+  await ensureInputWindow();
   const win = await getInputWindow();
   const mon = await primaryMonitor();
   if (!win || !mon) return;

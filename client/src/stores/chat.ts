@@ -28,7 +28,7 @@ interface ChatState {
   refreshRooms: () => Promise<void>;
   createRoom: (name: string) => Promise<api.Room | null>;
   joinRoomByCode: (code: string) => Promise<api.Room | null>;
-  selectRoom: (roomId: string) => Promise<void>;
+  selectRoom: (roomId: string, forceReload?: boolean) => Promise<void>;
   leaveActiveRoom: () => Promise<void>;
   deleteActiveRoom: () => Promise<void>;
   sendMessage: (text: string) => void;
@@ -191,9 +191,9 @@ export const useChat = create<ChatState>()((set, get) => ({
               const active = get().activeRoomId;
               if (active) {
                 wsRoomSwitch(active);
-                // 重连后重新加载活跃房间历史（historyLoadedRooms 已在 reconnecting 时重置），
+                // 重连后强制重载活跃房间历史（reconnecting 时已重置标记），
                 // 把断开期间已入库的消息补回来，避免本地永久丢消息
-                void get().selectRoom(active);
+                void get().selectRoom(active, true);
               }
             });
           break;
@@ -381,13 +381,13 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
   },
 
-  selectRoom: async (roomId) => {
+  selectRoom: async (roomId, forceReload = false) => {
     const { token } = useAuth.getState();
     if (!token) return;
     set({ activeRoomId: roomId });
     wsRoomSwitch(roomId);
-    // 加载历史（若尚未加载）
-    if (!(get().messagesByRoom[roomId]?.length) && !get().historyLoadedRooms[roomId]) {
+    // 加载历史（首次或 forceReload——重连后强制重拉，补齐断开期间的消息）
+    if (forceReload || (!(get().messagesByRoom[roomId]?.length) && !get().historyLoadedRooms[roomId])) {
       try {
         const { messages } = await api.roomMessages(token, roomId, { limit: 50 });
         set((s) => ({

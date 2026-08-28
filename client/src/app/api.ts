@@ -22,20 +22,31 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: { method?: string; body?: unknown; token?: string } = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  options: { method?: string; body?: unknown; token?: string; timeoutMs?: number } = {},
+): Promise<T> {
   const { serverUrl } = useSettings.getState();
   let res: Response;
   try {
-    res = await fetch(`${serverUrl}${path}`, {
-      method: options.method ?? 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-      },
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    });
-  } catch {
-    // 网络不可达（server 未启动 / 地址错误）
+    // 请求超时（默认 10s）：防止服务器/网络挂起时 UI 永远卡在"加载中…"
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10000);
+    try {
+      res = await fetch(`${serverUrl}${path}`, {
+        method: options.method ?? 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+        },
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e) {
+    // 网络不可达（server 未启动 / 地址错误 / 超时）
     throw new ApiError(
       0,
       'network_error',
