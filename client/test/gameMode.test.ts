@@ -158,7 +158,13 @@ describe('gameMode manager', () => {
     expect(emitted).toHaveLength(0);
     await gameMode.startGameMode();
     await gameMode.pushOverlayMessage(sampleMessage);
-    expect(emitted).toContainEqual({ event: 'overlay:append', payload: sampleMessage });
+    await gameMode.pushOverlayMessage(sampleMessage, '开黑小队', true); // 自己发送的消息也进 Overlay
+    expect(emitted).toHaveLength(2);
+    expect(emitted[0]).toEqual({ event: 'overlay:append', payload: { ...sampleMessage, isSelf: false } });
+    expect(emitted[1]).toEqual({
+      event: 'overlay:append',
+      payload: { ...sampleMessage, roomName: '开黑小队', isSelf: true },
+    });
   });
 
   it('stopGameMode unregisters and hides windows', async () => {

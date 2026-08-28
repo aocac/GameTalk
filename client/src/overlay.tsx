@@ -69,8 +69,8 @@ function MiniAvatar({ name, url, size = 20 }: { name: string; url?: string | nul
   );
 }
 
-/** Overlay 消息条目：多房间订阅后附带来源房间名 */
-type OverlayItem = ChatMessage & { roomName?: string };
+/** Overlay 消息条目：多房间订阅附带来源房间名；isSelf 标记自己发送（显示为"我"） */
+type OverlayItem = ChatMessage & { roomName?: string; isSelf?: boolean };
 
 function OverlayApp() {
   const [items, setItems] = useState<OverlayItem[]>([]);
@@ -348,9 +348,9 @@ function OverlayApp() {
       {items.length > 0 && !adjusting && (
         <>
           {items.map((m) => (
-            <div key={m.id} className="overlay-item">
+            <div key={m.id} className={`overlay-item ${m.isSelf ? 'self' : ''}`}>
               <MiniAvatar name={m.username} url={m.avatarUrl} />
-              <span className="overlay-name">{m.username}</span>
+              <span className="overlay-name">{m.isSelf ? '我' : m.username}</span>
               {m.roomName && <span className="overlay-room">#{m.roomName}</span>}
               <span className="overlay-text">{m.text}</span>
             </div>

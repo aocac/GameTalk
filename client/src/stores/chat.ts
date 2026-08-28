@@ -314,7 +314,7 @@ export const useChat = create<ChatState>()((set, get) => ({
           const isMine = msg.payload.message.userId === state.me?.id;
           const active = get().activeRoomId;
           if (!isMine) {
-            // 非活跃房间累加未读数；提示音与 Overlay 对所有房间生效（多房间订阅的意义）
+            // 非活跃房间累加未读数；提示音只对别人的消息生效
             if (active !== msg.payload.roomId) {
               set((s) => ({
                 unreadByRoom: {
@@ -324,9 +324,10 @@ export const useChat = create<ChatState>()((set, get) => ({
               }));
             }
             playMessageSound(useSettings.getState().soundEnabled);
-            const room = get().rooms.find((r) => r.id === msg.payload.roomId);
-            void pushOverlayMessage(msg.payload.message, room?.name);
           }
+          // Overlay 显示所有新消息（含自己发送的，便于游戏内确认消息已发出）
+          const room = get().rooms.find((r) => r.id === msg.payload.roomId);
+          void pushOverlayMessage(msg.payload.message, room?.name, isMine);
           break;
         }
         case 'error':

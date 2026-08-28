@@ -284,8 +284,8 @@ async function unregisterEsc(): Promise<void> {
   });
 }
 
-/** 新消息到达时推给 Overlay 显示（由 chat store 调用）；roomName 用于多房间场景标注来源 */
-export async function pushOverlayMessage(message: ChatMessage, roomName?: string): Promise<void> {
+/** 新消息到达时推给 Overlay 显示（由 chat store 调用）；roomName 标注来源房间，isSelf 标记自己发送 */
+export async function pushOverlayMessage(message: ChatMessage, roomName?: string, isSelf?: boolean): Promise<void> {
   if (!started) {
     return;
   }
@@ -298,7 +298,7 @@ export async function pushOverlayMessage(message: ChatMessage, roomName?: string
       return;
     }
   }
-  await emit('overlay:append', { ...message, roomName });
+  await emit('overlay:append', { ...message, roomName, isSelf });
 }
 
 /** 当前实际注册的呼出快捷键（换键后注销旧键用——否则旧键依旧全局生效） */

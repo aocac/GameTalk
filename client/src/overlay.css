@@ -176,3 +176,12 @@ body {
   text-overflow: ellipsis;
   flex-shrink: 0;
 }
+
+/* 自己发送的消息：名字高亮为"我"，便于游戏内确认已发出 */
+.overlay-item.self {
+  border-left-color: #8fd3ff;
+}
+
+.overlay-item.self .overlay-name {
+  color: #8fd3ff;
+}

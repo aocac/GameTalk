@@ -912,7 +912,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   </span>
                   {isOwner && (
                     <span className="owner-chip" title="房主">
-                      👑
+                      房主
                     </span>
                   )}
                   {canKick && (

@@ -1,34 +1,33 @@
 /* ============ GameTalk 设计系统 ============
-   深色侧栏 + 浅色聊天区（现代 IM 风格），靛蓝渐变主色 */
+   参考现代桌面 IM（QQ NT / 微信）：克制单色、扁平、高密度、圆角方形头像 */
 :root {
-  --bg: #f4f6fb;
+  --bg: #f2f3f7;
   --surface: #ffffff;
-  --surface-2: #eef0f6;
-  --border: #e6e8f0;
-  --border-strong: #d5d9e4;
-  --text: #1c2130;
-  --text-2: #5a6272;
-  --text-3: #9aa1b2;
-  --accent: #5b7cfa;
-  --accent-hover: #4a6af0;
-  --accent-soft: #eef1fe;
-  --accent-grad: linear-gradient(135deg, #5b7cfa 0%, #8b5cf6 100%);
-  --ok: #2fb47c;
+  --surface-2: #f5f6fa;
+  --surface-3: #eceef3;
+  --border: #e4e6ee;
+  --border-strong: #d6d9e2;
+  --text: #23262f;
+  --text-2: #6b7180;
+  --text-3: #9ca3af;
+  --accent: #3370ff;
+  --accent-hover: #2b5fd9;
+  --accent-soft: #e8f0fe;
+  --own-bubble: #d3e3fd;
+  --ok: #34c77b;
   --pending: #d99a2b;
-  --off: #c0c4cc;
+  --off: #c3c8d1;
   --danger: #e5484d;
-  /* 深色侧栏 tokens */
-  --side-bg: #171a26;
-  --side-bg-2: #1d2130;
-  --side-hover: rgba(255, 255, 255, 0.06);
-  --side-active: rgba(255, 255, 255, 0.1);
-  --side-border: rgba(255, 255, 255, 0.07);
-  --side-text: #9aa3bd;
-  --side-text-strong: #eef0f8;
-  --radius: 10px;
-  --radius-lg: 14px;
-  --shadow: 0 10px 34px rgba(23, 26, 38, 0.1);
-  --shadow-sm: 0 2px 8px rgba(23, 26, 38, 0.06);
+  --unread: #fa5151;
+  /* 深色侧栏 */
+  --side-bg: #1a1d25;
+  --side-hover: rgba(255, 255, 255, 0.05);
+  --side-active: rgba(255, 255, 255, 0.09);
+  --side-border: rgba(255, 255, 255, 0.06);
+  --side-text: #8b93a7;
+  --side-text-strong: #e8eaf2;
+  --radius: 8px;
+  --radius-lg: 12px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', Roboto, sans-serif;
 }
 
@@ -60,13 +59,13 @@ body {
 }
 
 .sidebar {
-  width: 224px;
-  min-width: 224px;
-  background: linear-gradient(180deg, var(--side-bg-2) 0%, var(--side-bg) 100%);
+  width: 218px;
+  min-width: 218px;
+  background: var(--side-bg);
   display: flex;
   flex-direction: column;
-  padding: 16px 10px 12px;
-  gap: 12px;
+  padding: 14px 8px 10px;
+  gap: 10px;
 }
 
 .main {
@@ -77,19 +76,19 @@ body {
   background: var(--bg);
 }
 
-/* ============ 侧边栏（深色） ============ */
+/* ============ 侧边栏 ============ */
 .sidebar-brand {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 2px 6px 6px;
+  padding: 2px 8px 8px;
 }
 
 .logo {
-  width: 27px;
-  height: 27px;
-  border-radius: 8px;
-  background: var(--accent-grad);
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--accent);
   color: #fff;
   font-weight: 700;
   font-size: 12px;
@@ -97,20 +96,18 @@ body {
   align-items: center;
   justify-content: center;
   letter-spacing: -0.5px;
-  box-shadow: 0 3px 10px rgba(91, 124, 250, 0.4);
 }
 
 .brand-name {
-  font-weight: 700;
-  font-size: 15px;
+  font-weight: 600;
+  font-size: 14.5px;
   color: var(--side-text-strong);
-  letter-spacing: 0.2px;
 }
 
 .rooms {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   flex: 1;
   overflow-y: auto;
   padding: 0 2px;
@@ -119,13 +116,12 @@ body {
 .room-item {
   display: flex;
   align-items: center;
-  padding: 8px 10px;
+  padding: 7px 9px;
   border-radius: var(--radius);
   color: var(--side-text);
   cursor: pointer;
-  transition: background 0.14s, color 0.14s;
+  transition: background 0.12s, color 0.12s;
   font-size: 13.5px;
-  position: relative;
 }
 
 .room-item:hover {
@@ -139,29 +135,13 @@ body {
   font-weight: 600;
 }
 
-.room-item.active::before {
-  content: '';
-  position: absolute;
-  left: -10px;
-  top: 20%;
-  bottom: 20%;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--accent-grad);
-}
-
 .hash {
   color: var(--side-text);
-  opacity: 0.7;
+  opacity: 0.6;
   font-weight: 600;
 }
 
-.room-item.active .hash {
-  color: var(--accent);
-  opacity: 1;
-}
-
-/* 房间条目两行布局：名称行 + 最后消息预览（微信式） */
+/* 房间条目两行布局：名称行 + 最后消息预览 */
 .room-main {
   flex: 1;
   min-width: 0;
@@ -188,7 +168,7 @@ body {
   font-size: 12px;
   font-weight: 400;
   color: var(--side-text);
-  opacity: 0.8;
+  opacity: 0.85;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -196,6 +176,7 @@ body {
 
 .room-item.active .room-preview {
   color: var(--side-text-strong);
+  opacity: 0.9;
 }
 
 .sidebar-footer {
@@ -204,7 +185,7 @@ body {
   justify-content: space-between;
   gap: 8px;
   border-top: 1px solid var(--side-border);
-  padding-top: 12px;
+  padding-top: 10px;
 }
 
 .sidebar-footer .user-name {
@@ -213,7 +194,7 @@ body {
 
 .sidebar-footer .user-id {
   color: var(--side-text);
-  opacity: 0.75;
+  opacity: 0.7;
 }
 
 .sidebar-footer .btn.ghost {
@@ -242,7 +223,6 @@ body {
 
 .dot.ok {
   background: var(--ok);
-  box-shadow: 0 0 6px rgba(47, 180, 124, 0.6);
 }
 
 .dot.pending {
@@ -262,25 +242,22 @@ body {
 
 /* ============ 顶栏 ============ */
 .topbar {
-  height: 54px;
+  height: 50px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 0 18px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
-  box-shadow: var(--shadow-sm);
-  position: relative;
-  z-index: 2;
 }
 
 .topbar-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 700;
-  font-size: 15px;
+  font-weight: 600;
+  font-size: 14.5px;
   min-width: 0;
   overflow: hidden;
 }
@@ -295,12 +272,12 @@ body {
 }
 
 .me-tag {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 400;
   color: var(--text-3);
   background: var(--surface-2);
-  border-radius: 20px;
-  padding: 2px 10px;
+  border-radius: 4px;
+  padding: 2px 8px;
   flex-shrink: 0;
 }
 
@@ -342,7 +319,7 @@ body {
 .sound-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   cursor: pointer;
   user-select: none;
 }
@@ -355,7 +332,7 @@ body {
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 18px 22px 10px;
+  padding: 16px 20px 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -368,7 +345,7 @@ body {
 }
 
 .empty-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-2);
   margin-bottom: 4px;
@@ -382,54 +359,52 @@ body {
 .day-divider {
   display: flex;
   justify-content: center;
-  margin: 14px 0 8px;
+  margin: 12px 0 6px;
 }
 
 .day-divider span {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text-3);
-  background: var(--surface-2);
-  border-radius: 999px;
-  padding: 3px 12px;
+  background: var(--surface-3);
+  border-radius: 4px;
+  padding: 2px 10px;
 }
 
 /* 消息气泡 */
 .message {
   display: flex;
   gap: 10px;
-  padding: 4px 6px;
+  padding: 3px 6px;
   border-radius: var(--radius);
-  transition: background 0.1s;
-  max-width: 78%;
+  max-width: 76%;
 }
 
 .message:hover {
-  background: rgba(238, 240, 246, 0.6);
+  background: rgba(228, 230, 238, 0.55);
 }
 
 .message-body {
   min-width: 0;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 4px 14px 14px 14px;
-  padding: 8px 12px 7px;
-  box-shadow: var(--shadow-sm);
+  border-radius: 2px 8px 8px 8px;
+  padding: 7px 11px 6px;
 }
 
 .message-head {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
 
 .message-author {
-  font-weight: 600;
-  font-size: 13px;
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--text-2);
 }
 
 .message-time {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-3);
 }
 
@@ -439,18 +414,15 @@ body {
   white-space: pre-wrap;
 }
 
-/* 自己的消息：右对齐 + 渐变气泡 */
+/* 自己的消息：右对齐 + 浅蓝气泡（QQ NT 式） */
 .message.mine {
   margin-left: auto;
   flex-direction: row-reverse;
 }
 
 .message.mine .message-body {
-  background: var(--accent-grad);
-  border: none;
-  border-radius: 14px 4px 14px 14px;
-  color: #fff;
-  box-shadow: 0 3px 12px rgba(91, 124, 250, 0.35);
+  background: var(--own-bubble);
+  border-radius: 8px 2px 8px 8px;
 }
 
 .message.mine .message-author {
@@ -458,7 +430,7 @@ body {
 }
 
 .message.mine .message-time {
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--text-3);
 }
 
 .message.mine:hover {
@@ -467,7 +439,7 @@ body {
 
 /* 乐观发送中（未确认）的消息 */
 .message.pending {
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
 .message.pending .message-time {
@@ -475,11 +447,7 @@ body {
   font-weight: 600;
 }
 
-.message.mine.pending .message-time {
-  color: #ffe1a1;
-}
-
-/* 同人连发分组：隐藏头像占位与昵称，只留紧凑气泡（QQ 式） */
+/* 同人连发分组：隐藏头像占位与昵称，只留紧凑气泡 */
 .message.grouped {
   padding-top: 1px;
   padding-bottom: 1px;
@@ -501,28 +469,27 @@ body {
 /* ============ 输入区 ============ */
 .composer {
   display: flex;
-  gap: 10px;
-  padding: 14px 22px 16px;
+  gap: 8px;
+  padding: 12px 20px 14px;
   border-top: 1px solid var(--border);
   background: var(--surface);
 }
 
 .composer-input {
   flex: 1;
-  padding: 11px 16px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
   background: var(--surface-2);
   font-size: 14px;
   color: var(--text);
   outline: none;
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  transition: border-color 0.14s, background 0.14s;
 }
 
 .composer-input:focus {
   border-color: var(--accent);
   background: var(--surface);
-  box-shadow: 0 0 0 3px rgba(91, 124, 250, 0.15);
 }
 
 .composer-input:disabled {
@@ -533,28 +500,22 @@ body {
 .btn {
   border: none;
   border-radius: var(--radius);
-  padding: 9px 16px;
-  font-size: 13.5px;
-  font-weight: 600;
+  padding: 8px 15px;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
-  transition: background 0.14s, box-shadow 0.14s, transform 0.1s;
+  transition: background 0.12s, color 0.12s;
 }
 
 .btn.primary {
-  background: var(--accent-grad);
+  background: var(--accent);
   color: #fff;
-  box-shadow: 0 3px 10px rgba(91, 124, 250, 0.3);
 }
 
 .btn.primary:hover:not(:disabled) {
-  box-shadow: 0 5px 16px rgba(91, 124, 250, 0.42);
-  transform: translateY(-1px);
-}
-
-.btn.primary:active:not(:disabled) {
-  transform: translateY(0);
+  background: var(--accent-hover);
 }
 
 .btn.ghost {
@@ -563,7 +524,7 @@ body {
 }
 
 .btn.ghost:hover:not(:disabled) {
-  background: var(--surface-2);
+  background: var(--surface-3);
   color: var(--text);
 }
 
@@ -571,15 +532,14 @@ body {
 .btn.danger,
 .btn.ghost.danger {
   color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
 }
 
 .btn.ghost.danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 .btn.small {
-  padding: 5px 10px;
+  padding: 4px 10px;
   font-size: 12px;
 }
 
@@ -592,29 +552,29 @@ body {
 .sub-tag {
   font-size: 11px;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--border);
 }
 
 .sub-tag.ok {
-  color: #3fb950;
-  border-color: rgba(63, 185, 80, 0.5);
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
 }
 
 .sub-tag.pending {
   color: var(--pending);
-  border-color: rgba(210, 153, 34, 0.5);
+  border-color: color-mix(in srgb, var(--pending) 40%, transparent);
 }
 
-/* ============ 成员面板（QQ 式右侧栏） ============ */
+/* ============ 成员面板 ============ */
 .members-panel {
-  width: 196px;
-  min-width: 196px;
+  width: 190px;
+  min-width: 190px;
   background: var(--surface);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  padding: 14px 8px 10px;
+  padding: 12px 8px 8px;
   gap: 8px;
 }
 
@@ -623,18 +583,18 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 8px;
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.4px;
-  color: var(--text-3);
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
 }
 
 .members-count {
   background: var(--surface-2);
-  border-radius: 10px;
+  border-radius: 4px;
   padding: 1px 8px;
   font-size: 11px;
+  color: var(--text-3);
+  font-weight: 400;
 }
 
 .members-list {
@@ -649,7 +609,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 5px 8px;
   border-radius: var(--radius);
   transition: background 0.12s;
 }
@@ -660,7 +620,7 @@ body {
 
 .member-item.self .member-name {
   color: var(--accent);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .member-avatar {
@@ -673,8 +633,8 @@ body {
 .member-avatar::after {
   content: '';
   position: absolute;
-  right: -1px;
-  bottom: -1px;
+  right: -2px;
+  bottom: -2px;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -691,11 +651,16 @@ body {
   font-size: 13px;
 }
 
+/* 房主标签（QQ 群主式）：琥珀色小标签 */
 .owner-chip {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1;
-  filter: drop-shadow(0 1px 2px rgba(214, 158, 46, 0.5));
+  font-weight: 600;
+  color: #fff;
+  background: #f59e0b;
+  border-radius: 3px;
+  padding: 2.5px 5px;
 }
 
 .kick-btn {
@@ -704,12 +669,12 @@ body {
   background: transparent;
   color: var(--danger);
   font-size: 11.5px;
-  font-weight: 600;
+  font-weight: 500;
   padding: 3px 8px;
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.12s, background 0.12s, color 0.12s;
+  transition: opacity 0.12s, background 0.12s;
 }
 
 .member-item:hover .kick-btn {
@@ -717,7 +682,7 @@ body {
 }
 
 .kick-btn:hover {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 .kick-btn.confirm {
@@ -741,34 +706,19 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background:
-    radial-gradient(900px 480px at 12% -8%, rgba(91, 124, 250, 0.16) 0%, transparent 60%),
-    radial-gradient(900px 520px at 88% 108%, rgba(139, 92, 246, 0.14) 0%, transparent 60%),
-    var(--bg);
+  background: var(--bg);
 }
 
 .auth-card {
-  width: 372px;
+  width: 360px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 18px;
-  box-shadow: var(--shadow);
-  padding: 30px 30px 26px;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 30px rgba(35, 38, 47, 0.08);
+  padding: 28px 28px 24px;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  animation: card-in 0.22s ease-out;
-}
-
-@keyframes card-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
 }
 
 .auth-brand {
@@ -777,18 +727,16 @@ body {
 }
 
 .logo.big {
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
-  font-size: 21px;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  font-size: 19px;
   margin-bottom: 10px;
-  box-shadow: 0 6px 18px rgba(91, 124, 250, 0.45);
 }
 
 .auth-brand h1 {
-  font-size: 21px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
+  font-size: 20px;
+  font-weight: 600;
 }
 
 .auth-brand p {
@@ -810,18 +758,18 @@ body {
   border: none;
   background: transparent;
   padding: 7px 0;
-  border-radius: 7px;
+  border-radius: 6px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-2);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.14s;
 }
 
 .tab.active {
   background: var(--surface);
   color: var(--text);
-  box-shadow: 0 1px 4px rgba(23, 26, 38, 0.12);
+  box-shadow: 0 1px 3px rgba(35, 38, 47, 0.1);
 }
 
 .field {
@@ -832,7 +780,7 @@ body {
 
 .field span {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-2);
 }
 
@@ -844,9 +792,9 @@ body {
 }
 
 .chip {
-  padding: 6px 10px;
+  padding: 5px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-2);
   font-size: 12px;
@@ -856,7 +804,7 @@ body {
 }
 
 .chip:hover {
-  background: rgba(91, 124, 250, 0.08);
+  background: var(--surface-2);
 }
 
 .chip:focus-visible {
@@ -868,7 +816,7 @@ body {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .chip.active:hover {
@@ -876,17 +824,16 @@ body {
 }
 
 .field input {
-  padding: 9px 12px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: 14px;
   outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.14s;
 }
 
 .field input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(91, 124, 250, 0.12);
 }
 
 .field-hint {
@@ -932,11 +879,11 @@ body {
 
 .btn.block {
   width: 100%;
-  padding: 11px 0;
+  padding: 10px 0;
 }
 
 .btn.ghost.block {
-  padding: 9px 0;
+  padding: 8px 0;
 }
 
 /* ============ 房间列表 ============ */
@@ -944,13 +891,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 6px;
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.4px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--side-text);
   opacity: 0.8;
-  text-transform: uppercase;
 }
 
 .icon-btn {
@@ -979,19 +924,6 @@ body {
   text-overflow: ellipsis;
 }
 
-.room-count {
-  font-size: 11px;
-  color: var(--side-text);
-  background: var(--side-hover);
-  border-radius: 10px;
-  padding: 1px 7px;
-}
-
-.room-item.active .room-count {
-  background: rgba(91, 124, 250, 0.25);
-  color: var(--side-text-strong);
-}
-
 .rooms-hint {
   padding: 14px 10px;
   font-size: 12.5px;
@@ -1007,7 +939,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 10px 22px 0;
+  margin: 10px 20px 0;
   padding: 8px 14px;
   background: #fdecec;
   border: 1px solid #f5c6c7;
@@ -1020,13 +952,12 @@ body {
 .modal-mask {
   position: fixed;
   inset: 0;
-  background: rgba(23, 26, 38, 0.4);
-  backdrop-filter: blur(3px);
+  background: rgba(35, 38, 47, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
-  animation: mask-in 0.16s ease-out;
+  animation: mask-in 0.15s ease-out;
 }
 
 @keyframes mask-in {
@@ -1041,19 +972,19 @@ body {
 .modal {
   width: 340px;
   background: var(--surface);
-  border-radius: 16px;
-  box-shadow: var(--shadow);
-  padding: 22px;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px rgba(35, 38, 47, 0.18);
+  padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  animation: modal-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  animation: modal-in 0.16s ease-out;
 }
 
 @keyframes modal-in {
   from {
     opacity: 0;
-    transform: scale(0.94) translateY(8px);
+    transform: scale(0.97) translateY(6px);
   }
   to {
     opacity: 1;
@@ -1062,7 +993,7 @@ body {
 }
 
 .modal h3 {
-  font-size: 16px;
+  font-size: 15.5px;
 }
 
 .modal-divider {
@@ -1072,7 +1003,7 @@ body {
 }
 
 .settings-modal {
-  width: 410px;
+  width: 400px;
   max-height: 86vh;
   overflow-y: auto;
 }
@@ -1087,11 +1018,9 @@ body {
 }
 
 .section-title {
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
 }
 
 .switch-row {
@@ -1125,20 +1054,20 @@ body {
 
 .game-mode-tag {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--ok);
-  background: rgba(47, 180, 124, 0.12);
-  border-radius: 20px;
-  padding: 2px 10px;
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+  border-radius: 4px;
+  padding: 2px 8px;
 }
 
 .offline-tag {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--text-3);
   background: var(--surface-2);
-  border-radius: 20px;
-  padding: 2px 10px;
+  border-radius: 4px;
+  padding: 2px 8px;
 }
 
 .auth-divider {
@@ -1175,7 +1104,7 @@ body {
   background: transparent;
   padding: 0;
   cursor: pointer;
-  border-radius: 50%;
+  border-radius: 6px;
   transition: opacity 0.12s;
 }
 
@@ -1184,22 +1113,22 @@ body {
 }
 
 .hotkey-input {
-  padding: 9px 12px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
   color: var(--text);
   background: var(--surface-2);
   outline: none;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color 0.14s, background 0.14s;
 }
 
 .hotkey-input:focus {
   border-color: var(--accent);
-  background: var(--accent-soft);
+  background: var(--surface);
 }
 
 .close-prompt {
@@ -1224,7 +1153,7 @@ body {
 
 .user-name {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1236,18 +1165,18 @@ body {
 }
 
 .avatar-img {
-  border-radius: 50%;
+  border-radius: 6px;
   object-fit: cover;
   flex-shrink: 0;
 }
 
-/* ============ 头像 ============ */
+/* ============ 头像（圆角方形，桌面 IM 风格） ============ */
 .avatar {
-  border-radius: 50%;
+  border-radius: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
+  font-weight: 600;
   flex-shrink: 0;
   user-select: none;
 }
@@ -1274,31 +1203,26 @@ body {
 /* 深色侧栏里的滚动条 */
 .sidebar ::-webkit-scrollbar-thumb,
 .sidebar ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.13);
 }
 
-/* 房间未读角标（多房间订阅） */
+/* 房间未读角标 */
 .room-badge {
-  margin-left: auto;
-  background: #e5484d;
+  background: var(--unread);
   color: #fff;
   font-size: 10.5px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
   padding: 3px 6px;
   border-radius: 999px;
   flex-shrink: 0;
 }
 
-.room-item.active .room-badge {
-  background: var(--accent);
-}
-
 /* 历史向上翻页按钮 */
 .load-older {
   display: block;
   margin: 10px auto;
-  padding: 5px 14px;
+  padding: 4px 14px;
   font-size: 12px;
   color: var(--text-2);
   background: var(--surface);
