@@ -49,3 +49,7 @@ data/
 # --- 本地协作/开发日志（不公开） ---
 /AGENTS.md
 /PROGRESS.md
+
+# 移动端图标（当前仅发布桌面端）
+client/src-tauri/icons/android/
+client/src-tauri/icons/ios/
