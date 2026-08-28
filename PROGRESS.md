@@ -131,3 +131,5 @@
   - 工程化：ESLint flat config 双工作区（client 含 react-hooks 规则），CI server/client job 加 lint 步骤；actions 全量升级（checkout v7 / setup-node v7 / upload-artifact v7 / download-artifact v8 / gh-release v3）消除 Node20 弃用警告；gateway 死代码 sendToUser 清理。
   - 坑位补充：vitest 的 vi.mock 工厂若引用已删除的模块级变量（registered.push），会在 mock 内部抛 ReferenceError 并被 SUT 的 try/catch 吞掉，表现为"快捷键静默注册不上"——mock 改动后必须同步清理工厂闭包。
   - 测试基线：server 30 + client 12 全绿；lint 双工作区绿。
+  - 追加：copy-artifacts.mjs 修 bug——bundle 目录残留旧版本产物时"取第一个匹配"会把旧安装包复制成新版本（本地构建 0.2.0 时实锤：产物哈希 = 旧 0.1.0）；改为优先精确匹配当前版本号、否则取 mtime 最新。
+  - 发布：v0.2.0（用户真机验收通过；CI 4 job 绿 → 三端构建绿 → Release 4 资产挂载完成）。版本号已全部同步 0.2.0。
