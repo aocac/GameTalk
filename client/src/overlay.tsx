@@ -69,8 +69,11 @@ function MiniAvatar({ name, url, size = 20 }: { name: string; url?: string | nul
   );
 }
 
+/** Overlay 消息条目：多房间订阅后附带来源房间名 */
+type OverlayItem = ChatMessage & { roomName?: string };
+
 function OverlayApp() {
-  const [items, setItems] = useState<ChatMessage[]>([]);
+  const [items, setItems] = useState<OverlayItem[]>([]);
   const [config, setConfig] = useState<OverlayConfig>(DEFAULT_CONFIG);
   const [adjusting, setAdjusting] = useState(false);
   const [fading, setFading] = useState(false);
@@ -176,7 +179,7 @@ function OverlayApp() {
     let unlistenPreview: UnlistenFn | undefined;
     let cancelled = false;
 
-    void listen<ChatMessage>('overlay:append', (e) => {
+    void listen<OverlayItem>('overlay:append', (e) => {
       if (cancelled) return;
       setItems((prev) => [...prev, e.payload].slice(-MAX_ITEMS));
       setFading(false);
@@ -348,6 +351,7 @@ function OverlayApp() {
             <div key={m.id} className="overlay-item">
               <MiniAvatar name={m.username} url={m.avatarUrl} />
               <span className="overlay-name">{m.username}</span>
+              {m.roomName && <span className="overlay-room">#{m.roomName}</span>}
               <span className="overlay-text">{m.text}</span>
             </div>
           ))}

@@ -13,12 +13,18 @@ interface ChatState {
   me: UserBrief | null;
   rooms: api.Room[];
   activeRoomId: string | null;
-  /** 已通过 WS 订阅实时消息的房间 */
-  subscribedRoomId: string | null;
+  /** 已通过 WS 订阅实时消息的房间（客户端订阅全部房间，非活跃房间也能收消息） */
+  subscribedRoomIds: string[];
+  /** 每房间未读消息数（非活跃房间收到新消息时累加，选中时清零） */
+  unreadByRoom: Record<string, number>;
   messagesByRoom: Record<string, api.RoomMessage[]>;
   membersByRoom: Record<string, UserBrief[]>;
   /** 每个房间的历史是否已加载（用于展示"加载历史中…"） */
   historyLoadedRooms: Record<string, boolean>;
+  /** 每个房间是否还有更早的历史（向上翻页按钮显隐） */
+  hasMoreByRoom: Record<string, boolean>;
+  /** 正在加载更早历史的房间（按钮 loading 态） */
+  loadingOlderRooms: Record<string, boolean>;
   loadingRooms: boolean;
   roomError: string | null;
   /** 连接失败提示（server 不可达时展示） */
@@ -29,6 +35,7 @@ interface ChatState {
   createRoom: (name: string) => Promise<api.Room | null>;
   joinRoomByCode: (code: string) => Promise<api.Room | null>;
   selectRoom: (roomId: string, forceReload?: boolean) => Promise<void>;
+  loadOlderMessages: (roomId: string) => Promise<void>;
   leaveActiveRoom: () => Promise<void>;
   deleteActiveRoom: () => Promise<void>;
   sendMessage: (text: string) => void;
@@ -36,17 +43,19 @@ interface ChatState {
 }
 
 let socket: ChatSocket | null = null;
-/** 订阅看门狗：连接开着但活跃房间订阅缺失时，每 2s 补发 room:join 自愈 */
+/** 订阅看门狗：连接开着但还有本地房间未订阅成功时，每 2s 补发 room:join 自愈 */
 let subWatchdog: ReturnType<typeof setInterval> | null = null;
 
 function startSubWatchdog(): void {
   if (subWatchdog) return;
   subWatchdog = setInterval(() => {
-    const { status, activeRoomId, subscribedRoomId, rooms } = useChat.getState();
-    if (status === 'open' && activeRoomId && subscribedRoomId !== activeRoomId) {
-      // 只补订本地列表里存在的房间（防止对已删除房间反复 join）
-      if (rooms.some((r) => r.id === activeRoomId)) {
-        socket?.send({ type: 'room:join', payload: { roomId: activeRoomId } });
+    const { status, subscribedRoomIds, rooms } = useChat.getState();
+    if (status === 'open') {
+      // 补订所有本地存在但尚未订阅的房间（重连/新加入房间后自愈）
+      for (const r of rooms) {
+        if (!subscribedRoomIds.includes(r.id)) {
+          socket?.send({ type: 'room:join', payload: { roomId: r.id } });
+        }
       }
     }
     // 发送超时自愈：消息发出 5s 仍未确认且连接显示 open → 连接疑似半开（TCP 假活），强制重连
@@ -63,14 +72,43 @@ function stopSubWatchdog(): void {
   }
 }
 
-function wsRoomSwitch(roomId: string | null): void {
-  const s = socket;
-  if (!s) return;
-  // 只 join 本地房间列表里存在的房间：避免对已删除/失效的房间发 join 被拒
-  if (roomId && !useChat.getState().rooms.some((r) => r.id === roomId)) return;
-  const cur = useChat.getState().subscribedRoomId;
-  if (cur && cur !== roomId) s.send({ type: 'room:leave', payload: { roomId: cur } });
-  if (roomId && roomId !== cur) s.send({ type: 'room:join', payload: { roomId } });
+function subscribeRoom(roomId: string): void {
+  socket?.send({ type: 'room:join', payload: { roomId } });
+}
+
+function unsubscribeRoom(roomId: string): void {
+  socket?.send({ type: 'room:leave', payload: { roomId } });
+}
+
+/** 订阅本地房间列表里的全部房间（hello:ok 后与看门狗共同保证最终一致） */
+function subscribeAllRooms(): void {
+  const { rooms, subscribedRoomIds } = useChat.getState();
+  for (const r of rooms) {
+    if (!subscribedRoomIds.includes(r.id)) subscribeRoom(r.id);
+  }
+}
+
+/** 从本地移除房间（离开/被删/失效）：清理缓存并退订 WS */
+function removeRoomLocal(roomId: string): void {
+  unsubscribeRoom(roomId);
+  useChat.setState((s) => {
+    const rooms = s.rooms.filter((r) => r.id !== roomId);
+    const messagesByRoom = { ...s.messagesByRoom };
+    const membersByRoom = { ...s.membersByRoom };
+    const unreadByRoom = { ...s.unreadByRoom };
+    delete messagesByRoom[roomId];
+    delete membersByRoom[roomId];
+    delete unreadByRoom[roomId];
+    const wasActive = s.activeRoomId === roomId;
+    return {
+      rooms,
+      messagesByRoom,
+      membersByRoom,
+      unreadByRoom,
+      activeRoomId: wasActive ? (rooms[0]?.id ?? null) : s.activeRoomId,
+      subscribedRoomIds: s.subscribedRoomIds.filter((r) => r !== roomId),
+    };
+  });
 }
 
 /** 乐观发送队列：roomId -> {tempId, at}（用于 message:new 按序校正 + 超时强制重连检测） */
@@ -133,10 +171,13 @@ export const useChat = create<ChatState>()((set, get) => ({
   me: null,
   rooms: [],
   activeRoomId: null,
-  subscribedRoomId: null,
+  subscribedRoomIds: [],
+  unreadByRoom: {},
   messagesByRoom: {},
   membersByRoom: {},
   historyLoadedRooms: {},
+  hasMoreByRoom: {},
+  loadingOlderRooms: {},
   loadingRooms: false,
   roomError: null,
   connectionError: null,
@@ -154,10 +195,10 @@ export const useChat = create<ChatState>()((set, get) => ({
       set({ status });
       if (status === 'open') {
         set({ connectionError: null });
-        // 关键：每次（重）连接都必须清空订阅状态——否则重连时 subscribedRoomId
-        // 残留旧房间 id，wsRoomSwitch 会认为已订阅而跳过 room:join，导致新连接
+        // 关键：每次（重）连接都必须清空订阅状态——否则重连时 subscribedRoomIds
+        // 残留旧房间 id，subscribeAllRooms 会认为已订阅而跳过 room:join，导致新连接
         // 在服务器侧没有订阅（发送/收消息都失效）
-        set({ subscribedRoomId: null });
+        set({ subscribedRoomIds: [] });
         socket?.send({ type: 'hello', payload: { token } });
       } else if (status === 'reconnecting') {
         // 连接抖动：未确认的乐观消息可能已发送/未发送，全部清除（含排队消息），
@@ -165,6 +206,7 @@ export const useChat = create<ChatState>()((set, get) => ({
         clearPending();
         queuedSends = [];
         set((s) => ({
+          subscribedRoomIds: [],
           messagesByRoom: Object.fromEntries(
             Object.entries(s.messagesByRoom).map(([rid, msgs]) => [rid, msgs.filter((m) => !m.pending)]),
           ),
@@ -184,14 +226,14 @@ export const useChat = create<ChatState>()((set, get) => ({
       switch (msg.type) {
         case 'hello:ok':
           set({ me: msg.payload.me });
-          // 登录后加载房间列表，并订阅当前活跃房间（refreshRooms 失败也要重订阅）
+          // 登录后加载房间列表，并订阅全部房间（refreshRooms 失败也要重订阅）
           void get()
             .refreshRooms()
             .catch(() => undefined)
             .then(() => {
+              subscribeAllRooms();
               const active = get().activeRoomId;
               if (active) {
-                wsRoomSwitch(active);
                 // 重连后强制重载活跃房间历史（reconnecting 时已重置标记），
                 // 把断开期间已入库的消息补回来，避免本地永久丢消息
                 void get().selectRoom(active, true);
@@ -200,7 +242,9 @@ export const useChat = create<ChatState>()((set, get) => ({
           break;
         case 'room:joined':
           set((s) => ({
-            subscribedRoomId: msg.payload.roomId,
+            subscribedRoomIds: s.subscribedRoomIds.includes(msg.payload.roomId)
+              ? s.subscribedRoomIds
+              : [...s.subscribedRoomIds, msg.payload.roomId],
             membersByRoom: { ...s.membersByRoom, [msg.payload.roomId]: msg.payload.members },
           }));
           // 订阅就绪：把排队的该房间消息按序发出（自动选房/订阅未就绪时排队的）
@@ -213,44 +257,28 @@ export const useChat = create<ChatState>()((set, get) => ({
           }
           break;
         case 'member:joined':
-          if (msg.payload.roomId === state.subscribedRoomId) {
-            set((s) => {
-              const members = s.membersByRoom[msg.payload.roomId] ?? [];
-              if (members.some((m) => m.id === msg.payload.member.id)) return s;
-              return { membersByRoom: { ...s.membersByRoom, [msg.payload.roomId]: [...members, msg.payload.member] } };
-            });
-          }
+          set((s) => {
+            const members = s.membersByRoom[msg.payload.roomId];
+            // 只维护已订阅房间的成员表（订阅时会收到全量成员列表）
+            if (!members || members.some((m) => m.id === msg.payload.member.id)) return s;
+            return { membersByRoom: { ...s.membersByRoom, [msg.payload.roomId]: [...members, msg.payload.member] } };
+          });
           break;
         case 'member:left':
-          if (msg.payload.roomId === state.subscribedRoomId) {
-            set((s) => ({
+          set((s) => {
+            const members = s.membersByRoom[msg.payload.roomId];
+            if (!members) return s;
+            return {
               membersByRoom: {
                 ...s.membersByRoom,
-                [msg.payload.roomId]: (s.membersByRoom[msg.payload.roomId] ?? []).filter(
-                  (m) => m.id !== msg.payload.userId,
-                ),
+                [msg.payload.roomId]: members.filter((m) => m.id !== msg.payload.userId),
               },
-            }));
-          }
-          break;
-        case 'room:deleted': {
-          // 房主删除了房间：从本地移除，若正活跃则切到下一个房间
-          const rid = msg.payload.roomId;
-          set((s) => {
-            const rooms = s.rooms.filter((r) => r.id !== rid);
-            const messagesByRoom = { ...s.messagesByRoom };
-            const membersByRoom = { ...s.membersByRoom };
-            delete messagesByRoom[rid];
-            delete membersByRoom[rid];
-            const wasActive = s.activeRoomId === rid;
-            return {
-              rooms,
-              messagesByRoom,
-              membersByRoom,
-              activeRoomId: wasActive ? (rooms[0]?.id ?? null) : s.activeRoomId,
-              subscribedRoomId: wasActive ? null : s.subscribedRoomId,
             };
           });
+          break;
+        case 'room:deleted': {
+          // 房主删除了房间：从本地移除（含退订），若正活跃则切到下一个房间
+          removeRoomLocal(msg.payload.roomId);
           if (get().activeRoomId) void get().selectRoom(get().activeRoomId!);
           break;
         }
@@ -268,9 +296,19 @@ export const useChat = create<ChatState>()((set, get) => ({
           });
           const isMine = msg.payload.message.userId === state.me?.id;
           const active = get().activeRoomId;
-          if (!isMine && (active === null || active === msg.payload.roomId)) {
+          if (!isMine) {
+            // 非活跃房间累加未读数；提示音与 Overlay 对所有房间生效（多房间订阅的意义）
+            if (active !== msg.payload.roomId) {
+              set((s) => ({
+                unreadByRoom: {
+                  ...s.unreadByRoom,
+                  [msg.payload.roomId]: (s.unreadByRoom[msg.payload.roomId] ?? 0) + 1,
+                },
+              }));
+            }
             playMessageSound(useSettings.getState().soundEnabled);
-            void pushOverlayMessage(msg.payload.message);
+            const room = get().rooms.find((r) => r.id === msg.payload.roomId);
+            void pushOverlayMessage(msg.payload.message, room?.name);
           }
           break;
         }
@@ -290,20 +328,7 @@ export const useChat = create<ChatState>()((set, get) => ({
             if (rid) {
               // 房间已删除/不再是成员：从本地移除并自动切换（避免"你不是该房间成员"误导报错）
               const wasActive = get().activeRoomId === rid;
-              set((s) => {
-                const rooms = s.rooms.filter((r) => r.id !== rid);
-                const messagesByRoom = { ...s.messagesByRoom };
-                const membersByRoom = { ...s.membersByRoom };
-                delete messagesByRoom[rid];
-                delete membersByRoom[rid];
-                return {
-                  rooms,
-                  messagesByRoom,
-                  membersByRoom,
-                  activeRoomId: wasActive ? (rooms[0]?.id ?? null) : s.activeRoomId,
-                  subscribedRoomId: wasActive ? null : s.subscribedRoomId,
-                };
-              });
+              removeRoomLocal(rid);
               if (get().activeRoomId) void get().selectRoom(get().activeRoomId!);
               if (wasActive) set({ roomError: '房间已删除或你已不在该房间，已自动切换。' });
             } else {
@@ -332,7 +357,7 @@ export const useChat = create<ChatState>()((set, get) => ({
     socket = null;
     queuedSends = [];
     // 保留 rooms/messages 等状态，便于重新连接后恢复订阅
-    set({ status: 'closed', me: null, subscribedRoomId: null });
+    set({ status: 'closed', me: null, subscribedRoomIds: [] });
   },
 
   refreshRooms: async () => {
@@ -390,19 +415,51 @@ export const useChat = create<ChatState>()((set, get) => ({
   selectRoom: async (roomId, forceReload = false) => {
     const { token } = useAuth.getState();
     if (!token) return;
-    set({ activeRoomId: roomId });
-    wsRoomSwitch(roomId);
+    // 选中即清零未读；room:join 幂等（已订阅时服务端也会回执），看门狗兜底
+    set((s) => ({
+      activeRoomId: roomId,
+      unreadByRoom: { ...s.unreadByRoom, [roomId]: 0 },
+    }));
+    subscribeRoom(roomId);
     // 加载历史（首次或 forceReload——重连后强制重拉，补齐断开期间的消息）
     if (forceReload || (!(get().messagesByRoom[roomId]?.length) && !get().historyLoadedRooms[roomId])) {
       try {
-        const { messages } = await api.roomMessages(token, roomId, { limit: 50 });
+        const { messages, hasMore } = await api.roomMessages(token, roomId, { limit: 50 });
         set((s) => ({
           messagesByRoom: { ...s.messagesByRoom, [roomId]: messages },
           historyLoadedRooms: { ...s.historyLoadedRooms, [roomId]: true },
+          hasMoreByRoom: { ...s.hasMoreByRoom, [roomId]: hasMore },
         }));
       } catch (e) {
         set((s) => ({ historyLoadedRooms: { ...s.historyLoadedRooms, [roomId]: true }, roomError: e instanceof Error ? e.message : '加载历史失败' }));
       }
+    }
+  },
+
+  loadOlderMessages: async (roomId) => {
+    const { token } = useAuth.getState();
+    if (!token) return;
+    const { hasMoreByRoom, loadingOlderRooms, messagesByRoom } = get();
+    if (!hasMoreByRoom[roomId] || loadingOlderRooms[roomId]) return;
+    // 游标 = 当前最早一条已确认消息（乐观占位总在末尾，不影响）
+    const oldest = messagesByRoom[roomId]?.find((m) => !m.pending);
+    if (!oldest) return;
+    set((s) => ({ loadingOlderRooms: { ...s.loadingOlderRooms, [roomId]: true } }));
+    try {
+      const { messages, hasMore } = await api.roomMessages(token, roomId, { before: oldest.id, limit: 50 });
+      set((s) => {
+        const existing = new Set((s.messagesByRoom[roomId] ?? []).map((m) => m.id));
+        const fresh = messages.filter((m) => !existing.has(m.id));
+        return {
+          messagesByRoom: { ...s.messagesByRoom, [roomId]: [...fresh, ...(s.messagesByRoom[roomId] ?? [])] },
+          hasMoreByRoom: { ...s.hasMoreByRoom, [roomId]: hasMore },
+          historyLoadedRooms: { ...s.historyLoadedRooms, [roomId]: true },
+        };
+      });
+    } catch (e) {
+      set({ roomError: e instanceof Error ? e.message : '加载更早消息失败' });
+    } finally {
+      set((s) => ({ loadingOlderRooms: { ...s.loadingOlderRooms, [roomId]: false } }));
     }
   },
 
@@ -412,22 +469,8 @@ export const useChat = create<ChatState>()((set, get) => ({
     if (!token || !activeRoomId) return;
     try {
       await api.leaveRoom(token, activeRoomId);
-      // 先退订 WS，再切到下一个房间
-      socket?.send({ type: 'room:leave', payload: { roomId: activeRoomId } });
-      set((s) => {
-        const rooms = s.rooms.filter((r) => r.id !== activeRoomId);
-        const messagesByRoom = { ...s.messagesByRoom };
-        const membersByRoom = { ...s.membersByRoom };
-        delete messagesByRoom[activeRoomId];
-        delete membersByRoom[activeRoomId];
-        return {
-          rooms,
-          messagesByRoom,
-          membersByRoom,
-          activeRoomId: rooms[0]?.id ?? null,
-          subscribedRoomId: null,
-        };
-      });
+      // removeRoomLocal 内含退订 WS + 本地清理 + 自动切换到下一个房间
+      removeRoomLocal(activeRoomId);
       if (get().activeRoomId) await get().selectRoom(get().activeRoomId!);
     } catch (e) {
       set({ roomError: e instanceof Error ? e.message : '离开房间失败' });
@@ -448,7 +491,7 @@ export const useChat = create<ChatState>()((set, get) => ({
   sendMessage: (text) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    const { activeRoomId, subscribedRoomId, status, rooms } = get();
+    const { activeRoomId, subscribedRoomIds, status, rooms } = get();
     let target = activeRoomId;
 
     // 未选择房间：游戏内呼出发送时自动选中第一个房间（并排队，订阅建立后发出）
@@ -459,12 +502,12 @@ export const useChat = create<ChatState>()((set, get) => ({
       }
       target = rooms[0].id;
       set({ activeRoomId: target });
-      wsRoomSwitch(target);
+      subscribeRoom(target);
       void get().selectRoom(target);
     }
 
-    // 订阅/连接未就绪：乐观上屏 + 排队，就绪（room:joined）后按序自动发送
-    if (target !== subscribedRoomId || status !== 'open') {
+    // 订阅/连接未就绪：乐观上屏 + 排队，就绪（room:joined）后自动发送
+    if (status !== 'open' || !subscribedRoomIds.includes(target)) {
       appendOptimistic(target, trimmed);
       queuedSends.push({ roomId: target, text: trimmed });
       set({ roomError: null });

@@ -284,8 +284,8 @@ async function unregisterEsc(): Promise<void> {
   });
 }
 
-/** 新消息到达时推给 Overlay 显示（由 chat store 调用） */
-export async function pushOverlayMessage(message: ChatMessage): Promise<void> {
+/** 新消息到达时推给 Overlay 显示（由 chat store 调用）；roomName 用于多房间场景标注来源 */
+export async function pushOverlayMessage(message: ChatMessage, roomName?: string): Promise<void> {
   if (!started) {
     return;
   }
@@ -298,16 +298,29 @@ export async function pushOverlayMessage(message: ChatMessage): Promise<void> {
       return;
     }
   }
-  await emit('overlay:append', message);
+  await emit('overlay:append', { ...message, roomName });
 }
+
+/** 当前实际注册的呼出快捷键（换键后注销旧键用——否则旧键依旧全局生效） */
+let registeredHotkey: string | null = null;
 
 async function registerHotkey(): Promise<void> {
   const { hotkey } = useSettings.getState();
   try {
+    // 换键场景：先注销上一个快捷键（真机反馈：设置新快捷键后旧键仍可呼出）
+    if (registeredHotkey && registeredHotkey !== hotkey) {
+      try {
+        if (await isRegistered(registeredHotkey)) await unregister(registeredHotkey);
+      } catch {
+        // 旧键注销失败不阻塞新键注册
+      }
+      registeredHotkey = null;
+    }
     if (await isRegistered(hotkey)) await unregister(hotkey);
     await register(hotkey, (event) => {
       if (event.state === 'Pressed') void showInputWindow();
     });
+    registeredHotkey = hotkey;
   } catch (e) {
     console.error('register hotkey failed:', e);
   }
@@ -351,12 +364,16 @@ export async function startGameMode(): Promise<void> {
 export async function stopGameMode(): Promise<void> {
   if (!started) return;
   started = false;
-  const { hotkey } = useSettings.getState();
-  try {
-    if (await isRegistered(hotkey)) await unregister(hotkey);
-  } catch {
-    // 忽略注销失败
+  // 注销当前注册的快捷键 + 设置里的快捷键（两者可能不一致：改键后未重新注册过）
+  for (const hk of new Set([registeredHotkey, useSettings.getState().hotkey])) {
+    if (!hk) continue;
+    try {
+      if (await isRegistered(hk)) await unregister(hk);
+    } catch {
+      // 忽略注销失败
+    }
   }
+  registeredHotkey = null;
   for (const off of unlisteners.splice(0)) off();
   await hideInputWindow();
   await (await getOverlayWindow())?.hide();

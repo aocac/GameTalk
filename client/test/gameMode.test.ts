@@ -3,7 +3,6 @@ import { useSettings } from '../src/app/settings';
 import * as gameMode from '../src/app/gameMode';
 import { isRegistered, register, unregister } from '@tauri-apps/plugin-global-shortcut';
 import type { ChatMessage } from '../src/app/types';
-
 // ---- mock Tauri APIs ----
 const calls: string[] = [];
 const mockWindow = {
@@ -52,14 +51,17 @@ vi.mock('@tauri-apps/api/window', () => ({
   })),
 }));
 
-const registered: string[] = [];
+/** 有状态的快捷键注册表：isRegistered/register/unregister 与真实插件语义一致 */
+const registeredKeys = new Set<string>();
 vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
-  isRegistered: vi.fn(async () => false),
+  isRegistered: vi.fn(async (hotkey: string) => registeredKeys.has(hotkey)),
   register: vi.fn(async (hotkey: string, handler: (e: { state: string }) => void) => {
-    registered.push(hotkey);
+    registeredKeys.add(hotkey);
     (globalThis as unknown as Record<string, unknown>)[`__hotkey_${hotkey}`] = handler;
   }),
-  unregister: vi.fn(async () => undefined),
+  unregister: vi.fn(async (hotkey: string) => {
+    registeredKeys.delete(hotkey);
+  }),
 }));
 
 function fireEvent(name: string, payload?: unknown): void {
@@ -88,7 +90,7 @@ const sampleMessage: ChatMessage = {
 beforeEach(() => {
   calls.length = 0;
   emitted.length = 0;
-  registered.length = 0;
+  registeredKeys.clear();
   useSettings.setState({
     gameModeEnabled: false,
     hotkey: 'Ctrl+Shift+Space',
@@ -106,7 +108,7 @@ afterEach(async () => {
 describe('gameMode manager', () => {
   it('startGameMode registers hotkey and listens to input events', async () => {
     await gameMode.startGameMode();
-    expect(registered).toContain('Ctrl+Shift+Space');
+    expect(await isRegistered('Ctrl+Shift+Space')).toBe(true);
     expect(calls).toContain('getByLabel:overlay'); // applyOverlayConfig 会获取 overlay 窗口
   });
 
@@ -165,7 +167,22 @@ describe('gameMode manager', () => {
     await gameMode.stopGameMode();
     expect(gameMode.isGameModeRunning()).toBe(false);
     expect(hotkey).toBe('Ctrl+Shift+Space');
+    expect(await isRegistered('Ctrl+Shift+Space')).toBe(false);
     expect(mockWindow.hide).toHaveBeenCalled();
+  });
+
+  it('reapplyHotkey unregisters the old combo so it stops working', async () => {
+    await gameMode.startGameMode();
+    expect(await isRegistered('Ctrl+Shift+Space')).toBe(true);
+
+    useSettings.setState({ hotkey: 'Alt+G' });
+    await gameMode.reapplyHotkey();
+
+    // 旧键必须被注销（真机反馈：换键后旧键仍可呼出）
+    expect(unregister).toHaveBeenCalledWith('Ctrl+Shift+Space');
+    expect(await isRegistered('Ctrl+Shift+Space')).toBe(false);
+    expect(register).toHaveBeenCalledWith('Alt+G', expect.any(Function));
+    expect(await isRegistered('Alt+G')).toBe(true);
   });
 
   it('registers global Esc while input window is shown, unregisters on hide', async () => {

@@ -164,3 +164,15 @@ body {
     transform: translateY(0);
   }
 }
+
+/* 消息来源房间标注（多房间订阅） */
+.overlay-room {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}

@@ -48,6 +48,8 @@ function InputApp() {
         placeholder="输入消息，Enter 发送，Esc 取消"
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
+          // 中文输入法组词期间的 Enter/Esc 是输入法操作，不是发送/取消
+          if (e.nativeEvent.isComposing || e.keyCode === 229) return;
           if (e.key === 'Enter') {
             e.preventDefault();
             send();

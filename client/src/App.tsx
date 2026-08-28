@@ -470,8 +470,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     me,
     rooms,
     activeRoomId,
-    subscribedRoomId,
+    subscribedRoomIds,
+    unreadByRoom,
     historyLoadedRooms,
+    hasMoreByRoom,
+    loadingOlderRooms,
     membersByRoom,
     messagesByRoom,
     loadingRooms,
@@ -482,6 +485,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     createRoom,
     joinRoomByCode,
     selectRoom,
+    loadOlderMessages,
     leaveActiveRoom,
     deleteActiveRoom,
     sendMessage,
@@ -496,14 +500,36 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [roomName, setRoomName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
+  /** 向上翻页 prepend 后的滚动锚定基准（翻页期间的 messages.length 变化不滚到底部） */
+  const anchorRef = useRef<number | null>(null);
   const connected = status === 'open';
   const activeRoom = rooms.find((r) => r.id === activeRoomId) ?? null;
   const messages = activeRoomId ? (messagesByRoom[activeRoomId] ?? []) : [];
   const members = activeRoomId ? (membersByRoom[activeRoomId] ?? []) : [];
+  const activeSubscribed = !!activeRoomId && subscribedRoomIds.includes(activeRoomId);
 
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
+    const el = listRef.current;
+    if (!el) return;
+    if (anchorRef.current !== null) {
+      // 加载更早消息（prepend）：把滚动位置锚定回原内容，而不是跳到底部
+      el.scrollTop = el.scrollHeight - anchorRef.current;
+      anchorRef.current = null;
+      return;
+    }
+    el.scrollTo({ top: el.scrollHeight });
   }, [messages.length]);
+
+  const handleLoadOlder = async () => {
+    if (!activeRoom || !listRef.current) return;
+    anchorRef.current = listRef.current.scrollHeight;
+    const before = messages.length;
+    await loadOlderMessages(activeRoom.id);
+    // 没有新增内容（加载失败/无更早消息）时 effect 不会触发，手动清掉锚定标记
+    if ((useChat.getState().messagesByRoom[activeRoom.id] ?? []).length === before) {
+      anchorRef.current = null;
+    }
+  };
 
   // 进入聊天视图自动连接（connect 幂等，StrictMode 双挂载安全）；离线模式不连接
   useEffect(() => {
@@ -590,6 +616,9 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             >
               <span className="hash">#</span>
               <span className="room-name">{r.name}</span>
+              {!!unreadByRoom[r.id] && (
+                <span className="room-badge">{unreadByRoom[r.id] > 99 ? '99+' : unreadByRoom[r.id]}</span>
+              )}
               <span className="room-count">{r.memberCount}</span>
             </div>
           ))}
@@ -626,10 +655,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             <StatusDot status={status} />
             {!offline && activeRoom && (
               <span
-                className={`sub-tag ${subscribedRoomId === activeRoomId ? 'ok' : 'pending'}`}
-                title={subscribedRoomId === activeRoomId ? '已订阅该房间实时消息' : '订阅未就绪（自动重试中…）'}
+                className={`sub-tag ${activeSubscribed ? 'ok' : 'pending'}`}
+                title={activeSubscribed ? '已订阅该房间实时消息' : '订阅未就绪（自动重试中…）'}
               >
-                {subscribedRoomId === activeRoomId ? '订阅 ✓' : '订阅中…'}
+                {activeSubscribed ? '订阅 ✓' : '订阅中…'}
               </span>
             )}
             {!offline && (
@@ -693,6 +722,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         )}
 
         <div className="messages" ref={listRef}>
+          {!offline && activeRoom && hasMoreByRoom[activeRoom.id] && (
+            <button
+              className="load-older"
+              disabled={!!loadingOlderRooms[activeRoom.id]}
+              onClick={() => void handleLoadOlder()}
+            >
+              {loadingOlderRooms[activeRoom.id] ? '加载中…' : '加载更早的消息'}
+            </button>
+          )}
           {offline && (
             <div className="empty">
               <p className="empty-title">离线模式</p>
@@ -745,6 +783,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             maxLength={2000}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
+              // 中文输入法组词期间的 Enter 是确认候选词，不是发送（keyCode 229 为组词键事件兜底）
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === 'Enter' && !e.shiftKey && !offline && connected && activeRoom) {
                 e.preventDefault();
                 if (draft.trim()) {

@@ -45,7 +45,7 @@ async function request<T>(
     } finally {
       clearTimeout(timer);
     }
-  } catch (e) {
+  } catch {
     // 网络不可达（server 未启动 / 地址错误 / 超时）
     throw new ApiError(
       0,
@@ -67,6 +67,9 @@ async function request<T>(
 
   if (!res.ok) {
     const err = data?.error;
+    if (res.status === 429) {
+      throw new ApiError(429, 'rate_limited', err?.message ?? '请求过于频繁，请稍后再试');
+    }
     throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`);
   }
   return data as T;
