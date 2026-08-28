@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useChat } from './stores/chat';
+import type { RoomMessage } from './app/api';
 import { useAuth } from './stores/auth';
 import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
 import * as gameMode from './app/gameMode';
@@ -73,6 +74,24 @@ function formatDay(ts: string): string {
   if (sameDay(d, now)) return '今天';
   if (sameDay(d, yesterday)) return '昨天';
   return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+/** 房间列表预览时间：今天显示 HH:MM，否则 M/D */
+function formatRoomTime(ts: string): string {
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+/** 是否与上一条消息同人连发（5 分钟内）：合并头像与昵称（QQ 式） */
+function isGroupedWithPrev(prev: RoomMessage | undefined, cur: RoomMessage): boolean {
+  if (!prev || prev.userId !== cur.userId) return false;
+  if (prev.pending || cur.pending) return false;
+  if (new Date(cur.createdAt).toDateString() !== new Date(prev.createdAt).toDateString()) return false;
+  return new Date(cur.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60 * 1000;
 }
 
 function SettingsModal({ onClose }: { onClose: () => void }) {
@@ -636,20 +655,34 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               点击 + 创建或加入
             </div>
           )}
-          {rooms.map((r) => (
-            <div
-              key={r.id}
-              className={`room-item ${r.id === activeRoomId ? 'active' : ''}`}
-              onClick={() => void selectRoom(r.id)}
-              title={r.inviteCode}
-            >
-              <span className="hash">#</span>
-              <span className="room-name">{r.name}</span>
-              {!!unreadByRoom[r.id] && (
-                <span className="room-badge">{unreadByRoom[r.id] > 99 ? '99+' : unreadByRoom[r.id]}</span>
-              )}
-            </div>
-          ))}
+          {rooms.map((r) => {
+            const confirmed = (messagesByRoom[r.id] ?? []).filter((x) => !x.pending);
+            const lastMsg = confirmed.length > 0 ? confirmed[confirmed.length - 1] : undefined;
+            return (
+              <div
+                key={r.id}
+                className={`room-item ${r.id === activeRoomId ? 'active' : ''}`}
+                onClick={() => void selectRoom(r.id)}
+                title={r.inviteCode}
+              >
+                <div className="room-main">
+                  <div className="room-line1">
+                    <span className="room-name">{r.name}</span>
+                    {!!unreadByRoom[r.id] && (
+                      <span className="room-badge">{unreadByRoom[r.id] > 99 ? '99+' : unreadByRoom[r.id]}</span>
+                    )}
+                    {lastMsg && <span className="room-time">{formatRoomTime(lastMsg.createdAt)}</span>}
+                  </div>
+                  {lastMsg && (
+                    <div className="room-preview">
+                      {lastMsg.userId === me?.id ? '' : `${lastMsg.username}：`}
+                      {lastMsg.text}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </nav>
         <div className="sidebar-footer user-block">
           <Avatar name={offline ? '访客' : (user?.username ?? '')} url={user?.avatarUrl} size={32} />
@@ -789,9 +822,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             </div>
           )}
           {messages.map((m, i) => {
+            const prev = messages[i - 1];
+            const grouped = isGroupedWithPrev(prev, m);
             const showDay =
               i === 0 ||
-              new Date(m.createdAt).toDateString() !== new Date(messages[i - 1].createdAt).toDateString();
+              new Date(m.createdAt).toDateString() !== new Date(prev.createdAt).toDateString();
             return (
               <Fragment key={m.id}>
                 {showDay && (
@@ -799,7 +834,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                     <span>{formatDay(m.createdAt)}</span>
                   </div>
                 )}
-                <div className={`message ${m.userId === me?.id ? 'mine' : ''} ${m.pending ? 'pending' : ''}`}>
+                <div className={`message ${m.userId === me?.id ? 'mine' : ''} ${grouped ? 'grouped' : ''} ${m.pending ? 'pending' : ''}`}>
                   <Avatar name={m.username} url={m.avatarUrl} size={30} />
                   <div className="message-body">
                     <div className="message-head">
@@ -860,7 +895,9 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             <span className="members-count">{members.length}</span>
           </div>
           <div className="members-list">
-            {members.map((m) => {
+            {[...members]
+              .sort((a, b) => (a.id === me?.id ? -1 : b.id === me?.id ? 1 : 0))
+              .map((m) => {
               const isOwner = m.id === activeRoom.ownerId;
               const isSelf = m.id === me?.id;
               const canKick = activeRoom.ownerId === me?.id && !isOwner;

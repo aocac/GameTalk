@@ -4,6 +4,12 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { emit } from '@tauri-apps/api/event';
 import './input.css';
 
+// 游戏内输入框同样是桌面窗口：屏蔽网页右键菜单（输入框自身保留）
+document.addEventListener('contextmenu', (e) => {
+  const target = e.target as HTMLElement | null;
+  if (!target?.closest('input, textarea')) e.preventDefault();
+});
+
 function InputApp() {
   const [text, setText] = useState('');
   const ref = useRef<HTMLInputElement>(null);
