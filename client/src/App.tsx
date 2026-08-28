@@ -530,6 +530,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   /** 踢出二次确认：记录待确认的成员 userId（3s 内再点一次生效） */
   const [confirmKickId, setConfirmKickId] = useState<string | null>(null);
   const kickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 左下角头像二级菜单（设置 / 退出登录） */
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [roomName, setRoomName] = useState('');
@@ -675,8 +677,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   </div>
                   {lastMsg && (
                     <div className="room-preview">
-                      {lastMsg.userId === me?.id ? '' : `${lastMsg.username}：`}
-                      {lastMsg.text}
+                      {lastMsg.username}：{lastMsg.text}
                     </div>
                   )}
                 </div>
@@ -685,17 +686,45 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           })}
         </nav>
         <div className="sidebar-footer user-block">
-          <Avatar name={offline ? '访客' : (user?.username ?? '')} url={user?.avatarUrl} size={32} />
-          <div className="user-info">
-            <div className="user-name">{offline ? '离线访客' : user?.username}</div>
-            <div className="user-id">{offline ? '未登录' : `#${user?.id.slice(0, 8)}`}</div>
-          </div>
-          {!offline && (
-            <button className="btn ghost small" title="退出登录" onClick={logout}>
-              退出
-            </button>
-          )}
+          <button
+            className={`user-trigger ${userMenuOpen ? 'open' : ''}`}
+            onClick={() => setUserMenuOpen((v) => !v)}
+            title="账号菜单"
+          >
+            <Avatar name={offline ? '访客' : (user?.username ?? '')} url={user?.avatarUrl} size={32} />
+            <div className="user-info">
+              <div className="user-name">{offline ? '离线访客' : user?.username}</div>
+              <div className="user-id">{offline ? '未登录' : `#${user?.id.slice(0, 8)}`}</div>
+            </div>
+          </button>
         </div>
+        {userMenuOpen && (
+          <>
+            <div className="menu-mask" onClick={() => setUserMenuOpen(false)} />
+            <div className="user-menu">
+              <button
+                className="user-menu-item"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  setShowSettings(true);
+                }}
+              >
+                设置
+              </button>
+              {!offline && (
+                <button
+                  className="user-menu-item danger"
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    logout();
+                  }}
+                >
+                  退出登录
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </aside>
 
       <main className="main">
@@ -744,9 +773,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                 {confirmDeleteRoom ? '确认删除？' : '删除房间'}
               </button>
             )}
-            <button className="btn ghost small" onClick={() => setShowSettings(true)}>
-              设置
-            </button>
             {offline && (
               <button className="btn ghost small" onClick={onExitOffline}>
                 退出离线
@@ -928,7 +954,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               );
             })}
           </div>
-          {activeRoom.ownerId === me?.id && <div className="members-hint">你是房主 · 可移出成员 / 删除房间</div>}
         </aside>
       )}
 

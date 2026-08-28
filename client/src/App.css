@@ -66,6 +66,7 @@ body {
   flex-direction: column;
   padding: 14px 8px 10px;
   gap: 10px;
+  position: relative;
 }
 
 .main {
@@ -691,13 +692,83 @@ body {
   color: #fff;
 }
 
-.members-hint {
-  font-size: 11px;
-  color: var(--text-3);
-  text-align: center;
-  padding: 6px 8px 2px;
-  border-top: 1px solid var(--border);
-  line-height: 1.5;
+/* ============ 左下角账号菜单（头像点击展开） ============ */
+.user-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 5px 7px;
+  margin: -5px -7px;
+  border-radius: var(--radius);
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.user-trigger:hover,
+.user-trigger.open {
+  background: var(--side-hover);
+}
+
+.menu-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+.user-menu {
+  position: absolute;
+  left: 8px;
+  bottom: 58px;
+  width: 168px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(35, 38, 47, 0.16);
+  padding: 5px;
+  z-index: 60;
+  animation: menu-in 0.14s ease-out;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.user-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.user-menu-item:hover {
+  background: var(--surface-2);
+}
+
+.user-menu-item.danger {
+  color: var(--danger);
+}
+
+.user-menu-item.danger:hover {
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 /* ============ 登录/注册 ============ */
