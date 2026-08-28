@@ -44,6 +44,7 @@
 | 6 | UI/设置/重连/错误/安全/客户端构建 | ✅ 完成 | CSP/NSIS/资料编辑；release 构建 ✅（exe 9MB/setup 2MB） |
 | 7 | 服务端 Docker 化/生产部署准备 | ✅ 完成 | Dockerfile/compose/Caddyfile/deploy.sh/CI；⚠️ Docker 构建在 CI 执行 |
 | 8 | 最终测试与验收 | ✅ 完成 | server 23 + client 10 全绿；浏览器 E2E ✅；冒烟 ✅ |
+| 9 | 功能增强 + 稳定性 + 三端 Release（Phase 9+） | ✅ 完成 | 删房/乐观发送/半开自愈/三端发布；物理验收 ✅；真实服务器部署 ✅ |
 
 ## 核心数据流（已落定）
 ```
@@ -57,11 +58,9 @@
 ```
 
 ## 待办与已知问题
-- ⚠️ 需人类物理验收：
-  1. 游戏模式下：呼出输入框 → 切回游戏 → 按 ESC 应能直接关闭输入框（全局 ESC 已实现，输入框显示期间注册、隐藏后注销；需真机确认不干扰游戏内 ESC）
-  2. 主窗口 X →「取消 / 关闭到托盘 / 退出」弹窗视觉确认（上轮已交付）
-  3. Overlay 绝对透明 + 位置/缩放（上轮已修复 url bug）
-- Docker 实际构建/部署需 Linux 环境（CI 已配置，push 即跑）
+- ✅ 物理验收全部通过（2026-08-28 人类确认）：游戏内快捷键呼出、全局 ESC 不干扰游戏内 ESC、Overlay 绝对透明 + 位置/缩放、提示音、发送后焦点恢复、关闭三选项弹窗
+- ✅ 真实服务器已部署上线（2026-08-28 用户确认；部署域名/IP 等信息不入公开仓库）
+- 无未决阻塞项。后续候选（未排期）：REST 限流、消息分页向上翻页、水平扩展需引入 Redis（ADR-005 单机设计下不需要）
 
 ## 本地使用说明（开发/验收辅助）
 - `dev/start-local.cmd`（仓库根）可一键启动本地服务端（数据持久化在 server/data/），**仅用于开发验收**，非产品形态。
@@ -113,4 +112,11 @@
 - 2026-08-28（重大根因）：Overlay/快捷键全失效 = 我加的主窗口 `additionalBrowserArgs: "--proxy-bypass-list=*"` 作用于共享 WebView2 浏览器进程，弄坏 overlay/input 窗口内容加载（overlay.tsx 从不挂载）。移除该参数后恢复。教训：additionalBrowserArgs 是全局副作用，慎用；此前误判的"半开连接"极可能也是它。
 - 2026-08-28：Contributors 修复——历史提交原用假身份 GameTalk Dev，重写为 AppDuck <132205345+aocac@users.noreply.github.com>（filter-branch + force push）。
 - 2026-08-28：清理临时诊断日志（diag_log/diag/odiag）；README 特性、PROGRESS 更新。
-- 当前：服务端 27 测试 + 客户端 11 测试绿；三端 Release v0.1.0 资产已发布。
+- 当前：服务端 29 测试 + 客户端 11 测试绿；v0.1.0 资产已发布。
+- 2026-08-28（接管：隐私审计 + 历史清除 + 安全加固 + 文档完善 + v0.1.1）：
+  - 隐私审计：`.workbuddy/` 开发日志曾入库（已核实内容无密钥/真实域名），filter-branch 全历史清除 + `--prune-empty` + 强推 main 与 v0.1.0；全量跟踪文件扫描无密钥/真实 IP/可疑域名；docs 截图均为测试账号（browser_alpha 等）可保留。注意：GitHub 侧旧 commit 对象在 GC 前仍可按 SHA 直取，彻底擦除需联系 GitHub Support（低风险，内容无害）。
+  - 服务端加固：WS 单连接限流（5s 滑动窗口 25 条 → `rate_limited`）、单帧 64KB 上限（超限 1009 断连）、协议层心跳巡检（30s ping / 70s 无 pong terminate，清理半开"幽灵成员"）、注册并发竞态由唯一索引兜底（23505 → 409）；gateway 连接清理统一收敛到 close 事件 + 修复格式粘连。
+  - 客户端修复：api.ts 非 JSON 响应（反代 502 HTML 等）容错为 `ApiError('bad_response')`；排队发送单槽 → 队列化（`queuedSends`，订阅就绪后按序补发；error/重连/disconnect 均清空）；`rate_limited` 中文提示。
+  - 部署：compose `CORS_ORIGIN` 可经 .env 覆盖（默认 `*`，桌面客户端不受浏览器同源限制）。
+  - 文档：README（Releases 下载、MIT License 落地）、architecture（协议补 room:delete/rate_limited/心跳、目录树纠偏、可靠性参数更新）、testing（29+11、物理验收勾选、3MB 头像勘误、章节重编号）、deployment（CORS 变量、三端 Release、部署状态）、client/README 与 server/README 重写、新增 LICENSE。
+  - 坑位补充：限流把 hello/ping 一并计数——写测试打满配额时要扣除 hello 占的 1 条。

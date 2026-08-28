@@ -37,17 +37,18 @@
 gametalk/
 ├── client/                  # Tauri 2 桌面客户端
 │   ├── src/                 # React 前端
-│   │   ├── app/             # 基础能力：types / ws / audio / settings
-│   │   ├── stores/          # zustand 状态（auth / chat / settings）
-│   │   ├── views/           # 页面视图
-│   │   └── components/      # UI 组件
-│   └── src-tauri/           # Rust 壳（窗口 / 全局快捷键 / 单实例）
+│   │   ├── app/             # 基础能力：types / ws / api / settings / gameMode / audio
+│   │   ├── stores/          # zustand 状态（auth / chat）
+│   │   ├── App.tsx          # 主窗口 UI（登录 / 聊天 / 设置 / 关闭确认）
+│   │   ├── input.tsx        # 输入 Overlay 窗口入口
+│   │   └── overlay.tsx      # 消息 Overlay 窗口入口
+│   └── src-tauri/           # Rust 壳（托盘 / 单实例 / quit_app / set_proxy）
 ├── server/                  # Fastify 服务端
 │   ├── src/
 │   │   ├── routes/          # REST 路由（health / auth / rooms）
-│   │   ├── ws/              # WebSocket 网关（认证 + 房间广播）
+│   │   ├── ws/              # WS 网关（认证 + 房间广播 + 限流 + 心跳清理）
 │   │   ├── db/              # pg/PGlite 抽象 + migration 执行器
-│   │   └── lib/             # jwt / password / envfile
+│   │   └── lib/             # jwt / password / image / invite / envfile
 │   ├── migrations/          # 纯 SQL migration（生产与 PGlite 同源）
 │   └── test/                # vitest 单测 + 集成测试
 ├── docker/                  # 生产部署 compose 与配置
@@ -56,29 +57,36 @@ gametalk/
 
 ## 4. 实时通信协议（WS）
 
-**连接**：`/ws`，客户端连接成功后发送 `hello`（Phase 3 起携带 JWT token 替代匿名昵称）。
+**连接**：`/ws`，客户端连接成功后发送 `hello` 携带 JWT token，服务端校验并绑定用户。
 
 **客户端 → 服务端**
 ```json
-{"type":"hello","payload":{"name":"Alice"}}
-{"type":"room:join","payload":{"roomId":"lobby"}}
-{"type":"room:leave","payload":{"roomId":"lobby"}}
-{"type":"message:send","payload":{"roomId":"lobby","text":"hi"}}
+{"type":"hello","payload":{"token":"<JWT>"}}
+{"type":"room:join","payload":{"roomId":"..."}}
+{"type":"room:leave","payload":{"roomId":"..."}}
+{"type":"room:delete","payload":{"roomId":"..."}}
+{"type":"message:send","payload":{"roomId":"...","text":"hi"}}
 {"type":"ping"}
 ```
 
 **服务端 → 客户端**
 ```json
-{"type":"hello:ok","payload":{"me":{"id":"...","username":"Alice"}}}
-{"type":"room:joined","payload":{"roomId":"lobby","members":[...]}}
-{"type":"member:joined","payload":{"roomId":"lobby","member":{...}}}
-{"type":"member:left","payload":{"roomId":"lobby","userId":"...","username":"..."}}
-{"type":"message:new","payload":{"roomId":"lobby","message":{...}}}
-{"type":"error","payload":{"code":"...","message":"..."}}
+{"type":"hello:ok","payload":{"me":{"id":"...","username":"Alice","avatarUrl":null}}}
+{"type":"room:joined","payload":{"roomId":"...","members":[...]}}
+{"type":"member:joined","payload":{"roomId":"...","member":{...}}}
+{"type":"member:left","payload":{"roomId":"...","userId":"...","username":"..."}}
+{"type":"message:new","payload":{"roomId":"...","message":{...}}}
+{"type":"room:deleted","payload":{"roomId":"..."}}
+{"type":"error","payload":{"code":"...","message":"...","roomId":"..."}}
 {"type":"pong"}
 ```
 
-**房间模型（第一版）**：服务端内存 `roomId -> 成员表`，广播即遍历。单机轻量；不做 Redis 等外部依赖（ADR-005）。Phase 4 起消息持久化，房间元数据入 PostgreSQL。
+**房间模型**：服务端内存 `roomId -> userId -> {sockets}`（同一用户可多端连接）。消息先持久化再广播；`joinRoom` 幂等（重复 join 也回 `room:joined`，客户端有 2s 订阅看门狗自愈）；`room:delete` 仅房主可调用，级联删除并广播 `room:deleted`。
+
+**WS 加固与保活**：
+- 单连接限流：5s 滑动窗口最多 25 条消息，超出回 `error(code=rate_limited)`。
+- 单帧上限 64KB（`maxPayload`），超限直接断连（close code 1009）。
+- 服务端每 30s 发协议层 ping；70s 无 pong 的死连接被 terminate 并清理房间订阅（防"幽灵成员"）。
 
 ## 5. 数据库 Schema（migration 演进）
 
@@ -98,13 +106,23 @@ gametalk/
 
 ## 7. 断线重连与可靠性
 
-- WS 客户端：指数退避重连（1s → 2s → … ≤15s），30s 心跳 ping。
-- 服务端优雅关闭：SIGINT/SIGTERM 收尾（关 WS、关连接池）。
+**客户端**（ChatSocket + chat store）：
+- 快速退避重连：1s → 1s → 2s → 3s → 5s（封顶 5s），另有 8s 握手超时。
+- 应用层心跳：15s 一次 ping；35s 无 pong 判定半开连接，强制重连。
+- 发送自愈：消息发出 5s 未被确认（有未决乐观消息）判定连接假活，强制重连。
+- 订阅看门狗：连接已开但活跃房间未订阅时，每 2s 补发 `room:join`。
+- 重连成功后强制重载活跃房间历史，补回断开期间已入库的消息。
+
+**服务端**：
+- SIGINT/SIGTERM 优雅关闭（关 WS、关连接池）；协议层心跳巡检（见第 4 节）。
 - 生产健康检查：`GET /health`（含 DB 探活），供容器编排使用。
 
 ## 8. 安全
 
-- 密码 argon2 哈希；JWT HS256，`JWT_SECRET` 生产必配。
-- 输入长度/内容校验（消息 ≤2000 字符等）；WS 消息类型白名单。
-- CORS 来源可配置；生产建议设置明确来源。
+- 密码 argon2 哈希；JWT HS256，`JWT_SECRET` 生产必配（默认值启动即报错）。
+- 输入长度/内容校验（消息 ≤2000 字符、房间 id ≤64、用户名 3-24 位白名单）；WS 消息类型白名单。
+- WS 加固：单连接限流（5s/25 条）、单帧 64KB 上限（见第 4 节）。
+- 头像上传：data URL 类型/大小（≤3MB）/魔数三重校验后入库。
+- 注册并发竞态由用户名唯一索引兜底（冲突返回 409）。
+- CORS 可配置：compose 默认 `*`（桌面客户端不受浏览器同源限制），可经 `CORS_ORIGIN` 收紧。
 - 无硬编码 secret；`.env.example` 提供模板。

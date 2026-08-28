@@ -4,14 +4,15 @@
 
 | 范围 | 工具 | 内容 |
 |---|---|---|
-| 服务端单测/集成 | vitest | REST 路由、WS 网关（双客户端实时收发）、migration 幂等、输入校验 |
-| 客户端逻辑 | vitest（后续 Phase） | zustand store、WS 客户端重连逻辑、协议解析 |
+| 服务端单测/集成 | vitest | REST 路由、WS 网关（双客户端实时收发、房主删房、幂等 join）、WS 加固（限流 / 超大帧断连）、migration 幂等、输入校验 |
+| 客户端逻辑 | vitest | gameMode 管理器（mock Tauri）、真实 server 集成测试（双端聊天 / not_in_room / 断线重连） |
 | 前端构建 | `npm run build`（tsc + vite） | 类型安全 + 产物可构建 |
 | Rust 侧 | `cargo check` | Tauri 壳编译通过 |
 
 运行：
 ```bash
 cd server && npm test
+cd client && npm test              # 自动构建 server 并拉起测试实例（127.0.0.1:18787）
 cd client && npm run build
 cd client/src-tauri && cargo check
 ```
@@ -20,28 +21,29 @@ cd client/src-tauri && cargo check
 
 | # | 场景 | 自动化 | 物理环境 |
 |---|---|---|---|
-| 1 | 注册与登录 | ✅（auth.test.ts，9 例） | — |
+| 1 | 注册与登录 | ✅（auth.test.ts，11 例） | — |
 | 2 | 创建房间 + 第二客户端加入 | ✅（rooms.test.ts + 集成测试） | — |
-| 3 | 双方实时聊天 + 声音 | ✅（WS 集成测试） | 🔊 提示音需真机 |
-| 4 | 游戏模式启动 + 全局快捷键 | ✅（gameMode 单测，mock Tauri） | ⚠️ 需真实显示器/键盘 |
-| 5 | Overlay 绝对透明 + 位置/缩放 | ✅（gameMode 单测：setPosition/setSize/config） | ⚠️ 需真实显示器（覆盖游戏验证） |
+| 3 | 双方实时聊天 + 声音 | ✅（WS 集成测试） | ✅ 提示音真机验收通过 |
+| 4 | 游戏模式启动 + 全局快捷键 | ✅（gameMode 单测，mock Tauri） | ✅ 真机验收通过（2026-08-28） |
+| 5 | Overlay 绝对透明 + 位置/缩放 | ✅（gameMode 单测：setPosition/setSize/config） | ✅ 真机验收通过（2026-08-28） |
 | 6 | 网络断开与恢复 | ✅（ChatSocket 重连测试，真实 server） | — |
-| 7 | 客户端/服务端重启恢复 | ✅（重连 + hello:ok 恢复订阅逻辑） | — |
+| 7 | 客户端/服务端重启恢复 | ✅（重连 + hello:ok 恢复订阅 + 历史重载） | — |
 | 8 | Windows 客户端构建 | ✅（本机 tauri build，NSIS） | — |
-| 9 | Linux 服务端 Docker 构建 | CI 配置就绪 | ⚠️ 本机无 Docker，CI 中真实执行 |
+| 9 | Linux 服务端 Docker 构建 | ✅ CI 真实执行 | — |
+| 10 | WS 滥用防护（限流/超大帧） | ✅（app.test.ts ws hardening，2 例） | — |
 
-当前实测：server 23 测试 + client 10 测试（3 集成 + 7 单测）全绿；生产模式冒烟（health/register/login）通过。
+当前实测：server 29 测试 + client 11 测试（3 集成 + 8 单测）全绿；生产模式冒烟（health/register/login）通过。
 
 ## 3. 物理环境验收（需人类执行）
 
-> 开发机为 Windows 桌面（有真实显示器），以下项由开发环境自行人工验收；
-> 若在无头环境则标记「需人类进行物理环境验收」并在 PROGRESS.md 记录。
+> 开发机为 Windows 桌面（有真实显示器）。以下项已于 2026-08-28 在真实游戏环境中人工验收通过。
 
-- [ ] 全局快捷键在游戏中呼出输入框，不干扰游戏按键
-- [ ] Overlay 背景在游戏中绝对透明（无灰底/黑底）
-- [ ] 消息 Overlay 自定义位置/缩放实时生效
-- [ ] 系统提示音清晰、音量适中
-- [ ] 发送后游戏焦点恢复（可立即继续操作游戏）
+- [x] 全局快捷键在游戏中呼出输入框，不干扰游戏按键
+- [x] 输入框显示期间按 ESC 直接关闭，不影响游戏内 ESC
+- [x] Overlay 背景在游戏中绝对透明（无灰底/黑底）
+- [x] 消息 Overlay 自定义位置/缩放实时生效
+- [x] 系统提示音清晰、音量适中
+- [x] 发送后游戏焦点恢复（可立即继续操作游戏）
 
 ## 4. 面向用户的本机验收步骤（无服务器部署时）
 
@@ -51,7 +53,7 @@ cd client/src-tauri && cargo check
 - 双击仓库根目录 `dev/start-local.cmd`，保持窗口开启（数据持久化在 server/data/）。
 
 ### 第二步：安装并打开客户端
-- 安装最新 `GameTalk_0.1.0_x64-setup.exe`；设置中服务器地址保持默认 `http://127.0.0.1:8787`。
+- 安装最新版安装包（`GameTalk_<版本>_x64-setup.exe`，见 GitHub Releases）；设置中服务器地址保持默认 `http://127.0.0.1:8787`。
 
 ### 第三步：按清单验收
 1. **注册登录**：注册账号 A → 进入聊天界面，右上角显示「已连接」
@@ -64,16 +66,16 @@ cd client/src-tauri && cargo check
 6. **游戏模式**：设置 → 启用游戏模式 → 游戏中按 `Ctrl+Shift+Space` 呼出输入框 → 输入 → Enter 发送 → 游戏画面出现消息 Overlay → 点击游戏（失焦）后按 ESC → 输入框关闭
 7. **Overlay 设置**：调整位置预设/缩放比例/显示时长，观察实时生效；确认背景绝对透明
 8. **快捷键录制**：设置 → 点击快捷键输入框 → 按下新组合键（如 Alt+1）→ 游戏中用新快捷键呼出
-9. **头像**：设置 → 点击头像/「更换头像」→ 选择图片 → 头像更新（≤512KB，PNG/JPEG/WebP/GIF）
+9. **头像**：设置 → 点击头像/「更换头像」→ 选择图片 → 头像更新（≤3MB，PNG/JPEG/WebP/GIF）
 10. **关闭行为**：点主窗口 X → 弹「取消 / 关闭到托盘 / 退出」→ 选关闭到托盘 → 右下角托盘图标 → 右键菜单恢复/退出
 11. **断线恢复**：关闭 dev/start-local.cmd 窗口（服务端停止）→ 客户端显示「无法连接服务器」→ 重新双击 dev/start-local.cmd → 客户端「重试」或自动重连 → 恢复聊天
 
-## 4. 性能与体积目标（第一版）
+## 5. 性能与体积目标（第一版）
 
-- 客户端安装包 ≤ 15MB（Tauri 产物）
+- 客户端安装包 ≤ 15MB（Tauri 产物，实测 exe ~9MB / setup ~2MB）
 - 服务端空闲内存占用低（Node 22，单进程）
 - 消息广播延迟本地 < 50ms（CI 不测，人工体验）
 
-## 5. 验收结论记录
+## 6. 验收结论记录
 
 每轮 Phase 验收结果写入 PROGRESS.md 的 Phase 状态表与变更日志。

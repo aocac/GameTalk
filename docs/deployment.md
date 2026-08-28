@@ -47,6 +47,7 @@ nano .env && bash deploy.sh
 | `JWT_SECRET` | JWT 签名密钥（必改，≥32 字符） |
 | `POSTGRES_PASSWORD` | 数据库密码（必改） |
 | `GAMETALK_HOST` | 域名，Caddy 据此申请证书 |
+| `CORS_ORIGIN` | 可选，默认 `*`（桌面客户端不受浏览器同源限制）；需收紧时设置，多来源逗号分隔 |
 
 ### 数据迁移
 
@@ -63,10 +64,14 @@ nano .env && bash deploy.sh
 # 服务端镜像
 docker build -f docker/server.Dockerfile -t gametalk-server:latest .
 
-# 客户端安装包（Windows）
-cd client && npm run tauri build
-# 产物：client/src-tauri/target/release/bundle/nsis/GameTalk_0.1.0_x64-setup.exe
+# 客户端安装包（Windows，本机构建）
+cd client && npm run build:full
+# 产物：client/src-tauri/target/release/bundle/nsis/GameTalk_<版本>_x64-setup.exe
+# 并自动复制到仓库根目录：GameTalk-<版本>-x64-Setup.exe
 ```
+
+**三端 Release（推荐）**：推送 `v*` 标签（如 `v0.1.1`）触发 `.github/workflows/build-desktop.yml`，
+由 GitHub Actions 构建 Windows NSIS / Linux deb+AppImage / macOS dmg，并自动挂到对应 GitHub Release。
 
 ## 4. 客户端连接服务器
 
@@ -75,12 +80,14 @@ cd client && npm run tauri build
 
 ## 5. GitHub Actions
 
-- `.github/workflows/ci.yml`：server 测试构建、client 构建、Tauri cargo check、Docker 镜像构建（push/PR 触发）。
+- `.github/workflows/ci.yml`（push/PR 触发）：server 测试构建、client 构建、Tauri cargo check、Docker 镜像构建。
+- `.github/workflows/build-desktop.yml`（`v*` 标签触发）：三端桌面构建并挂载 GitHub Release。
 
-## 6. 权限需求（真实部署仍需用户提供）
+## 6. 客户端下载
 
-1. Linux VPS 的 SSH 访问（或由用户执行 `deploy.sh`）
-2. 域名与 DNS 控制权（Caddy 自动申请 Let's Encrypt 证书）
-3. 若推送镜像到仓库：容器镜像仓库账号（也可直接在服务器上构建，无需仓库）
+- 稳定版：[GitHub Releases](https://github.com/aocac/GameTalk/releases/latest)（Windows / Linux / macOS 安装包）。
 
-当前开发机无 Docker（2026-08-26 检查），镜像构建已在 CI 中配置，可在 GitHub Actions 中真实执行。
+## 7. 部署状态
+
+GameTalk 已完成真实服务器部署并稳定运行（2026-08-28）。社区自建请按第 2 节流程操作；
+注意服务器部署信息（域名、IP、密钥）属私密数据，请勿写入本公开仓库。

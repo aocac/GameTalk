@@ -4,6 +4,8 @@
 
 **核心体验**：按全局快捷键 → 呼出输入框 → 输入文字 → Enter 发送 → 自动关闭输入框 → 尽可能恢复游戏 → 房间成员实时收到消息 → 游戏内显示轻量 Overlay → 播放提示音。
 
+**下载**：[GitHub Releases](https://github.com/aocac/GameTalk/releases/latest)（Windows / Linux / macOS 安装包）
+
 ## 产品形态
 
 - **客户端**：Windows 桌面应用（Tauri 2），安装即用，玩家**无需**安装任何服务端或运行时。
@@ -12,10 +14,12 @@
 
 ## 特性
 
-- 账号：注册、登录、头像、昵称、用户 ID
+- 账号：注册、登录、头像（≤3MB，服务端魔数校验）、昵称、用户 ID
 - 房间：创建房间、邀请码、加入房间、成员列表、删除房间（房主）
 - 群聊：实时消息、消息历史、乐观发送（消息即时上屏）、断线重连后自动补齐消息
 - 游戏模式：全局快捷键、输入 Overlay、Enter 发送 / Esc 取消、消息 Overlay（**绝对透明背景** + 自定义位置/缩放）、提示音、自动恢复游戏焦点
+- 可靠连接：快速退避重连、双向心跳 + 半开连接自愈、断线后历史补齐
+- 服务端加固：单连接限流、超大帧防护、协议层心跳清理死连接
 - 离线试用：不连接服务器即可体验界面与设置
 - 基本设置：服务器地址、快捷键、Overlay 位置/缩放、声音开关、代理（默认不干预）
 
@@ -23,9 +27,9 @@
 
 | 层 | 技术 |
 |---|---|
-| 客户端 | Tauri 2 + React + TypeScript（Windows） |
+| 客户端 | Tauri 2 + React + TypeScript（Windows，CI 另产 Linux/macOS 包） |
 | 服务端 | Node.js + TypeScript + Fastify + WebSocket（Linux） |
-| 数据库 | PostgreSQL（生产）/ PGlite（开发测试） |
+| 数据库 | PostgreSQL（生产）/ PGlite（开发测试，同源 migration） |
 | 部署 | Docker + docker-compose + Caddy + HTTPS/WSS |
 
 ## 仓库结构
@@ -36,7 +40,7 @@ gametalk/
 ├── server/          # Fastify API + WebSocket 服务端（Node + TS）
 ├── docs/            # 架构 / 部署 / 测试文档
 ├── docker/          # 生产部署（Dockerfile / compose / Caddyfile / deploy.sh）
-└── .github/workflows/ # CI
+└── .github/workflows/ # CI + 三端 Release
 ```
 
 ## 部署一台服务器（房主/社区）
@@ -74,4 +78,4 @@ cd client && npm install && npm run tauri dev
 
 ## License
 
-MIT（计划中）
+[MIT](LICENSE)
