@@ -1436,3 +1436,19 @@ body {
 .member-item {
   cursor: pointer;
 }
+
+/* 成员卡片资料获取失败态 */
+.card-failed {
+  color: var(--danger);
+}
+
+.card-retry {
+  margin-left: 8px;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+}

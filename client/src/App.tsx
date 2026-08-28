@@ -222,24 +222,29 @@ function MemberCardModal({
 }) {
   const { token } = useAuth();
   const [profile, setProfile] = useState<api.MemberProfile | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const [confirmKick, setConfirmKick] = useState(false);
   const kickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setFailed(false);
     if (token) {
       api
         .getUserProfile(token, member.id)
         .then((r) => {
           if (!cancelled) setProfile(r.user);
         })
-        .catch(() => undefined);
+        .catch(() => {
+          if (!cancelled) setFailed(true);
+        });
     }
     return () => {
       cancelled = true;
     };
-  }, [token, member.id]);
+  }, [token, member.id, reloadKey]);
 
   const handleKick = () => {
     if (!confirmKick) {
@@ -261,7 +266,18 @@ function MemberCardModal({
             {isOwner && <span className="owner-chip">房主</span>}
           </div>
         </div>
-        <div className="card-bio">{profile ? profile.bio || '这个人很神秘，什么都没有写' : '加载中…'}</div>
+        <div className="card-bio">
+          {failed ? (
+            <span className="card-failed">
+              资料获取失败（服务器版本过旧或网络异常）
+              <button className="card-retry" onClick={() => setReloadKey((k) => k + 1)}>
+                重试
+              </button>
+            </span>
+          ) : (
+            profile?.bio || '这个人很神秘，什么都没有写'
+          )}
+        </div>
         <button
           className="id-row"
           title="点击复制 ID"
