@@ -21,6 +21,8 @@ WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
+# /health 读取版本号用（createRequire('../package.json')）
+COPY --from=builder /app/package.json ./package.json
 
 # 非 root 运行
 RUN groupadd -r gametalk && useradd -r -g gametalk gametalk \

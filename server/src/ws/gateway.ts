@@ -52,6 +52,7 @@ type ClientMessage =
   | { type: 'room:join'; payload: { roomId: string } }
   | { type: 'room:leave'; payload: { roomId: string } }
   | { type: 'room:delete'; payload: { roomId: string } }
+  | { type: 'member:kick'; payload: { roomId: string; userId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string } }
   | { type: 'ping' };
 
@@ -63,6 +64,9 @@ interface UserRow extends QueryResultRow {
 
 /** roomId -> userId -> { username, avatarUrl, sockets }（同一用户可能多端连接） */
 const rooms = new Map<string, Map<string, { username: string; avatarUrl: string | null; sockets: Set<WebSocket> }>>();
+
+/** 全部存活连接（心跳巡检 / 踢人清理用；close 事件负责移除） */
+const connections = new Set<Conn>();
 
 function sanitizeRoomId(id: string): string {
   return id.trim().slice(0, 64);
@@ -110,7 +114,6 @@ function joinRoom(conn: Conn, roomId: string, avatarUrl?: string | null): void {
     members.set(conn.userId, entry);
   }
   entry.sockets.add(conn.socket);
-
   send(conn.socket, {
     type: 'room:joined',
     payload: {
@@ -151,7 +154,6 @@ function leaveRoom(conn: Conn, roomId: string): void {
 
 export function registerWsRoutes(app: FastifyInstance, deps: { config: Config; db: Db; jwt: JwtService }): void {
   const { db, jwt } = deps;
-  const connections = new Set<Conn>();
 
   // 服务端心跳巡检：ping 所有存活连接，无 pong 的死连接 terminate（close 事件负责清理订阅）
   const heartbeat = setInterval(() => {
@@ -185,7 +187,11 @@ export function registerWsRoutes(app: FastifyInstance, deps: { config: Config; d
       conn.lastPongAt = Date.now();
     });
     socket.on('message', (raw: RawData) => {
-      void handleMessage(conn, raw, db, jwt);
+      // 统一兜底：任何 DB/逻辑异常不能变成 unhandled rejection 崩掉整个进程
+      handleMessage(conn, raw, db, jwt).catch((e) => {
+        console.error('ws message handling failed:', e);
+        send(conn.socket, { type: 'error', payload: { code: 'internal_error', message: 'internal error' } });
+      });
     });
     socket.on('close', () => {
       connections.delete(conn);
@@ -293,6 +299,60 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         }
         rooms.delete(roomId);
       }
+      break;
+    }
+    case 'member:kick': {
+      // 房主管理权限：把成员移出房间（DB 移除 + 实时通知 + 订阅清理）
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const roomId = sanitizeRoomId(msg.payload.roomId);
+      const targetId = String(msg.payload.userId ?? '');
+      const found = await db.query<{ owner_id: string }>('SELECT owner_id FROM rooms WHERE id = $1', [roomId]);
+      if (found.rows.length === 0) {
+        send(conn.socket, { type: 'error', payload: { code: 'room_not_found', message: 'room not found' } });
+        return;
+      }
+      if (found.rows[0].owner_id !== conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'only_owner', message: 'only the room owner can kick members' } });
+        return;
+      }
+      if (!targetId || targetId === conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'cannot kick yourself' } });
+        return;
+      }
+      const isMember = await db.query('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [
+        roomId,
+        targetId,
+      ]);
+      if (isMember.rows.length === 0) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'target is not a member', roomId } });
+        return;
+      }
+      await db.query('DELETE FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, targetId]);
+
+      // 内存清理：被踢者所有连接的房间订阅全部移除（防其继续 message:send 走旧订阅）
+      for (const c of connections) {
+        if (c.userId === targetId) c.rooms.delete(roomId);
+      }
+      const members = rooms.get(roomId);
+      const entry = members?.get(targetId);
+      const kickedName = entry?.username ?? '';
+      const kickedSockets = entry ? [...entry.sockets] : [];
+      if (members) {
+        members.delete(targetId);
+        if (members.size === 0) rooms.delete(roomId);
+      }
+      // 通知房间其余成员，再单独通知被踢者全部连接（显式收件人，不做二次查表）
+      const notice = { type: 'member:kicked', payload: { roomId, userId: targetId, username: kickedName } };
+      if (members) {
+        for (const [uid, e] of members) {
+          if (uid === targetId) continue;
+          for (const s of e.sockets) send(s, notice);
+        }
+      }
+      for (const s of kickedSockets) send(s, notice);
       break;
     }
     case 'message:send': {

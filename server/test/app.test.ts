@@ -67,7 +67,8 @@ function openClient(): Promise<WebSocket> {
 
 function nextMessage(ws: WebSocket, predicate?: (m: any) => boolean): Promise<any> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timeout waiting for ws message')), 5000);
+    // 10s：Windows 回环偶发投递延迟（曾观察到 >5s），普通消息毫秒级到达
+    const timer = setTimeout(() => reject(new Error('timeout waiting for ws message')), 10000);
     const onEv = (ev: MessageEvent) => {
       const parsed = JSON.parse(String(ev.data));
       if (!predicate || predicate(parsed)) {
@@ -264,6 +265,70 @@ describe('realtime chat loop (two authenticated clients, one room)', () => {
     const bLeft = await bLeftPromise;
     expect(bLeft.payload.roomId).toBe(roomId);
     b.close();
+  });
+  it('owner can kick a member: DB removed, all parties notified, kicked cannot send/rejoin', async () => {
+    // A 建房，B、C 经邀请码加入
+    const { token: tokenA, userId: uidA } = await registerUser('kick_owner');
+    const { token: tokenB, userId: uidB } = await registerUser('kick_member');
+    const { token: tokenC } = await registerUser('kick_witness');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/rooms',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: { name: 'Kick Room' },
+    });
+    const { room } = created.json();
+    for (const t of [tokenB, tokenC]) {
+      await app.inject({
+        method: 'POST',
+        url: '/api/rooms/join',
+        headers: { authorization: `Bearer ${t}` },
+        payload: { inviteCode: room.inviteCode },
+      });
+    }
+    const a = await openClient();
+    const b = await openClient();
+    const c = await openClient();
+    for (const [ws, t] of [[a, tokenA], [b, tokenB], [c, tokenC]] as const) {
+      ws.send(JSON.stringify({ type: 'hello', payload: { token: t } }));
+      await nextMessage(ws, (m) => m.type === 'hello:ok');
+      ws.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+      await nextMessage(ws, (m) => m.type === 'room:joined' && m.payload.roomId === room.id);
+    }
+
+    // 非房主踢人 → only_owner
+    c.send(JSON.stringify({ type: 'member:kick', payload: { roomId: room.id, userId: uidB } }));
+    expect((await nextMessage(c, (m) => m.type === 'error')).payload.code).toBe('only_owner');
+
+    // 房主踢 B：B 与旁观者 C 都收到 member:kicked
+    const bKicked = nextMessage(b, (m) => m.type === 'member:kicked');
+    const cSees = nextMessage(c, (m) => m.type === 'member:kicked');
+    a.send(JSON.stringify({ type: 'member:kick', payload: { roomId: room.id, userId: uidB } }));
+    expect((await bKicked).payload.userId).toBe(uidB);
+    expect((await cSees).payload.userId).toBe(uidB);
+
+    // DB 成员已移除
+    const remain = await db.query('SELECT COUNT(*)::int AS c FROM room_members WHERE room_id = $1 AND user_id = $2', [
+      room.id,
+      uidB,
+    ]);
+    expect(remain.rows[0].c).toBe(0);
+
+    // 被踢者发消息 → not_in_room（内存订阅已清理）；重新 join 也被 DB 校验拒绝
+    const bErr = nextMessage(b, (m) => m.type === 'error');
+    b.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: 'still here?' } }));
+    expect((await bErr).payload.code).toBe('not_in_room');
+    const bJoinErr = nextMessage(b, (m) => m.type === 'error');
+    b.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    expect((await bJoinErr).payload.code).toBe('not_in_room');
+
+    // 房主不能踢自己
+    a.send(JSON.stringify({ type: 'member:kick', payload: { roomId: room.id, userId: uidA } }));
+    expect((await nextMessage(a, (m) => m.type === 'error')).payload.code).toBe('invalid_input');
+
+    a.close();
+    b.close();
+    c.close();
   });
 });
 
