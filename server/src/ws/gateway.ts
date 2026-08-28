@@ -14,12 +14,24 @@ import type { JwtService } from '../lib/jwt.js';
 
 const MAX_TEXT_LENGTH = 2000;
 
+/** 单连接限流：WS_RATE_WINDOW_MS 滑动窗口内最多 WS_RATE_MAX 条消息（含 hello/ping），超出回 rate_limited */
+export const WS_RATE_WINDOW_MS = 5000;
+export const WS_RATE_MAX = 25;
+/** 服务端心跳：定期发协议层 ping（所有标准 WS 客户端自动 pong）；超时未 pong 视为死连接
+ *  直接 terminate（close 事件负责清理房间订阅），避免半开连接在成员表里变成"幽灵成员" */
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_TIMEOUT_MS = 70_000;
+
 interface Conn {
   socket: WebSocket;
   userId: string | null;
   username: string;
   avatarUrl: string | null;
   rooms: Set<string>;
+  /** 最近一次收到协议层 pong 的时间（服务端心跳存活检测） */
+  lastPongAt: number;
+  /** 限流滑动窗口内的消息时间戳 */
+  sentAt: number[];
 }
 
 interface ChatMessage {
@@ -144,6 +156,23 @@ function leaveRoom(conn: Conn, roomId: string): void {
 
 export function registerWsRoutes(app: FastifyInstance, deps: { config: Config; db: Db; jwt: JwtService }): void {
   const { db, jwt } = deps;
+  const connections = new Set<Conn>();
+
+  // 服务端心跳巡检：ping 所有存活连接，无 pong 的死连接 terminate（close 事件负责清理订阅）
+  const heartbeat = setInterval(() => {
+    const now = Date.now();
+    for (const conn of connections) {
+      if (conn.socket.readyState !== conn.socket.OPEN) continue;
+      if (now - conn.lastPongAt > HEARTBEAT_TIMEOUT_MS) {
+        conn.socket.terminate();
+      } else {
+        conn.socket.ping();
+      }
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  app.addHook('onClose', async () => {
+    clearInterval(heartbeat);
+  });
 
   app.get('/ws', { websocket: true }, (socket) => {
     const conn: Conn = {
@@ -152,20 +181,36 @@ export function registerWsRoutes(app: FastifyInstance, deps: { config: Config; d
       username: 'Player',
       avatarUrl: null,
       rooms: new Set(),
+      lastPongAt: Date.now(),
+      sentAt: [],
     };
-
+    connections.add(conn);
+    socket.on('pong', () => {
+      conn.lastPongAt = Date.now();
+    });
     socket.on('message', (raw: RawData) => {
       void handleMessage(conn, raw, db, jwt);
-    });    socket.on('close', () => {
+    });
+    socket.on('close', () => {
+      connections.delete(conn);
       for (const roomId of [...conn.rooms]) leaveRoom(conn, roomId);
     });
     socket.on('error', () => {
-      for (const roomId of [...conn.rooms]) leaveRoom(conn, roomId);
+      // error 后必然触发 close，房间清理统一交给 close
     });
   });
 }
 
 async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService): Promise<void> {
+  // 单连接限流：滑动窗口计数，超出直接拒绝（防止刷屏拖垮广播与数据库）
+  const now = Date.now();
+  conn.sentAt = conn.sentAt.filter((t) => now - t < WS_RATE_WINDOW_MS);
+  if (conn.sentAt.length >= WS_RATE_MAX) {
+    send(conn.socket, { type: 'error', payload: { code: 'rate_limited', message: 'too many messages, slow down' } });
+    return;
+  }
+  conn.sentAt.push(now);
+
   let msg: ClientMessage;
   try {
     msg = JSON.parse(raw.toString());

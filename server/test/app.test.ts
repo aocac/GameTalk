@@ -5,6 +5,7 @@ import { createDb, type Db } from '../src/db/db.js';
 import { runMigrations } from '../src/db/migrate.js';
 import { loadConfig } from '../src/config.js';
 import { createJwtService } from '../src/lib/jwt.js';
+import { WS_RATE_MAX } from '../src/ws/gateway.js';
 
 let app: FastifyInstance;
 let db: Db;
@@ -263,5 +264,40 @@ describe('realtime chat loop (two authenticated clients, one room)', () => {
     const bLeft = await bLeftPromise;
     expect(bLeft.payload.roomId).toBe(roomId);
     b.close();
+  });
+});
+
+describe('ws hardening', () => {
+  it('rate limits message floods with rate_limited error', async () => {
+    const { token } = await registerUser('flood_rl');
+    const c = await openClient();
+    c.send(JSON.stringify({ type: 'hello', payload: { token } }));
+    await nextMessage(c, (m) => m.type === 'hello:ok');
+
+    // 逐条 ping→pong 顺序往返打满窗口配额（hello 已占 1 条配额，故循环 MAX-1 次）
+    for (let i = 0; i < WS_RATE_MAX - 1; i++) {
+      const pong = nextMessage(c, (m) => m.type === 'pong');
+      c.send(JSON.stringify({ type: 'ping' }));
+      await pong;
+    }
+
+    // 配额用尽后的下一条消息被拒绝
+    const limited = nextMessage(c, (m) => m.type === 'error');
+    c.send(JSON.stringify({ type: 'ping' }));
+    const err = await limited;
+    expect(err.payload.code).toBe('rate_limited');
+    c.close();
+  });
+
+  it('closes the connection with 1009 on oversized ws frames', async () => {
+    const c = await openClient();
+    const closed = new Promise<CloseEvent>((resolve) => {
+      c.onclose = (ev) => resolve(ev);
+    });
+    c.send(
+      JSON.stringify({ type: 'message:send', payload: { roomId: 'x', text: 'a'.repeat(100 * 1024) } }),
+    );
+    const ev = await closed;
+    expect(ev.code).toBe(1009);
   });
 });

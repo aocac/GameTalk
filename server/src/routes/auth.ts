@@ -65,10 +65,20 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     }
 
     const passwordHash = await hashPassword(password);
-    const inserted = await db.query<UserRow>(
-      'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING *',
-      [username, passwordHash],
-    );
+    let inserted;
+    try {
+      inserted = await db.query<UserRow>(
+        'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING *',
+        [username, passwordHash],
+      );
+    } catch (err) {
+      // check-then-insert 存在并发竞态，用户名唯一索引兜底（23505 = unique_violation）
+      if ((err as { code?: string }).code === '23505') {
+        await reply.code(409).send({ error: { code: 'username_taken', message: '用户名已被占用' } });
+        return;
+      }
+      throw err;
+    }
     const user = inserted.rows[0];
     const token = await jwt.sign({ sub: user.id, username: user.username });
     await reply.code(201).send({ token, user: toPublicUser(user) });

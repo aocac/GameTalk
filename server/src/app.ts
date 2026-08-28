@@ -23,7 +23,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   await app.register(cors, { origin: config.corsOrigin === '*' ? true : config.corsOrigin.split(',') });
-  await app.register(websocket);
+  // maxPayload：拒绝超大 WS 帧（合法消息 ≤2000 字符 + JWT，64KB 上限足够宽裕），防滥用
+  await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
 
   registerHealthRoutes(app, { db });
   registerAuthRoutes(app, { config, db, jwt });
