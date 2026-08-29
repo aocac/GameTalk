@@ -568,4 +568,61 @@ describe('realtime + persistence', () => {
     expect(replyHis.reply.text).toBe('消息已撤回');
     ws.close();
   });
+
+  it('edit: sender-only, broadcast carries new text + editedAt, history reflects edit, recalled not editable', async () => {
+    const owner = await registerUser('edit_owner');
+    const member = await registerUser('edit_member');
+    const { room } = (
+      await app.inject({ method: 'POST', url: '/api/rooms', headers: auth(owner.token), payload: { name: 'EditRoom' } })
+    ).json();
+    await app.inject({ method: 'POST', url: '/api/rooms/join', headers: auth(member.token), payload: { inviteCode: room.inviteCode } });
+
+    const wsOwner = await connectWs(owner.token);
+    wsOwner.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    await nextMessage(wsOwner, (m) => m.type === 'room:joined');
+    const wsMember = await connectWs(member.token);
+    wsMember.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    await nextMessage(wsMember, (m) => m.type === 'room:joined');
+
+    const got = nextMessage(wsOwner, (m) => m.type === 'message:new');
+    wsOwner.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '错别字 Messgae' } }));
+    const original = (await got).payload.message;
+
+    // 非发送者编辑 → only_sender
+    const deny = nextMessage(wsMember, (m) => m.type === 'error');
+    wsMember.send(JSON.stringify({ type: 'message:edit', payload: { roomId: room.id, messageId: original.id, text: '改不动' } }));
+    expect((await deny).payload.code).toBe('only_sender');
+
+    // 空文本 → empty_message
+    const empty = nextMessage(wsOwner, (m) => m.type === 'error');
+    wsOwner.send(JSON.stringify({ type: 'message:edit', payload: { roomId: room.id, messageId: original.id, text: '   ' } }));
+    expect((await empty).payload.code).toBe('empty_message');
+
+    // 发送者编辑 → 双方收到 message:edited（新文本 + editedAt）
+    const editAtOwner = nextMessage(wsOwner, (m) => m.type === 'message:edited');
+    const editAtMember = nextMessage(wsMember, (m) => m.type === 'message:edited');
+    wsOwner.send(JSON.stringify({ type: 'message:edit', payload: { roomId: room.id, messageId: original.id, text: '改好了 Message' } }));
+    const evOwner = (await editAtOwner).payload;
+    const evMember = (await editAtMember).payload;
+    expect(evOwner).toMatchObject({ roomId: room.id, messageId: original.id, text: '改好了 Message' });
+    expect(evOwner.editedAt).toBeTruthy();
+    expect(evMember.editedAt).toBe(evOwner.editedAt);
+
+    // 历史带 editedAt 与新文本
+    const hist = await app.inject({ method: 'GET', url: `/api/rooms/${room.id}/messages`, headers: auth(member.token) });
+    const edited = hist.json().messages.find((m: any) => m.id === original.id);
+    expect(edited.text).toBe('改好了 Message');
+    expect(edited.editedAt).toBe(evOwner.editedAt);
+
+    // 撤回后编辑 → message_not_found（recalled=false 不再命中）
+    const recallEv = nextMessage(wsOwner, (m) => m.type === 'message:recalled');
+    wsOwner.send(JSON.stringify({ type: 'message:recall', payload: { roomId: room.id, messageId: original.id } }));
+    await recallEv;
+    const afterRecall = nextMessage(wsOwner, (m) => m.type === 'error');
+    wsOwner.send(JSON.stringify({ type: 'message:edit', payload: { roomId: room.id, messageId: original.id, text: '再改' } }));
+    expect((await afterRecall).payload.code).toBe('message_not_found');
+
+    wsOwner.close();
+    wsMember.close();
+  });
 });

@@ -54,6 +54,8 @@ interface ChatMessage {
   reply?: ReplyRef;
   /** 已撤回：内容已清空，客户端渲染占位文案 */
   recalled?: boolean;
+  /** 编辑时间（ISO；仅编辑过的消息携带） */
+  editedAt?: string;
 }
 
 interface MentionRef {
@@ -74,6 +76,8 @@ interface DmMessage {
   mediaUrl: string | null;
   reply?: ReplyRef;
   recalled?: boolean;
+  /** 编辑时间（ISO；仅编辑过的消息携带） */
+  editedAt?: string;
 }
 
 /** 引用回复快照：随消息入库/广播，渲染不依赖原消息仍在客户端历史窗口内 */
@@ -104,8 +108,10 @@ type ClientMessage =
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown; replyTo?: unknown } }
   | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
+  | { type: 'message:edit'; payload: { roomId: string; messageId: string; text: string } }
   | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: unknown; replyTo?: unknown } }
   | { type: 'dm:recall'; payload: { messageId: string } }
+  | { type: 'dm:edit'; payload: { messageId: string; text: string } }
   | { type: 'ping' };
 
 interface UserRow extends QueryResultRow {
@@ -785,6 +791,48 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       sendToUser(to, { type: 'dm:new', payload: { message } });
       break;
     }
+    case 'message:edit': {
+      // 编辑：仅发送者本人、未撤回的消息；只更新文本（kind/media 不变），广播新文本与编辑时间
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const roomId = sanitizeRoomId(msg.payload.roomId);
+      const messageId = sanitizeRoomId(msg.payload.messageId);
+      const text = safeText(msg.payload.text);
+      if (!text) {
+        send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'edited text is empty' } });
+        return;
+      }
+      if (!conn.rooms.has(roomId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
+        return;
+      }
+      const found = await db.query<{ user_id: string }>(
+        'SELECT user_id FROM messages WHERE id = $1 AND room_id = $2 AND recalled = false',
+        [messageId, roomId],
+      );
+      const target = found.rows[0];
+      if (!target) {
+        send(conn.socket, { type: 'error', payload: { code: 'message_not_found', message: 'message not found' } });
+        return;
+      }
+      if (target.user_id !== conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'only_sender', message: '只有发送者可以编辑消息' } });
+        return;
+      }
+      const updated = await db.query<{ edited_at: string }>(
+        'UPDATE messages SET text = $2, edited_at = now() WHERE id = $1 AND recalled = false RETURNING edited_at',
+        [messageId, text],
+      );
+      if (updated.rows.length > 0) {
+        broadcastToRoom(roomId, {
+          type: 'message:edited',
+          payload: { roomId, messageId, text, editedAt: new Date(updated.rows[0].edited_at).toISOString() },
+        });
+      }
+      break;
+    }
     case 'dm:recall': {
       // 私聊撤回：仅发送者本人可撤（无房主概念）；撤回后内容清空并通知双方
       if (!conn.userId) {
@@ -812,6 +860,45 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       if (updated.rows.length > 0) {
         sendToUser(target.sender_id, { type: 'dm:recalled', payload: { messageId, from: target.sender_id, to: target.recipient_id } });
         sendToUser(target.recipient_id, { type: 'dm:recalled', payload: { messageId, from: target.sender_id, to: target.recipient_id } });
+      }
+      break;
+    }
+    case 'dm:edit': {
+      // 私聊编辑：仅发送者本人、未撤回；更新后通知双方
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const messageId = sanitizeRoomId(msg.payload.messageId);
+      const text = safeText(msg.payload.text);
+      if (!text) {
+        send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'edited text is empty' } });
+        return;
+      }
+      const found = await db.query<{ sender_id: string; recipient_id: string }>(
+        'SELECT sender_id, recipient_id FROM dm_messages WHERE id = $1 AND recalled = false',
+        [messageId],
+      );
+      const target = found.rows[0];
+      if (!target) {
+        send(conn.socket, { type: 'error', payload: { code: 'message_not_found', message: 'message not found' } });
+        return;
+      }
+      if (target.sender_id !== conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'only_sender', message: '只有发送者可以编辑私聊消息' } });
+        return;
+      }
+      const updated = await db.query<{ edited_at: string }>(
+        'UPDATE dm_messages SET text = $2, edited_at = now() WHERE id = $1 AND recalled = false RETURNING edited_at',
+        [messageId, text],
+      );
+      if (updated.rows.length > 0) {
+        const notice = {
+          type: 'dm:edited',
+          payload: { messageId, from: target.sender_id, to: target.recipient_id, text, editedAt: new Date(updated.rows[0].edited_at).toISOString() },
+        };
+        sendToUser(target.sender_id, notice);
+        sendToUser(target.recipient_id, notice);
       }
       break;
     }

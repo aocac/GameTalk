@@ -102,6 +102,8 @@ interface ChatState {
   loadOlderDmMessages: (peerId: string) => Promise<void>;
   sendDm: (text: string, opts?: SendOptions) => void;
   recallDm: (messageId: string) => void;
+  editMessage: (roomId: string, messageId: string, text: string) => void;
+  editDm: (messageId: string, text: string) => void;
 }
 
 let socket: ChatSocket | null = null;
@@ -539,6 +541,20 @@ export const useChat = create<ChatState>()((set, get) => ({
             return { ...messages, ...previewPatch };
           });
           break;
+        case 'message:edited':
+          set((s) => {
+            const list = s.messagesByRoom[msg.payload.roomId];
+            if (!list) return s;
+            return {
+              messagesByRoom: {
+                ...s.messagesByRoom,
+                [msg.payload.roomId]: list.map((m) =>
+                  m.id === msg.payload.messageId ? { ...m, text: msg.payload.text, editedAt: msg.payload.editedAt } : m,
+                ),
+              },
+            };
+          });
+          break;
         case 'dm:new': {
           // 私聊新消息：自己的先校正乐观占位，双方消息统一按会话（对方 id）归档
           const dm = msg.payload.message;
@@ -601,6 +617,22 @@ export const useChat = create<ChatState>()((set, get) => ({
                 ? { dmPreviews: { ...s.dmPreviews, [peerId]: { ...preview, text: '撤回了一条消息' } } }
                 : {};
             return { ...messages, ...previewPatch };
+          });
+          break;
+        }
+        case 'dm:edited': {
+          const peerId = state.me && msg.payload.from === state.me.id ? msg.payload.to : msg.payload.from;
+          set((s) => {
+            const list = s.dmMessages[peerId];
+            if (!list) return s;
+            return {
+              dmMessages: {
+                ...s.dmMessages,
+                [peerId]: list.map((m) =>
+                  m.id === msg.payload.messageId ? { ...m, text: msg.payload.text, editedAt: msg.payload.editedAt } : m,
+                ),
+              },
+            };
           });
           break;
         }
@@ -998,6 +1030,27 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
     // 服务端校验仅发送者可撤，成功后广播 dm:recalled（双端清空内容）
     socket.send({ type: 'dm:recall', payload: { messageId } });
+  },
+
+  editMessage: (roomId, messageId, text) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (get().status !== 'open' || !socket) {
+      set({ roomError: '连接未就绪，无法操作' });
+      return;
+    }
+    // 服务端校验仅发送者、未撤回、非空，成功后广播 message:edited（各端更新文本与「已编辑」标）
+    socket.send({ type: 'message:edit', payload: { roomId, messageId, text: trimmed } });
+  },
+
+  editDm: (messageId, text) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (get().status !== 'open' || !socket) {
+      set({ roomError: '连接未就绪，无法操作' });
+      return;
+    }
+    socket.send({ type: 'dm:edit', payload: { messageId, text: trimmed } });
   },
 }));
 

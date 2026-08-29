@@ -132,6 +132,25 @@ describe('GameTalk room chat (integration)', () => {
     sb.close();
   });
 
+  it('message edit round-trip: edit broadcast updates text with editedAt', async () => {
+    const owner = await register('edit_cli');
+    const room = await createRoom(owner.token, '编辑测试');
+    const s = await connectAuthed(owner.token);
+    s.send({ type: 'room:join', payload: { roomId: room.id } });
+    await nextMsg(s, (m) => m.type === 'room:joined');
+
+    const created = nextMsg(s, (m) => m.type === 'message:new');
+    s.send({ type: 'message:send', payload: { roomId: room.id, text: '第一版' } });
+    const msg = (await created).payload as { message: { id: string } };
+
+    const edited = nextMsg(s, (m) => m.type === 'message:edited');
+    s.send({ type: 'message:edit', payload: { roomId: room.id, messageId: msg.message.id, text: '第二版' } });
+    const ev = (await edited).payload as { messageId: string; text: string; editedAt: string };
+    expect(ev).toMatchObject({ messageId: msg.message.id, text: '第二版' });
+    expect(ev.editedAt).toBeTruthy();
+    s.close();
+  });
+
   it('non-member cannot join room via WS (not_in_room)', async () => {
     const owner = await register('guard_owner');
     const outsider = await register('guard_outside');

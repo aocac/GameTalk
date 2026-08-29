@@ -48,6 +48,8 @@ export interface ChatMessage {
   reply?: ReplyRef;
   /** 已撤回：内容已清空，渲染占位文案 */
   recalled?: boolean;
+  /** 编辑时间（ISO；仅编辑过的消息携带） */
+  editedAt?: string;
   /** 客户端本地字段：乐观发送未确认时标记（真实服务器消息无此字段） */
   pending?: boolean;
 }
@@ -78,8 +80,10 @@ export type ClientWsMessage =
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string; replyTo?: string } }
   | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
+  | { type: 'message:edit'; payload: { roomId: string; messageId: string; text: string } }
   | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: string; replyTo?: string } }
   | { type: 'dm:recall'; payload: { messageId: string } }
+  | { type: 'dm:edit'; payload: { messageId: string; text: string } }
   | { type: 'ping' };
 
 // 服务端 -> 客户端
@@ -93,10 +97,12 @@ export type ServerWsMessage =
   | { type: 'member:unmuted'; payload: { roomId: string; userId: string } }
   | { type: 'message:new'; payload: { roomId: string; message: ChatMessage } }
   | { type: 'message:recalled'; payload: { roomId: string; messageId: string } }
+  | { type: 'message:edited'; payload: { roomId: string; messageId: string; text: string; editedAt: string } }
   | { type: 'room:deleted'; payload: { roomId: string } }
   | { type: 'friend:request'; payload: { requestId: string; from: FriendProfile } }
   | { type: 'dm:new'; payload: { message: DmMessage } }
   | { type: 'dm:recalled'; payload: { messageId: string; from: string; to: string } }
+  | { type: 'dm:edited'; payload: { messageId: string; from: string; to: string; text: string; editedAt: string } }
   | { type: 'friend:accepted'; payload: { user: FriendProfile } }
   | { type: 'friend:declined'; payload: { userId: string } }
   | { type: 'friend:removed'; payload: { userId: string } }

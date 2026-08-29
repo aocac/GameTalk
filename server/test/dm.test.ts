@@ -265,4 +265,44 @@ describe('dm', () => {
     wsA.close();
     wsB.close();
   });
+
+  it('dm edit: sender-only, both sides notified, history reflects edit, recalled not editable', async () => {
+    const { a, b } = await makeFriendPair('dm_edit');
+    const wsA = await connectWs(a.token);
+    const wsB = await connectWs(b.token);
+    const gotAtB = nextMessage(wsB, (m) => m.type === 'dm:new');
+    dmSend(wsA, b.userId, '原始私聊');
+    const sent = (await gotAtB).payload.message;
+
+    // 接收者 B 编辑 A 的消息 → only_sender
+    const deny = nextMessage(wsB, (m) => m.type === 'error');
+    wsB.send(JSON.stringify({ type: 'dm:edit', payload: { messageId: sent.id, text: '改不动' } }));
+    expect((await deny).payload.code).toBe('only_sender');
+
+    // 发送者 A 编辑 → 双方收到 dm:edited（新文本 + editedAt）
+    const editAtA = nextMessage(wsA, (m) => m.type === 'dm:edited');
+    const editAtB = nextMessage(wsB, (m) => m.type === 'dm:edited');
+    wsA.send(JSON.stringify({ type: 'dm:edit', payload: { messageId: sent.id, text: '改好的私聊' } }));
+    const evA = (await editAtA).payload;
+    const evB = (await editAtB).payload;
+    expect(evA).toMatchObject({ messageId: sent.id, from: a.userId, to: b.userId, text: '改好的私聊' });
+    expect(evA.editedAt).toBeTruthy();
+    expect(evB.editedAt).toBe(evA.editedAt);
+
+    // 历史带 editedAt 与新文本
+    const hist = await app.inject({ method: 'GET', url: `/api/dm/${b.userId}/messages`, headers: auth(a.token) });
+    const edited = hist.json().messages.find((m: any) => m.id === sent.id);
+    expect(edited.text).toBe('改好的私聊');
+    expect(edited.editedAt).toBe(evA.editedAt);
+
+    // 撤回后编辑 → message_not_found
+    const recallEv = nextMessage(wsA, (m) => m.type === 'dm:recalled');
+    wsA.send(JSON.stringify({ type: 'dm:recall', payload: { messageId: sent.id } }));
+    await recallEv;
+    const afterRecall = nextMessage(wsA, (m) => m.type === 'error');
+    wsA.send(JSON.stringify({ type: 'dm:edit', payload: { messageId: sent.id, text: '再改' } }));
+    expect((await afterRecall).payload.code).toBe('message_not_found');
+    wsA.close();
+    wsB.close();
+  });
 });

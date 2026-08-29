@@ -144,6 +144,8 @@ export interface RoomMessage {
   reply?: { id: string; username: string; text: string; kind: 'text' | 'image' };
   /** 已撤回：内容已清空 */
   recalled?: boolean;
+  /** 编辑时间（ISO；仅编辑过的消息携带） */
+  editedAt?: string;
   /** 客户端本地字段：乐观发送未确认时标记（服务器返回的消息无此字段） */
   pending?: boolean;
 }
@@ -258,6 +260,7 @@ export interface DmApiMessage {
   mediaUrl?: string | null;
   reply?: { id: string; username: string; text: string; kind: 'text' | 'image' };
   recalled?: boolean;
+  editedAt?: string;
 }
 
 export function dmMessages(

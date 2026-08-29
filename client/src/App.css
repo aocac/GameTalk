@@ -2667,3 +2667,14 @@ body {
   color: var(--primary);
   border-color: var(--primary);
 }
+
+/* ===== 消息编辑：气泡「已编辑」小标 + composer 编辑条 ===== */
+.message-edited {
+  font-size: 10.5px;
+  color: var(--text-2);
+  opacity: 0.75;
+}
+
+.edit-bar .reply-label {
+  color: var(--primary);
+}

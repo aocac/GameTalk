@@ -20,6 +20,7 @@ interface DmRow extends QueryResultRow {
   kind: string;
   media_url: string | null;
   recalled: boolean;
+  edited_at: string | null;
   created_at: string;
   reply_to: string | null;
   reply_username: string | null;
@@ -48,6 +49,7 @@ export interface PublicDmMessage {
   mediaUrl: string | null;
   reply?: ReplyRef;
   recalled: boolean;
+  editedAt?: string;
 }
 
 function toPublicDm(base: string, m: DmRow): PublicDmMessage {
@@ -62,6 +64,7 @@ function toPublicDm(base: string, m: DmRow): PublicDmMessage {
     kind: (m.kind === 'image' ? 'image' : 'text') as 'text' | 'image',
     mediaUrl: m.media_url ? `${base}${m.media_url}` : null,
     recalled: m.recalled ?? false,
+    editedAt: m.edited_at ? new Date(m.edited_at).toISOString() : undefined,
     reply: m.reply_to
       ? {
           id: m.reply_to,
@@ -93,7 +96,7 @@ export function registerDmRoutes(app: FastifyInstance, deps: DmDeps): void {
     const res = await db.query<DmRow>(
       `SELECT DISTINCT ON (peer_id) *
        FROM (
-         SELECT m.id, m.sender_id, m.recipient_id, m.username, u.avatar_url, m.text, m.kind, m.media_url, m.recalled, m.created_at,
+         SELECT m.id, m.sender_id, m.recipient_id, m.username, u.avatar_url, m.text, m.kind, m.media_url, m.recalled, m.edited_at, m.created_at,
                 NULL::uuid AS reply_to, NULL::text AS reply_username, NULL::text AS reply_text, NULL::text AS reply_kind, NULL::boolean AS reply_recalled,
                 CASE WHEN m.sender_id = $1 THEN m.recipient_id ELSE m.sender_id END AS peer_id
          FROM dm_messages m
@@ -125,7 +128,7 @@ export function registerDmRoutes(app: FastifyInstance, deps: DmDeps): void {
 
     const res = await db.query<DmRow>(
       `SELECT * FROM (
-         SELECT m.id, m.sender_id, m.recipient_id, m.username, u.avatar_url, m.text, m.kind, m.media_url, m.recalled, m.created_at,
+         SELECT m.id, m.sender_id, m.recipient_id, m.username, u.avatar_url, m.text, m.kind, m.media_url, m.recalled, m.edited_at, m.created_at,
                 m.reply_to, r.username AS reply_username, r.text AS reply_text, r.kind AS reply_kind, r.recalled AS reply_recalled
          FROM dm_messages m
          LEFT JOIN users u ON u.id = m.sender_id

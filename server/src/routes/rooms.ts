@@ -38,6 +38,7 @@ interface MessageRow extends QueryResultRow {
   kind: string;
   media_url: string | null;
   recalled: boolean;
+  edited_at: string | null;
   reply_to: string | null;
   reply_username: string | null;
   reply_text: string | null;
@@ -194,7 +195,7 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
 
     const res = await db.query<MessageRow>(
       `SELECT * FROM (
-         SELECT m.id, m.room_id, m.user_id, m.username, u.avatar_url, m.text, m.mentions, m.kind, m.media_url, m.recalled,
+         SELECT m.id, m.room_id, m.user_id, m.username, u.avatar_url, m.text, m.mentions, m.kind, m.media_url, m.recalled, m.edited_at,
                 m.reply_to, r.username AS reply_username, r.text AS reply_text, r.kind AS reply_kind, r.recalled AS reply_recalled,
                 m.created_at
          FROM messages m
@@ -224,6 +225,7 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
       kind: m.kind ?? 'text',
       mediaUrl: m.media_url ? `${base}${m.media_url}` : null,
       recalled: m.recalled ?? false,
+      editedAt: m.edited_at ? new Date(m.edited_at).toISOString() : undefined,
       reply: m.reply_to
         ? {
             id: m.reply_to,

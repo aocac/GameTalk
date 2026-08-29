@@ -724,6 +724,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     loadOlderDmMessages,
     sendDm,
     recallDm,
+    editMessage,
+    editDm,
   } = useChat();
   const { user, logout } = useAuth();
   const { gameModeEnabled, hotkey, soundEnabled } = useSettings();
@@ -777,6 +779,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   /** 引用回复：待回复的原消息（发送后气泡内渲染引用块） */
   const [replyTo, setReplyTo] = useState<RoomMessage | null>(null);
+  /** 编辑消息：正在编辑的自己的消息（composer 变编辑模式，Enter 提交 / Esc 取消） */
+  const [editingMsg, setEditingMsg] = useState<RoomMessage | null>(null);
   const {
     friends,
     incoming: friendIncoming,
@@ -834,7 +838,32 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     });
   };
 
+  const submitEdit = () => {
+    if (!editingMsg || !draft.trim()) return;
+    if (activeDm) editDm(editingMsg.id, draft);
+    else if (activeRoom) editMessage(activeRoom.id, editingMsg.id, draft);
+    setEditingMsg(null);
+    setDraft('');
+  };
+
+  const startEdit = (m: RoomMessage) => {
+    setReplyTo(null);
+    setEditingMsg(m);
+    setDraft(m.text);
+    requestAnimationFrame(() => {
+      const el = composerRef.current;
+      const len = m.text.length;
+      el?.focus();
+      el?.setSelectionRange(len, len);
+    });
+  };
+
   const sendDraft = () => {
+    // 编辑模式：Enter/发送按钮提交编辑而非发送新消息
+    if (editingMsg) {
+      submitEdit();
+      return;
+    }
     // DM 会话：无提及语义，图片/引用照常
     if (activeDm) {
       if (!draft.trim() && !pendingImage) return;
@@ -1157,6 +1186,12 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     const t = setTimeout(clearNotice, 3000);
     return () => clearTimeout(t);
   }, [friendNotice, clearNotice]);
+
+  // 切换会话（房间/私聊）时取消未完成的编辑与回复，避免把文本带进另一个会话
+  useEffect(() => {
+    setEditingMsg(null);
+    setReplyTo(null);
+  }, [activeRoomId, activeDmPeerId]);
 
   const submitRoomModal = async (kind: 'create' | 'join') => {
     if (kind === 'create') {
@@ -1676,6 +1711,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                     <div className="message-head">
                       <span className="message-author">{m.username}</span>
                       <span className="message-time">{m.pending ? '发送中…' : new Date(m.createdAt).toLocaleTimeString()}</span>
+                      {m.editedAt && <span className="message-edited">已编辑</span>}
                     </div>
                     {m.reply && (
                       <div className="message-quote">
@@ -1821,6 +1857,22 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               </button>
             </div>
           )}
+          {editingMsg && (
+            <div className="reply-bar edit-bar">
+              <span className="reply-label">正在编辑</span>
+              <span className="reply-snippet">{editingMsg.kind === 'image' && !editingMsg.text ? '[图片]' : editingMsg.text}</span>
+              <button
+                className="attachment-remove"
+                title="取消编辑"
+                onClick={() => {
+                  setEditingMsg(null);
+                  setDraft('');
+                }}
+              >
+                ×
+              </button>
+            </div>
+          )}
           <div className="composer-row">
           <button
             className="composer-icon"
@@ -1870,13 +1922,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             placeholder={
               offline
                 ? '离线模式：未连接服务器'
-                : connected
-                  ? activeDm
-                    ? `与 ${activeDm.username} 私聊，Enter 发送`
-                    : activeRoom
-                      ? '输入消息，Enter 发送，@ 唤起提及'
-                      : '先选择或创建房间'
-                  : '未连接'
+                : editingMsg
+                  ? '正在编辑消息，Enter 确认，Esc 取消'
+                  : connected
+                    ? activeDm
+                      ? `与 ${activeDm.username} 私聊，Enter 发送`
+                      : activeRoom
+                        ? '输入消息，Enter 发送，@ 唤起提及'
+                        : '先选择或创建房间'
+                    : '未连接'
             }
             disabled={offline || !connected || (!activeRoom && !activeDm)}
             maxLength={2000}
@@ -1925,6 +1979,12 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   return;
                 }
               }
+              if (e.key === 'Escape' && editingMsg) {
+                e.preventDefault();
+                setEditingMsg(null);
+                setDraft('');
+                return;
+              }
               if (e.key === 'Enter' && !e.shiftKey && !offline && connected && (activeRoom || activeDm)) {
                 e.preventDefault();
                 sendDraft();
@@ -1936,7 +1996,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             disabled={offline || !connected || (!activeRoom && !activeDm) || (!draft.trim() && !pendingImage)}
             onClick={sendDraft}
           >
-            发送
+            {editingMsg ? '保存' : '发送'}
           </button>
           {activeRoom && !activeDm && (
             <button className="btn ghost" title="离开房间" onClick={() => void leaveActiveRoom()}>
@@ -2162,11 +2222,23 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               className="ctx-menu-item"
               onClick={() => {
                 setReplyTo(msgMenu.msg);
+                setEditingMsg(null);
                 setMsgMenu(null);
               }}
             >
               引用
             </button>
+            {msgMenu.msg.userId === me?.id && !msgMenu.msg.pending && !msgMenu.msg.recalled && (
+              <button
+                className="ctx-menu-item"
+                onClick={() => {
+                  startEdit(msgMenu.msg);
+                  setMsgMenu(null);
+                }}
+              >
+                编辑
+              </button>
+            )}
             {activeDm ? (
               // 私聊：仅发送者本人可撤回（无房主语义）
               msgMenu.msg.userId === me?.id &&
