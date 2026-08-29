@@ -178,6 +178,8 @@ function OverlayApp() {
     let unlistenAdjust: UnlistenFn | undefined;
     let unlistenPreview: UnlistenFn | undefined;
     let unlistenHide: UnlistenFn | undefined;
+    const unlistenersEdit: UnlistenFn[] = [];
+    const unlistenersRecall: UnlistenFn[] = [];
     let cancelled = false;
 
     void listen<OverlayItem>('overlay:append', (e) => {
@@ -253,6 +255,18 @@ function OverlayApp() {
       }
     }).then((off) => (unlistenAdjust = off));
 
+    // 消息编辑/撤回同步（覆盖层正挂着该消息时即时更新/移除）
+    void listen<{ messageId: string; text: string }>('overlay:edit', (e) => {
+      if (cancelled) return;
+      setItems((prev) =>
+        prev.map((m) => (m.id === e.payload.messageId ? { ...m, text: e.payload.text, editedAt: new Date().toISOString() } : m)),
+      );
+    }).then((off) => unlistenersEdit.push(off));
+    void listen<{ messageId: string }>('overlay:recalled', (e) => {
+      if (cancelled) return;
+      setItems((prev) => prev.filter((m) => m.id !== e.payload.messageId));
+    }).then((off) => unlistenersRecall.push(off));
+
     // 立即隐藏（设置窗口关闭时收起预览，不等自然超时）
     void listen('overlay:hide', () => {
       if (cancelled) return;
@@ -271,6 +285,7 @@ function OverlayApp() {
       unlistenAdjust?.();
       unlistenPreview?.();
       unlistenHide?.();
+      for (const off of [...unlistenersEdit, ...unlistenersRecall]) off();
       stopClampPoll();
       clearTimers();
     };

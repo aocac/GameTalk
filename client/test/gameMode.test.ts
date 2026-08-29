@@ -204,6 +204,27 @@ describe('gameMode manager', () => {
     expect(await isRegistered('Alt+G')).toBe(true);
   });
 
+  it('pushOverlayEdit/Recall emit sync events; skipped when overlay disabled', async () => {
+    await gameMode.startGameMode();
+    useSettings.setState({ overlayEnabled: true });
+
+    await gameMode.pushOverlayEdit('m1', '编辑后的文本');
+    await gameMode.pushOverlayRecall('m1');
+    expect(emitted.filter((e) => e.event === 'overlay:edit')).toEqual([
+      { event: 'overlay:edit', payload: { messageId: 'm1', text: '编辑后的文本' } },
+    ]);
+    expect(emitted.filter((e) => e.event === 'overlay:recalled')).toEqual([
+      { event: 'overlay:recalled', payload: { messageId: 'm1' } },
+    ]);
+
+    // 屏幕覆盖关闭：不 emit（不创建/唤醒窗口）
+    emitted.length = 0;
+    useSettings.setState({ overlayEnabled: false });
+    await gameMode.pushOverlayEdit('m1', 'again');
+    await gameMode.pushOverlayRecall('m1');
+    expect(emitted.filter((e) => e.event.startsWith('overlay:'))).toEqual([]);
+  });
+
   it('registers global Esc while input window is shown, unregisters on hide', async () => {
     await gameMode.startGameMode();
     expect(register).not.toHaveBeenCalledWith('Esc', expect.any(Function));

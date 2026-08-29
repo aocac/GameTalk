@@ -353,6 +353,18 @@ export async function pushOverlayMessage(message: ChatMessage, roomName?: string
   await emit('overlay:append', { ...message, roomName, isSelf });
 }
 
+/** 消息编辑同步到正在显示的 Overlay（items 里没有该消息时无副作用） */
+export async function pushOverlayEdit(messageId: string, text: string): Promise<void> {
+  if (!useSettings.getState().overlayEnabled || !started) return;
+  await emit('overlay:edit', { messageId, text });
+}
+
+/** 消息撤回同步到正在显示的 Overlay：直接移除该条 */
+export async function pushOverlayRecall(messageId: string): Promise<void> {
+  if (!useSettings.getState().overlayEnabled || !started) return;
+  await emit('overlay:recalled', { messageId });
+}
+
 /** 当前实际注册的呼出快捷键（换键后注销旧键用——否则旧键依旧全局生效） */
 let registeredHotkey: string | null = null;
 

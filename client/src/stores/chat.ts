@@ -6,7 +6,7 @@ import { useAuth } from './auth';
 import { useFriends } from './friends';
 import { wsUrlOf } from '../app/settings';
 import * as api from '../app/api';
-import { pushOverlayMessage } from '../app/gameMode';
+import { pushOverlayEdit, pushOverlayMessage, pushOverlayRecall } from '../app/gameMode';
 import type { ChatMessage, DmMessage, RoomMember, UserBrief, WsStatus } from '../app/types';
 
 /** Windows 系统通知（档位判断在调用方；浏览器/无权限环境静默忽略） */
@@ -573,6 +573,7 @@ export const useChat = create<ChatState>()((set, get) => ({
                 : {};
             return { ...messages, ...previewPatch };
           });
+          void pushOverlayRecall(msg.payload.messageId);
           break;
         case 'message:edited':
           set((s) => {
@@ -594,6 +595,7 @@ export const useChat = create<ChatState>()((set, get) => ({
               ...previewPatch,
             };
           });
+          void pushOverlayEdit(msg.payload.messageId, msg.payload.text);
           break;
         case 'dm:new': {
           // 私聊新消息：自己的先校正乐观占位，双方消息统一按会话（对方 id）归档
@@ -662,6 +664,7 @@ export const useChat = create<ChatState>()((set, get) => ({
                 : {};
             return { ...messages, ...previewPatch };
           });
+          void pushOverlayRecall(msg.payload.messageId);
           break;
         }
         case 'dm:edited': {
@@ -684,6 +687,7 @@ export const useChat = create<ChatState>()((set, get) => ({
               ...previewPatch,
             };
           });
+          void pushOverlayEdit(msg.payload.messageId, msg.payload.text);
           break;
         }
         case 'friend:request':
