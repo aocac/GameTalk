@@ -1,0 +1,11 @@
+[Unit]
+Description=GameTalk daily database backup
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=600
+Persistent=true
+Unit=gametalk-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,8 @@
+[Unit]
+Description=GameTalk database backup (pg_dump + config snapshot)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=__GAMETALK_ROOT__/docker/backup-db.sh

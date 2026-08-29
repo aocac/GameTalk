@@ -83,11 +83,55 @@ cd client && npm run build:full
 - `.github/workflows/ci.yml`（push/PR 触发）：server 测试构建、client 构建、Tauri cargo check、Docker 镜像构建。
 - `.github/workflows/build-desktop.yml`（`v*` 标签触发）：三端桌面构建并挂载 GitHub Release。
 
-## 6. 客户端下载
+## 6. 数据库备份与恢复
+
+> 用户数据只存在于 VPS 单盘卷（`docker_pgdata`）——这是部署中最大的单点风险。
+> 仓库内置「服务器每日备份 + Windows 管理机异地副本」方案；`deploy.sh` 第 4 步会自动安装备份调度。
+
+### 自动备份（服务器端）
+
+- 脚本：`docker/backup-db.sh` —— `pg_dump -Fc` 全量转储 + `docker-compose.yml`/`.env` 配置快照 + `pg_restore -l` 完整性校验（失败自动丢弃坏 dump）+ 14 天轮转 + flock 防重叠。
+- 调度：systemd timer 每日 04:30（服务器时区）执行，`Persistent=true` 错过自动补跑。
+- 产物：`<仓库根>/backups/gametalk-db-YYYYMMDD-HHMMSS.dump` 与 `configs-*.tar.gz`（权限 600）。
+- 手动触发 / 查看排期：
+
+```bash
+sudo bash /root/gametalk/docker/backup-db.sh     # 立即备份一次
+systemctl list-timers | grep gametalk            # 确认 timer 已排期
+tail /root/gametalk/backups/backup.log           # 备份日志
+```
+
+### 异地副本（Windows 管理机）
+
+- 脚本：`docker/pull-backups-windows.ps1` —— 拉取 VPS 上最新的 dump + 配置快照到 `%USERPROFILE%\GameTalkBackups`，本地保留 90 天。依赖 `~/.ssh/config` 的 `gametalk-vps` 主机别名。
+- 注册 Windows 任务计划程序每日执行（示例）：
+
+```powershell
+schtasks /Create /F /TN "GameTalk 备份异地拉取" /SC DAILY /ST 09:10 `
+  /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\path\to\GameTalk\docker\pull-backups-windows.ps1"
+```
+
+- 建议每月做一次恢复演练（下述步骤在 VPS 上用最新 dump 验证行数即可，不必真删数据）。
+
+### 恢复步骤
+
+```bash
+cd /root/gametalk/docker
+docker compose stop server                       # 1) 停止写入端
+# 2) 从备份恢复（--clean 覆盖现有对象；postgres 容器名用 docker ps 确认）：
+docker exec -i docker-postgres-1 pg_restore -U gametalk -d gametalk --clean --if-exists \
+  < ../backups/gametalk-db-YYYYMMDD-HHMMSS.dump
+docker compose start server                      # 3) 重启并验证 /health、登录、历史消息
+```
+
+> 可选升级：条件允许时将备份再推送一份到对象存储（S3/COS/OSS 免费额度即可），
+> 把异地副本从「管理机定时拉取」升级为「服务器定时推送」，进一步降低对单台管理机的依赖。
+
+## 7. 客户端下载
 
 - 稳定版：[GitHub Releases](https://github.com/aocac/GameTalk/releases/latest)（Windows / Linux / macOS 安装包）。
 
-## 7. 部署状态
+## 8. 部署状态
 
 GameTalk 已完成真实服务器部署并稳定运行（2026-08-28）。社区自建请按第 2 节流程操作；
 注意服务器部署信息（域名、IP、密钥）属私密数据，请勿写入本公开仓库。
