@@ -177,6 +177,7 @@ function OverlayApp() {
     let unlistenConfig: UnlistenFn | undefined;
     let unlistenAdjust: UnlistenFn | undefined;
     let unlistenPreview: UnlistenFn | undefined;
+    let unlistenHide: UnlistenFn | undefined;
     let cancelled = false;
 
     void listen<OverlayItem>('overlay:append', (e) => {
@@ -252,12 +253,24 @@ function OverlayApp() {
       }
     }).then((off) => (unlistenAdjust = off));
 
+    // 立即隐藏（设置窗口关闭时收起预览，不等自然超时）
+    void listen('overlay:hide', () => {
+      if (cancelled) return;
+      clearTimers();
+      setFading(false);
+      setPreviewing(false);
+      setItems([]);
+      const win = winRef.current;
+      if (win) void win.hide();
+    }).then((off) => (unlistenHide = off));
+
     return () => {
       cancelled = true;
       unlistenAppend?.();
       unlistenConfig?.();
       unlistenAdjust?.();
       unlistenPreview?.();
+      unlistenHide?.();
       stopClampPoll();
       clearTimers();
     };

@@ -254,7 +254,7 @@ async function openSettingsWindow(section?: 'general' | 'game' | 'overlay' | 'ab
   }
   try {
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-    new WebviewWindow('settings', {
+    const win = new WebviewWindow('settings', {
       title: 'GameTalk 设置',
       url: section ? `settings.html?section=${section}` : 'settings.html',
       width: 820,
@@ -263,6 +263,10 @@ async function openSettingsWindow(section?: 'general' | 'game' | 'overlay' | 'ab
       minHeight: 520,
       center: true,
       resizable: true,
+    });
+    // 关闭设置窗口时立即收起屏幕覆盖预览（不等待自然超时，避免预览挂在游戏画面上）
+    void win.once('tauri://destroyed', () => {
+      void import('@tauri-apps/api/event').then(({ emit }) => emit('overlay:hide'));
     });
   } catch {
     window.open(section ? `settings.html?section=${section}` : 'settings.html', '_blank');
@@ -729,7 +733,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   } = useChat();
   const { user, logout } = useAuth();
   const { gameModeEnabled, hotkey, soundEnabled } = useSettings();
-  const [draft, setDraft] = useState('');
+  // 输入草稿按会话（房间/私聊）独立保存：切换会话互不串扰，回来还在
+  const [draftMap, setDraftMap] = useState<Record<string, string>>({});
+  const convKey = activeDmPeerId ? `dm:${activeDmPeerId}` : `room:${activeRoomId ?? 'none'}`;
+  const draft = draftMap[convKey] ?? '';
+  const setDraft = (v: string) => setDraftMap((m) => ({ ...m, [convKey]: v }));
   const [roomMenu, setRoomMenu] = useState<{ id: string; invite: string; isOwner: boolean; x: number; y: number } | null>(null);
   const [confirmDeleteInMenu, setConfirmDeleteInMenu] = useState(false);
   /** 成员右键菜单：目标成员 + 位置（@提及 / 加好友 / 房主管理） */
@@ -739,8 +747,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   /** 左下角头像二级菜单（个人资料 / 设置 / 退出登录） */
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
-  /** 成员卡片：当前查看的成员 */
-  const [cardMember, setCardMember] = useState<UserBrief | null>(null);
+  /** 成员卡片：当前查看的成员 + 打开来源（房间上下文才有「移出房间」，好友来源永不显示） */
+  const [cardMember, setCardMember] = useState<{ member: UserBrief; from: 'room' | 'friend' } | null>(null);
+  /** 好友右键菜单：查看资料 / 删除好友（二次确认） */
+  const [friendMenu, setFriendMenu] = useState<{ friend: api.Friend; x: number; y: number; confirmRemove: boolean } | null>(null);
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
@@ -772,6 +782,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(1);
   const [lightboxOffset, setLightboxOffset] = useState({ x: 0, y: 0 });
+  const lightboxImgRef = useRef<HTMLImageElement | null>(null);
   const lightboxDrag = useRef<{ id: number; sx: number; sy: number; ox: number; oy: number; lx: number; ly: number } | null>(null);
   const lightboxMoved = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -934,6 +945,27 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     setLightbox(url);
     setLightboxZoom(1);
     setLightboxOffset({ x: 0, y: 0 });
+  };
+
+  // 平移夹取：任意缩放下图片至少留 ~80px 在视口内（缩小后图片不会完全跑出预览窗口）
+  const clampLightboxOffset = (z: number, off: { x: number; y: number }) => {
+    const img = lightboxImgRef.current;
+    if (!img) return off;
+    const halfW = (img.clientWidth * z) / 2;
+    const halfH = (img.clientHeight * z) / 2;
+    const limX = Math.max(window.innerWidth / 2 + halfW - 80, 0);
+    const limY = Math.max(window.innerHeight / 2 + halfH - 80, 0);
+    return {
+      x: Math.min(Math.max(off.x, -limX), limX),
+      y: Math.min(Math.max(off.y, -limY), limY),
+    };
+  };
+
+  /** 缩放到指定倍数并把平移位置夹回可视范围（滚轮 / ±按钮共用） */
+  const zoomLightboxTo = (next: number) => {
+    const z = Math.min(8, Math.max(0.2, next));
+    setLightboxZoom(z);
+    setLightboxOffset((off) => clampLightboxOffset(z, off));
   };
 
   const saveLightboxImage = async (url: string) => {
@@ -1115,7 +1147,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   // 游戏模式生命周期：启停快捷键 + Overlay 事件监听
   useEffect(() => {
     gameMode.setOnSend((text) => {
-      useChat.getState().sendMessage(text);
+      const st = useChat.getState();
+      // 当前在私聊会话 → 发到该私聊；否则走房间（activeRoomId 优先，无房间自动选第一个）
+      if (st.activeDmPeerId) st.sendDm(text);
+      else st.sendMessage(text);
     });
     if (gameModeEnabled) {
       void gameMode.startGameMode();
@@ -1139,7 +1174,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       if (!d) return;
       // 关键兜底：部分环境 mouseup 会丢（拖出窗口/合成输入），move 时按键已松开即结束拖拽
       if (e.buttons === 0) {
-        setLightboxOffset({ x: d.ox + (e.clientX - d.sx), y: d.oy + (e.clientY - d.sy) });
+        setLightboxOffset(clampLightboxOffset(lightboxZoom, { x: d.ox + (e.clientX - d.sx), y: d.oy + (e.clientY - d.sy) }));
         lightboxDrag.current = null;
         return;
       }
@@ -1148,7 +1183,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       if (Math.abs(dx) + Math.abs(dy) > 3) lightboxMoved.current = true;
       d.lx = e.clientX;
       d.ly = e.clientY;
-      setLightboxOffset({ x: d.ox + dx, y: d.oy + dy });
+      setLightboxOffset(clampLightboxOffset(lightboxZoom, { x: d.ox + dx, y: d.oy + dy }));
     };
     const onUp = () => {
       const d = lightboxDrag.current;
@@ -1163,7 +1198,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [lightbox]);
+  }, [lightbox, lightboxZoom]);
 
   /** 成员菜单/@提及：把 @昵称 插入草稿并登记提及，光标落回输入框 */
   const mentionFromMenu = (m: UserBrief) => {
@@ -1286,7 +1321,9 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                     </div>
                     <div className="room-preview">
                       {preview
-                        ? `${preview.userId === me?.id ? '我' : preview.username}：${preview.text}`
+                        ? preview.text === '撤回了一条消息'
+                          ? `${preview.userId === me?.id ? '你' : preview.username}撤回了一条消息`
+                          : `${preview.userId === me?.id ? '我' : preview.username}：${preview.text}`
                         : '开始聊天吧'}
                     </div>
                   </div>
@@ -1330,7 +1367,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             return (
               <div
                 key={r.id}
-                className={`room-item ${r.id === activeRoomId ? 'active' : ''}`}
+                className={`room-item ${r.id === activeRoomId && !activeDm ? 'active' : ''}`}
                 onClick={() => void selectRoom(r.id)}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -1363,7 +1400,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   </div>
                   {previewByRoom[r.id] && (
                     <div className="room-preview">
-                      {previewByRoom[r.id].username}：{previewByRoom[r.id].text}
+                      {/* 撤回预览 QQ 式：无冒号（「XX撤回了一条消息」） */}
+                      {previewByRoom[r.id].text === '撤回了一条消息'
+                        ? `${previewByRoom[r.id].username}撤回了一条消息`
+                        : `${previewByRoom[r.id].username}：${previewByRoom[r.id].text}`}
                     </div>
                   )}
                 </div>
@@ -1425,8 +1465,21 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               <div
                 key={f.id}
                 className={`friend-item ${f.online ? 'online' : 'offline'}`}
-                title={f.online ? '在线 · 查看资料' : '离线 · 查看资料'}
-                onClick={() => setCardMember(f)}
+                title="点击私聊 · 右键更多操作"
+                onClick={() => {
+                  // QQ/微信式：单击好友直接进入私聊
+                  setSideTab('rooms');
+                  void openDm(f.id);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setFriendMenu({
+                    friend: f,
+                    x: Math.min(e.clientX, window.innerWidth - 170),
+                    y: Math.min(e.clientY, window.innerHeight - 110),
+                    confirmRemove: false,
+                  });
+                }}
               >
                 <span className="member-avatar">
                   <Avatar name={f.username} url={f.avatarUrl} size={30} />
@@ -1435,19 +1488,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   <span className="member-name">{f.username}</span>
                   <span className="friend-sub">{f.bio || (f.online ? '在线' : '离线')}</span>
                 </span>
-                <button
-                  className="friend-dm-btn"
-                  title="发消息"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSideTab('rooms');
-                    void openDm(f.id);
-                  }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
-                </button>
               </div>
             ))}
           </div>
@@ -1636,13 +1676,13 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               <p className="empty-sub">这是你们的私密对话，只有彼此可见。</p>
             </div>
           )}
-          {!offline && activeRoom && messages.length === 0 && !historyLoadedRooms[activeRoom.id] && (
+          {!offline && !activeDm && activeRoom && messages.length === 0 && !historyLoadedRooms[activeRoom.id] && (
             <div className="empty">
               <p className="empty-title">加载历史消息…</p>
               <p className="empty-sub">正在从服务器拉取该房间的历史记录。</p>
             </div>
           )}
-          {!offline && activeRoom && messages.length === 0 && historyLoadedRooms[activeRoom.id] && (
+          {!offline && !activeDm && activeRoom && messages.length === 0 && historyLoadedRooms[activeRoom.id] && (
             <div className="empty">
               <p className="empty-title">欢迎来到 #{activeRoom.name}</p>
               <p className="empty-sub">发送第一条消息，开始与房间里的玩家实时沟通。</p>
@@ -1678,10 +1718,16 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   <span
                     className="message-avatar"
                     onContextMenu={(e) => {
-                      // DM 会话只有两人，无成员菜单语义
-                      if (offline || m.pending || activeDm) return;
+                      if (offline || m.pending) return;
                       e.preventDefault();
                       e.stopPropagation();
+                      // DM：对方头像右键直接看资料卡片（好友上下文，无房间管理项）
+                      if (activeDm) {
+                        if (m.userId !== me?.id) {
+                          setCardMember({ member: { id: m.userId, username: m.username, avatarUrl: m.avatarUrl ?? null }, from: 'friend' });
+                        }
+                        return;
+                      }
                       const live = members.find((x) => x.id === m.userId);
                       setMemberMenu({
                         member: {
@@ -2034,7 +2080,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   key={m.id}
                   className={`member-item ${isSelf ? 'self' : ''} ${m.online ? 'online' : 'offline'}`}
                   title={m.online ? '在线 · 查看资料' : '离线 · 查看资料'}
-                  onClick={() => setCardMember(m)}
+                  onClick={() => setCardMember({ member: m, from: 'room' })}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     setMemberMenu({
@@ -2133,7 +2179,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             <button
               className="ctx-menu-item"
               onClick={() => {
-                setCardMember(memberMenu.member);
+                setCardMember({ member: memberMenu.member, from: 'room' });
                 setMemberMenu(null);
               }}
             >
@@ -2270,46 +2316,78 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           </CtxMenu>
         </>
       )}
+      {friendMenu && (
+        <>
+          <div className="menu-mask" onClick={() => setFriendMenu(null)} />
+          <CtxMenu x={friendMenu.x} y={friendMenu.y}>
+            <button
+              className="ctx-menu-item"
+              onClick={() => {
+                setCardMember({ member: friendMenu.friend, from: 'friend' });
+                setFriendMenu(null);
+              }}
+            >
+              查看资料
+            </button>
+            <button
+              className="ctx-menu-item danger"
+              onClick={() => {
+                if (!friendMenu.confirmRemove) {
+                  // 二次确认：3s 内再点一次才真正删除
+                  setFriendMenu({ ...friendMenu, confirmRemove: true });
+                  setTimeout(() => setFriendMenu((fm) => (fm?.confirmRemove ? { ...fm, confirmRemove: false } : fm)), 3000);
+                  return;
+                }
+                void removeFriendById(friendMenu.friend.id);
+                setFriendMenu(null);
+              }}
+            >
+              {friendMenu.confirmRemove ? '确认删除好友？' : '删除好友'}
+            </button>
+          </CtxMenu>
+        </>
+      )}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
-      {cardMember && activeRoom && (
+      {/* 房间上下文的成员卡片（成员面板/成员菜单打开）：含房主管理项 */}
+      {cardMember?.from === 'room' && activeRoom && (
         <MemberCardModal
-          member={cardMember}
-          isOwner={cardMember.id === activeRoom.ownerId}
-          canKick={activeRoom.ownerId === me?.id && cardMember.id !== me?.id}
+          member={cardMember.member}
+          isOwner={cardMember.member.id === activeRoom.ownerId}
+          canKick={activeRoom.ownerId === me?.id && cardMember.member.id !== me?.id}
           onKick={() => {
-            kickMember(activeRoom.id, cardMember.id);
+            kickMember(activeRoom.id, cardMember.member.id);
             setCardMember(null);
           }}
-          friendStatus={relationOf(cardMember.id)}
-          onAddFriend={() => void sendRequest(cardMember.id)}
+          friendStatus={relationOf(cardMember.member.id)}
+          onAddFriend={() => void sendRequest(cardMember.member.id)}
           onMessage={() => {
             setCardMember(null);
             setSideTab('rooms');
-            void openDm(cardMember.id);
+            void openDm(cardMember.member.id);
           }}
           onRemoveFriend={() => {
-            void removeFriendById(cardMember.id);
+            void removeFriendById(cardMember.member.id);
             setCardMember(null);
           }}
           onClose={() => setCardMember(null)}
         />
       )}
-      {/* 好友卡片：从好友列表点开（无房间上下文） */}
-      {cardMember && !activeRoom && !offline && (
+      {/* 好友卡片（好友列表右键 / 私聊头像右键打开）：与房间管理完全无关，无「移出房间」 */}
+      {cardMember?.from === 'friend' && !offline && (
         <MemberCardModal
-          member={cardMember}
+          member={cardMember.member}
           isOwner={false}
           canKick={false}
           onKick={() => undefined}
-          friendStatus={relationOf(cardMember.id)}
-          onAddFriend={() => void sendRequest(cardMember.id)}
+          friendStatus={relationOf(cardMember.member.id)}
+          onAddFriend={() => void sendRequest(cardMember.member.id)}
           onMessage={() => {
             setCardMember(null);
             setSideTab('rooms');
-            void openDm(cardMember.id);
+            void openDm(cardMember.member.id);
           }}
           onRemoveFriend={() => {
-            void removeFriendById(cardMember.id);
+            void removeFriendById(cardMember.member.id);
             setCardMember(null);
           }}
           onClose={() => setCardMember(null)}
@@ -2328,30 +2406,30 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             setLightbox(null);
           }}
           onWheel={(e) => {
-            setLightboxZoom((z) => Math.min(8, Math.max(0.2, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))));
+            zoomLightboxTo(lightboxZoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
           }}
           onMouseDown={(e) => {
-            if (lightboxZoom <= 1) return;
-            // 拖拽用 window 级 mouse 监听（组件挂载期注册）：松手必停
+            // 任何缩放（含 <100%）都可拖拽平移；拖拽用 window 级 mouse 监听：松手必停
             lightboxDrag.current = { id: 0, sx: e.clientX, sy: e.clientY, ox: lightboxOffset.x, oy: lightboxOffset.y, lx: e.clientX, ly: e.clientY };
             lightboxMoved.current = false;
           }}
         >
           <img
+            ref={lightboxImgRef}
             src={lightbox}
             alt="图片预览"
             draggable={false}
             // 阻止原生图片拖拽：浏览器接管后 move 事件停发（指针变禁止、松手才更新位置）
             onDragStart={(e) => e.preventDefault()}
-            style={{ transform: `translate(${lightboxOffset.x}px, ${lightboxOffset.y}px) scale(${lightboxZoom})`, cursor: lightboxZoom > 1 ? 'grab' : 'zoom-out' }}
+            style={{ transform: `translate(${lightboxOffset.x}px, ${lightboxOffset.y}px) scale(${lightboxZoom})`, cursor: 'grab' }}
             onClick={(e) => e.stopPropagation()}
           />
           <div className="lightbox-toolbar" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
-            <button title="缩小" onClick={() => setLightboxZoom((z) => Math.max(0.2, z / 1.25))}>
+            <button title="缩小" onClick={() => zoomLightboxTo(lightboxZoom / 1.25)}>
               −
             </button>
             <span className="lightbox-zoom">{Math.round(lightboxZoom * 100)}%</span>
-            <button title="放大" onClick={() => setLightboxZoom((z) => Math.min(8, z * 1.25))}>
+            <button title="放大" onClick={() => zoomLightboxTo(lightboxZoom * 1.25)}>
               ＋
             </button>
             <button

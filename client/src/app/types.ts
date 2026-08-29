@@ -67,6 +67,8 @@ export interface DmMessage {
   mediaUrl?: string | null;
   reply?: ReplyRef;
   recalled?: boolean;
+  /** 编辑时间（ISO；仅编辑过的消息携带） */
+  editedAt?: string;
 }
 
 // 客户端 -> 服务端

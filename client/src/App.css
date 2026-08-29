@@ -454,7 +454,17 @@ body {
   visibility: hidden;
 }
 
+/* 连发分组：作者/时间隐藏保持紧凑，但「已编辑」标记必须可见（分组消息被编辑时） */
 .message.grouped:not(.pending) .message-head {
+  display: flex;
+}
+
+.message.grouped:not(.pending):not(:has(.message-edited)) .message-head {
+  display: none;
+}
+
+.message.grouped:not(.pending) .message-head .message-author,
+.message.grouped:not(.pending) .message-head .message-time {
   display: none;
 }
 
@@ -1675,6 +1685,10 @@ body {
   color: var(--side-text);
 }
 
+.friend-item.online .member-avatar::after {
+  background: var(--ok);
+}
+
 .friend-item.offline .member-avatar .avatar-img,
 .friend-item.offline .member-avatar .avatar {
   filter: grayscale(1);
@@ -2643,30 +2657,6 @@ body {
   background: #e8f5ee;
 }
 
-.friend-dm-btn {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--side-text);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
-}
-
-.friend-item:hover .friend-dm-btn {
-  opacity: 1;
-}
-
-.friend-dm-btn:hover {
-  color: var(--primary);
-  border-color: var(--primary);
-}
 
 /* ===== 消息编辑：气泡「已编辑」小标 + composer 编辑条 ===== */
 .message-edited {

@@ -65,6 +65,10 @@ function InputApp() {
           }
         }}
       />
+      {/* 鼠标党：有文字即可点击发送（与 Enter 等效） */}
+      <button className="input-send" disabled={!text.trim()} onClick={send}>
+        发送
+      </button>
       <span className="input-hint">Enter ↵</span>
     </div>
   );

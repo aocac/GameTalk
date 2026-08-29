@@ -57,3 +57,25 @@ body {
   padding: 2px 8px;
   white-space: nowrap;
 }
+
+.input-send {
+  flex-shrink: 0;
+  border: none;
+  border-radius: 7px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: #5a6cff;
+  cursor: pointer;
+}
+
+.input-send:hover:not(:disabled) {
+  background: #6d7dff;
+}
+
+.input-send:disabled {
+  background: rgba(255, 255, 255, 0.12);
+  color: #6b7483;
+  cursor: default;
+}

@@ -32,6 +32,7 @@ function dmToRoomMessage(m: DmMessage): api.RoomMessage {
     mediaUrl: m.mediaUrl ?? null,
     reply: m.reply,
     recalled: m.recalled,
+    editedAt: m.editedAt,
   };
 }
 
@@ -592,9 +593,8 @@ export const useChat = create<ChatState>()((set, get) => ({
               },
             },
           }));
-          // Overlay：来源名用好友昵称（自己发送的也显示，游戏内确认已发出）
-          const friendName = useFriends.getState().friends.find((f) => f.id === peerId)?.username ?? '好友私聊';
-          void pushOverlayMessage(dmToRoomMessage(dm), friendName, isMine);
+          // Overlay：私聊不标注来源（对方消息的用户名 = 来源好友，标了会重复显示两次名字）
+          void pushOverlayMessage(dmToRoomMessage(dm), undefined, isMine);
           break;
         }
         case 'dm:recalled': {
