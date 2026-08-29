@@ -92,7 +92,7 @@ cd client && npm run build:full
 
 - 脚本：`docker/backup-db.sh` —— `pg_dump -Fc` 全量转储 + `docker-compose.yml`/`.env` 配置快照 + `pg_restore -l` 完整性校验（失败自动丢弃坏 dump）+ 14 天轮转 + flock 防重叠。
 - 调度：systemd timer 每日 04:30（服务器时区）执行，`Persistent=true` 错过自动补跑。
-- 产物：`<仓库根>/backups/gametalk-db-YYYYMMDD-HHMMSS.dump` 与 `configs-*.tar.gz`；dump 644 供异地拉取，configs 含密钥 600 仅作服务器本地副本（JWT/DB 密码丢失可重建，代价只是重新登录）。
+- 产物：`<仓库根>/backups/gametalk-db-YYYYMMDD-HHMMSS.dump` 与 `configs-*.tar.gz`；备份目录 root-only。configs 含密钥（600），仅作服务器本地副本——JWT/DB 密码丢失可重建，代价只是重新登录。
 - 手动触发 / 查看排期：
 
 ```bash
@@ -103,7 +103,7 @@ tail /root/gametalk/backups/backup.log           # 备份日志
 
 ### 异地副本（Windows 管理机）
 
-- 脚本：`docker/pull-backups-windows.ps1` —— 拉取 VPS 上最新的数据库 dump 到 `%USERPROFILE%\GameTalkBackups`，本地保留 90 天。依赖 `~/.ssh/config` 的 `gametalk-vps` 主机别名。
+- 脚本：`docker/pull-backups-windows.ps1` —— 经 `ssh + sudo cat` 把 VPS 上最新的数据库 dump 流式下载到 `%USERPROFILE%\GameTalkBackups`，SHA256 校验传输完整性，本地保留 90 天（备份目录保持 root-only 最小权限，普通账户不可 scp 直读）。依赖 `~/.ssh/config` 的 `gametalk-vps` 主机别名。
 - 注册 Windows 任务计划程序每日执行（示例）：
 
 ```powershell
