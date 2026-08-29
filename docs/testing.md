@@ -4,8 +4,8 @@
 
 | 范围 | 工具 | 内容 |
 |---|---|---|
-| 服务端单测/集成 | vitest | REST 路由、WS 网关（双客户端实时收发、房主删房、幂等 join）、WS 加固（限流 / 超大帧断连）、REST 限流（登录 429）、头像端点（data URL → HTTP 端点）、migration 幂等、输入校验 |
-| 客户端逻辑 | vitest | gameMode 管理器（mock Tauri，含换键后旧键注销）、真实 server 集成测试（双端聊天 / not_in_room / 断线重连） |
+| 服务端单测/集成 | vitest | REST 路由、WS 网关（双客户端实时收发、房主删房、幂等 join、花名册/在线状态）、好友（申请/互加/删除 + 实时事件 + 在线广播）、@提及（解析/成员校验/入库）、图片消息（上传校验/归属/绝对 URL）、禁言（仅房主/到期/解除）、WS 加固（限流 / 超大帧断连）、REST 限流（登录 429）、头像端点（data URL → HTTP 端点）、migration 幂等、输入校验 |
+| 客户端逻辑 | vitest | gameMode 管理器（mock Tauri，含换键后旧键注销）、真实 server 集成测试（双端聊天 / not_in_room / 断线重连 / 花名册离线保留） |
 | Lint | ESLint（双工作区） | `npm run lint` |
 | 前端构建 | `npm run build`（tsc + vite） | 类型安全 + 产物可构建 |
 | Rust 侧 | `cargo check` | Tauri 壳编译通过 |
@@ -35,8 +35,13 @@ cd client/src-tauri && cargo check
 | 11 | 房主移出成员（kick） | ✅（通知/DB/权限/被踢者自愈，全流程） | — |
 | 12 | 成员资料卡片（/api/users/:id + bio） | ✅ | — |
 | 13 | 服务器地址尾斜杠容忍 | ✅（//api 双斜杠用例） | — |
+| 14 | 花名册 + 在线状态（离线成员置灰保留） | ✅（roster/presence 双端用例） | — |
+| 15 | 好友全流程（申请/互加/删除 + WS 事件 + 在线广播） | ✅（5 例） | — |
+| 16 | @提及（显式 picks + 文本解析，非成员不算） | ✅ | — |
+| 17 | 图片消息（上传/归属校验/广播与历史绝对 URL） | ✅ | — |
+| 18 | 禁言（仅房主/阻止发送/解除/房主免疫） | ✅ | — |
 
-当前实测：server 33 测试 + client 12 测试（3 集成 + 9 单测）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
+当前实测：server 42 测试 + client 13 测试（3 集成 + 10 单测）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
 
 ## 3. 真机验收清单
 

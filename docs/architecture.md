@@ -38,15 +38,15 @@ gametalk/
 ├── client/                  # Tauri 2 桌面客户端
 │   ├── src/                 # React 前端
 │   │   ├── app/             # 基础能力：types / ws / api / settings / gameMode / audio
-│   │   ├── stores/          # zustand 状态（auth / chat）
-│   │   ├── App.tsx          # 主窗口 UI（登录 / 聊天 / 设置 / 关闭确认）
+│   │   ├── stores/          # zustand 状态（auth / chat / friends / notifications）
+│   │   ├── App.tsx          # 主窗口 UI（登录 / 消息与好友侧栏 / 聊天 / 通知中心 / 设置）
 │   │   ├── input.tsx        # 输入 Overlay 窗口入口
 │   │   └── overlay.tsx      # 消息 Overlay 窗口入口
 │   └── src-tauri/           # Rust 壳（托盘 / 单实例 / quit_app / set_proxy）
 ├── server/                  # Fastify 服务端
 │   ├── src/
-│   │   ├── routes/          # REST 路由（health / auth / rooms）
-│   │   ├── ws/              # WS 网关（认证 + 房间广播 + 限流 + 心跳清理）
+│   │   ├── routes/          # REST 路由（health / auth / rooms / friends / media）
+│   │   ├── ws/              # WS 网关（认证 + 房间广播 + 花名册/在线状态 + 限流 + 心跳清理）
 │   │   ├── db/              # pg/PGlite 抽象 + migration 执行器
 │   │   └── lib/             # jwt / password / image / invite / envfile
 │   ├── migrations/          # 纯 SQL migration（生产与 PGlite 同源）
@@ -66,24 +66,43 @@ gametalk/
 {"type":"room:leave","payload":{"roomId":"..."}}
 {"type":"room:delete","payload":{"roomId":"..."}}
 {"type":"member:kick","payload":{"roomId":"...","userId":"..."}}
-{"type":"message:send","payload":{"roomId":"...","text":"hi"}}
+{"type":"member:mute","payload":{"roomId":"...","userId":"...","minutes":10}}
+{"type":"member:unmute","payload":{"roomId":"...","userId":"..."}}
+{"type":"message:send","payload":{"roomId":"...","text":"hi","mentions":["<userId>"],"mediaUrl":"/api/media/<uuid>"}}
 {"type":"ping"}
 ```
 
 **服务端 → 客户端**
 ```json
 {"type":"hello:ok","payload":{"me":{"id":"...","username":"Alice","avatarUrl":"https://.../api/avatars/..."}}}
-{"type":"room:joined","payload":{"roomId":"...","members":[...]}}
+{"type":"room:joined","payload":{"roomId":"...","members":[{"id":"...","username":"...","online":true,"mutedUntil":null}]}}
 {"type":"member:joined","payload":{"roomId":"...","member":{...}}}
 {"type":"member:left","payload":{"roomId":"...","userId":"...","username":"..."}}
 {"type":"member:kicked","payload":{"roomId":"...","userId":"...","username":"..."}}
-{"type":"message:new","payload":{"roomId":"...","message":{...}}}
+{"type":"member:muted","payload":{"roomId":"...","userId":"...","mutedUntil":"..."}}
+{"type":"member:unmuted","payload":{"roomId":"...","userId":"..."}}
+{"type":"message:new","payload":{"roomId":"...","message":{...,"mentions":[{"id":"...","username":"..."}],"kind":"text|image","mediaUrl":"..."}}}
 {"type":"room:deleted","payload":{"roomId":"..."}}
-{"type":"error","payload":{"code":"...","message":"...","roomId":"..."}}
+{"type":"friend:request","payload":{"requestId":"...","from":{...}}}
+{"type":"friend:accepted","payload":{"user":{...}}}
+{"type":"friend:declined","payload":{"userId":"..."}}
+{"type":"friend:removed","payload":{"userId":"..."}}
+{"type":"presence:friend","payload":{"userId":"...","online":true}}
+{"type":"error","payload":{"code":"...","message":"...","roomId":"...","mutedUntil":"..."}}
 {"type":"pong"}
 ```
 
 **房间模型**：服务端内存 `roomId -> userId -> {sockets}`（同一用户可多端连接）。消息先持久化再广播；`joinRoom` 幂等（重复 join 也回 `room:joined`，客户端有 2s 订阅看门狗自愈）；`room:delete` 仅房主可调用，级联删除并广播 `room:deleted`；`member:kick` 仅房主可调用，把成员移出房间（DB 删除 + 全员通知 `member:kicked` + 被踢者订阅清理），被踢者客户端自动移除房间并切换。**客户端订阅其全部房间**（非活跃房间也能实时收消息，UI 显示未读角标，Overlay 标注来源房间）。
+
+**花名册与在线状态**：房间成员关系持久于 DB（`room_members`），`room:joined` 回执返回**完整花名册**（含离线成员）+ 实时 `online` 标记（由内存连接表推导）。`member:joined` = 新成员进房或离线成员上线；`member:left` = 该用户最后一个连接断开（语义为「离线」而非移除，客户端置灰保留）。好友上/下线额外广播 `presence:friend` 给其在线好友。
+
+**提及**：服务端解析消息——客户端显式 picks（成员校验）∪ 文本 `@用户名` 兜底匹配（用户名唯一，按名精确匹配），剔除自己后以 `[{id, username}]` 快照入库（历史渲染不依赖成员表）；广播与历史均携带。被提及者客户端累计 @未读并推送通知中心。
+
+**禁言**：`member:mute`（仅房主、1 分钟–30 天、不能禁言自己/房主）写 `room_mutes` 并广播 `member:muted`；`message:send` 对生效中的禁言回 `error(code=muted, mutedUntil)`；到期自动失效（惰性判断），`member:unmute` 提前解除。花名册携带 `mutedUntil` 供全员展示禁言标签。
+
+**图片消息**：客户端先 `POST /api/media`（data URL，≤5MB，魔数校验）取得 `/api/media/<uuid>`，再随 `message:send(kind=image)` 发送；服务端校验该媒体必须存在且属于发送者。读取端点免认证（`<img>` 带不了 Authorization 头），与头像同策略：UUID 不可枚举 + immutable 缓存。
+
+**好友**：`friendships`（pending/accepted，双向唯一）；支持 userId / 用户名 / `#8 位短 ID` 查找；反向申请等价于互加。实时事件（`friend:request/accepted/declined/removed`）经 WS 推送在线方。好友与房间完全分离管理（DM 私聊在路线图）。
 
 **用户资料**：`users` 含个性签名 `bio`（≤100 字，PATCH /api/auth/me 维护）；成员卡片经
 `GET /api/users/:id`（登录态、UUID 不可枚举）读取公开资料。
@@ -100,8 +119,13 @@ gametalk/
 ## 5. 数据库 Schema（migration 演进）
 
 - `migrations/*.sql` 按文件名顺序执行，`_migrations` 表记录已应用版本。
-- Phase 3: `users`（注册/登录）
-- Phase 4: `rooms` / `room_members` / `messages`（房间、成员、历史）
+- `001_users`：用户（注册/登录）
+- `002_rooms`：`rooms` / `room_members` / `messages`（房间、成员、历史）
+- `003_users_bio`：个性签名
+- `004_friends`：`friendships`（好友关系，pending/accepted）
+- `005_mentions`：`messages.mentions`（提及快照 JSONB + GIN 索引）
+- `006_media`：`media`（图片字节存储）+ `messages.kind/media_url`
+- `007_mutes`：`room_mutes`（限时禁言，到期惰性失效）
 
 ## 6. 游戏 Overlay（透明置顶窗口方案）
 
@@ -136,6 +160,8 @@ gametalk/
 - WS 加固：单帧 64KB 上限（见第 4 节）。
 - 头像：上传 data URL 类型/大小（≤3MB）/魔数三重校验；分发走 `/api/avatars/:id`（公开端点，
   id 为不可枚举 UUID），带 5 分钟缓存头。
+- 消息图片：`POST /api/media` 需登录，类型/大小（≤5MB）/魔数三重校验；读取 `/api/media/:id`
+  公开（`<img>` 无法附带认证头），id 为不可枚举 UUID + immutable 缓存；发送时校验媒体归属。
 - 注册并发竞态由用户名唯一索引兜底（冲突返回 409）。
 - CORS 可配置：compose 默认 `*`（桌面客户端不受浏览器同源限制），可经 `CORS_ORIGIN` 收紧。
 - 无硬编码 secret；`.env.example` 提供模板；忘记密码由服务器主人用 `npm run reset-password` 重置。
