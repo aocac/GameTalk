@@ -50,6 +50,8 @@ interface ChatMessage {
   /** 'image' 时 mediaUrl 指向 /api/media/:id（对外转绝对 URL） */
   kind?: 'text' | 'image';
   mediaUrl?: string | null;
+  /** 已撤回：内容已清空，客户端渲染占位文案 */
+  recalled?: boolean;
 }
 
 interface MentionRef {
@@ -76,6 +78,7 @@ type ClientMessage =
   | { type: 'member:mute'; payload: { roomId: string; userId: string; minutes: unknown } }
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown } }
+  | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
   | { type: 'ping' };
 
 interface UserRow extends QueryResultRow {
@@ -596,6 +599,43 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         mediaUrl: storedMediaUrl ? `${conn.httpBase}${storedMediaUrl}` : null,
       };
       broadcastToRoom(roomId, { type: 'message:new', payload: { roomId, message } });
+      break;
+    }
+    case 'message:recall': {
+      // 撤回：发送者本人或房间主可撤；撤回后内容清空（text/media 置空），广播 member:recalled 语义事件
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const roomId = sanitizeRoomId(msg.payload.roomId);
+      const messageId = sanitizeRoomId(msg.payload.messageId);
+      if (!conn.rooms.has(roomId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
+        return;
+      }
+      const found = await db.query<{ user_id: string }>(
+        'SELECT user_id FROM messages WHERE id = $1 AND room_id = $2 AND recalled = false',
+        [messageId, roomId],
+      );
+      const target = found.rows[0];
+      if (!target) {
+        send(conn.socket, { type: 'error', payload: { code: 'message_not_found', message: 'message not found' } });
+        return;
+      }
+      if (target.user_id !== conn.userId) {
+        const owner = await db.query<{ owner_id: string }>('SELECT owner_id FROM rooms WHERE id = $1', [roomId]);
+        if (owner.rows.length === 0 || owner.rows[0].owner_id !== conn.userId) {
+          send(conn.socket, { type: 'error', payload: { code: 'only_owner', message: 'only the sender or the room owner can recall' } });
+          return;
+        }
+      }
+      const updated = await db.query<{ id: string }>(
+        'UPDATE messages SET recalled = true, text = \'\', media_url = NULL, mentions = \'[]\'::jsonb WHERE id = $1 RETURNING id',
+        [messageId],
+      );
+      if (updated.rows.length > 0) {
+        broadcastToRoom(roomId, { type: 'message:recalled', payload: { roomId, messageId } });
+      }
       break;
     }
     case 'ping': {

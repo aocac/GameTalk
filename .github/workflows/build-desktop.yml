@@ -110,6 +110,18 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          # 完整拉取以读取 annotated tag 的附带说明作为 Release 正文
+          fetch-depth: 0
+      - name: Extract tag notes
+        id: notes
+        run: |
+          {
+            echo 'body<<TAGMSG'
+            git tag -l "${GITHUB_REF_NAME}" --format='%(contents)'
+            echo 'TAGMSG'
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v8
         with:
           path: assets
@@ -117,6 +129,8 @@ jobs:
         run: find assets -type f
       - uses: softprops/action-gh-release@v3
         with:
+          # Release 正文 = tag 附带说明（此前工作流未传 body，导致 v0.2.0 起 Release 页无更新说明）
+          body: ${{ steps.notes.outputs.body }}
           # 产物 zip 内含嵌套目录（deb/appimage/dmg/macos），用递归 glob 匹配文件
           files: |
             assets/**/*.exe

@@ -140,6 +140,8 @@ export interface RoomMessage {
   mentions?: Array<{ id: string; username: string }>;
   kind?: 'text' | 'image';
   mediaUrl?: string | null;
+  /** 已撤回：内容已清空 */
+  recalled?: boolean;
   /** 客户端本地字段：乐观发送未确认时标记（服务器返回的消息无此字段） */
   pending?: boolean;
 }

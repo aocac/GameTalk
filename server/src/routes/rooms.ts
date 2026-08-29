@@ -37,6 +37,7 @@ interface MessageRow extends QueryResultRow {
   mentions: Array<{ id: string; username: string }> | null;
   kind: string;
   media_url: string | null;
+  recalled: boolean;
 }
 
 export interface PublicRoom {
@@ -188,7 +189,7 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
 
     const res = await db.query<MessageRow>(
       `SELECT * FROM (
-         SELECT m.id, m.room_id, m.user_id, m.username, u.avatar_url, m.text, m.mentions, m.kind, m.media_url, m.created_at
+         SELECT m.id, m.room_id, m.user_id, m.username, u.avatar_url, m.text, m.mentions, m.kind, m.media_url, m.recalled, m.created_at
          FROM messages m
          LEFT JOIN users u ON u.id = m.user_id
          WHERE m.room_id = $1
@@ -214,6 +215,7 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
       mentions: m.mentions ?? [],
       kind: m.kind ?? 'text',
       mediaUrl: m.media_url ? `${base}${m.media_url}` : null,
+      recalled: m.recalled ?? false,
     }));
     await reply.send({ messages, hasMore });
   });

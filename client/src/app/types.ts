@@ -36,6 +36,8 @@ export interface ChatMessage {
   /** 'image' 时 mediaUrl 指向图片（广播为绝对 URL，乐观期为相对路径） */
   kind?: 'text' | 'image';
   mediaUrl?: string | null;
+  /** 已撤回：内容已清空，渲染占位文案 */
+  recalled?: boolean;
   /** 客户端本地字段：乐观发送未确认时标记（真实服务器消息无此字段） */
   pending?: boolean;
 }
@@ -50,6 +52,7 @@ export type ClientWsMessage =
   | { type: 'member:mute'; payload: { roomId: string; userId: string; minutes: number } }
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string } }
+  | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
   | { type: 'ping' };
 
 // 服务端 -> 客户端
@@ -62,6 +65,7 @@ export type ServerWsMessage =
   | { type: 'member:muted'; payload: { roomId: string; userId: string; mutedUntil: string } }
   | { type: 'member:unmuted'; payload: { roomId: string; userId: string } }
   | { type: 'message:new'; payload: { roomId: string; message: ChatMessage } }
+  | { type: 'message:recalled'; payload: { roomId: string; messageId: string } }
   | { type: 'room:deleted'; payload: { roomId: string } }
   | { type: 'friend:request'; payload: { requestId: string; from: FriendProfile } }
   | { type: 'friend:accepted'; payload: { user: FriendProfile } }

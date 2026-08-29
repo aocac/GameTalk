@@ -1998,3 +1998,162 @@ body {
   color: var(--pending);
   font-size: 11px;
 }
+
+/* ===== v0.4.1 UI 打磨：卡片式聊天区 / 气泡 / 附件条 / 灯箱工具 ===== */
+
+/* 整体底色：微妙渐变增强层次 */
+.auth-wrap,
+.app {
+  background: linear-gradient(180deg, #f7f8fc 0%, #eef0f7 100%);
+}
+
+/* 消息气泡：大圆角 + 非对称角 + 轻投影 */
+.message-body {
+  border-radius: 4px 14px 14px 14px;
+  box-shadow: 0 1px 2px rgba(35, 38, 47, 0.06);
+}
+
+.message.mine .message-body {
+  border-radius: 14px 4px 14px 14px;
+}
+
+/* 聊天区改为浮动卡片（含输入条），QQ NT 式 */
+.messages {
+  margin: 10px 14px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px 8px;
+}
+
+.composer {
+  margin: 8px 14px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  border-top: 1px solid var(--border);
+  padding: 10px 14px;
+  display: block;
+}
+
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-bar {
+  margin: 6px 14px 10px;
+}
+
+/* 登录卡更挺拔 */
+.auth-card {
+  border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(35, 38, 47, 0.14);
+}
+
+/* 表情面板：锚定左侧表情按钮上方 */
+.emoji-pop {
+  left: 12px;
+  right: auto;
+}
+
+/* 待发送图片附件条 */
+.attachment-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.attachment-thumb {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.attachment-name {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.attachment-remove {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.attachment-remove:hover {
+  background: var(--surface-3);
+  color: var(--danger);
+}
+
+/* 撤回占位 */
+.message-recalled {
+  font-size: 12.5px;
+  color: var(--text-3);
+  font-style: italic;
+}
+
+/* 灯箱工具条与关闭 */
+.lightbox-toolbar {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(20, 22, 28, 0.72);
+  border-radius: 10px;
+  padding: 4px 6px;
+  z-index: 5;
+}
+
+.lightbox-toolbar button {
+  border: 0;
+  background: transparent;
+  color: #e8eaf2;
+  font-size: 13px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.lightbox-toolbar button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.lightbox-zoom {
+  color: #aab1c4;
+  font-size: 12px;
+  min-width: 44px;
+  text-align: center;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(20, 22, 28, 0.72);
+  color: #e8eaf2;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.lightbox-close:hover {
+  background: rgba(20, 22, 28, 0.9);
+}

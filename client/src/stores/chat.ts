@@ -49,6 +49,7 @@ interface ChatState {
   kickMember: (roomId: string, userId: string) => void;
   muteMember: (roomId: string, userId: string, minutes: number) => void;
   unmuteMember: (roomId: string, userId: string) => void;
+  recallMessage: (roomId: string, messageId: string) => void;
   sendMessage: (text: string, mentions?: string[], mediaUrl?: string) => void;
   clearRoomError: () => void;
 }
@@ -407,6 +408,20 @@ export const useChat = create<ChatState>()((set, get) => ({
           void pushOverlayMessage(msg.payload.message, room?.name, isMine);
           break;
         }
+        case 'message:recalled':
+          set((s) => {
+            const list = s.messagesByRoom[msg.payload.roomId];
+            if (!list) return s;
+            return {
+              messagesByRoom: {
+                ...s.messagesByRoom,
+                [msg.payload.roomId]: list.map((m) =>
+                  m.id === msg.payload.messageId ? { ...m, recalled: true, text: '', mediaUrl: null, mentions: [] } : m,
+                ),
+              },
+            };
+          });
+          break;
         case 'friend:request':
         case 'friend:accepted':
         case 'friend:declined':
@@ -648,6 +663,16 @@ export const useChat = create<ChatState>()((set, get) => ({
       return;
     }
     socket.send({ type: 'member:unmute', payload: { roomId, userId } });
+  },
+
+  recallMessage: (roomId, messageId) => {
+    const { status } = get();
+    if (status !== 'open' || !socket) {
+      set({ roomError: '连接未就绪，无法操作。请确认已连接服务器。' });
+      return;
+    }
+    // 服务端校验（发送者本人或房主），成功后广播 message:recalled（各端内容清空）
+    socket.send({ type: 'message:recall', payload: { roomId, messageId } });
   },
 
   sendMessage: (text, mentions, mediaUrl) => {

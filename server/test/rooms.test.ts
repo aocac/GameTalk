@@ -489,6 +489,44 @@ describe('realtime + persistence', () => {
     wsM.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '解封发言' } }));
     expect((await got).payload.message.text).toBe('解封发言');
 
+    // 撤回：房主可撤他人消息，发送者可撤自己的，无关成员不行；撤回后内容清空
+    const oGets = nextMessage(wsO, (m) => m.type === 'message:new');
+    wsM.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '要被房主撤回的话' } }));
+    const bMsg = (await oGets).payload.message;
+
+    const oSeesRecall = nextMessage(wsO, (m) => m.type === 'message:recalled');
+    const mSeesRecall = nextMessage(wsM, (m) => m.type === 'message:recalled');
+    wsO.send(JSON.stringify({ type: 'message:recall', payload: { roomId: room.id, messageId: bMsg.id } }));
+    const recallEv = await oSeesRecall;
+    expect(recallEv.payload.messageId).toBe(bMsg.id);
+    await mSeesRecall;
+
+    // 发送者撤自己的
+    const oGets2 = nextMessage(wsO, (m) => m.type === 'message:new');
+    wsM.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '自己撤回' } }));
+    const ownMsg = (await oGets2).payload.message;
+    const mSeesRecall2 = nextMessage(wsM, (m) => m.type === 'message:recalled');
+    wsM.send(JSON.stringify({ type: 'message:recall', payload: { roomId: room.id, messageId: ownMsg.id } }));
+    await mSeesRecall2;
+
+    // 无关成员撤房主的消息 → only_owner（房主自己发一条先）
+    const mGets = nextMessage(wsM, (m) => m.type === 'message:new');
+    wsO.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '房主的话' } }));
+    const ownerMsg = (await mGets).payload.message;
+    const e4 = nextMessage(wsM, (m) => m.type === 'error');
+    wsM.send(JSON.stringify({ type: 'message:recall', payload: { roomId: room.id, messageId: ownerMsg.id } }));
+    expect((await e4).payload.code).toBe('only_owner');
+
+    // 历史：已撤回消息 recalled=true 且内容为空
+    const hist = await app.inject({ method: 'GET', url: `/api/rooms/${room.id}/messages`, headers: auth(owner.token) });
+    const { messages } = hist.json();
+    const recalledHis = messages.find((m: any) => m.id === bMsg.id);
+    expect(recalledHis.recalled).toBe(true);
+    expect(recalledHis.text).toBe('');
+    const intact = messages.find((m: any) => m.id === ownerMsg.id);
+    expect(intact.recalled).toBe(false);
+    expect(intact.text).toBe('房主的话');
+
     wsO.close();
     wsM.close();
   });
