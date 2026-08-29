@@ -611,7 +611,7 @@ body {
   flex-shrink: 0;
 }
 
-/* 在线绿点（面板内全部为在线成员） */
+/* 在线状态点：在线绿点 / 离线灰点 + 灰头像（花名册含离线成员，QQ 式） */
 .member-avatar::after {
   content: '';
   position: absolute;
@@ -620,8 +620,22 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--ok);
+  background: var(--off);
   border: 2px solid var(--surface);
+}
+
+.member-item.online .member-avatar::after {
+  background: var(--ok);
+}
+
+.member-item.offline .member-avatar .avatar-img,
+.member-item.offline .member-avatar .avatar {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+
+.member-item.offline .member-name {
+  color: var(--text-3);
 }
 
 .member-name {

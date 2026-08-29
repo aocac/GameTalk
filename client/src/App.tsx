@@ -687,6 +687,12 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const activeRoom = rooms.find((r) => r.id === activeRoomId) ?? null;
   const messages = activeRoomId ? (messagesByRoom[activeRoomId] ?? []) : [];
   const members = activeRoomId ? (membersByRoom[activeRoomId] ?? []) : [];
+  // 花名册排序：自己 → 房主 → 在线 → 离线（QQ 式）；同级按昵称稳定排序
+  const memberRank = (id: string, online: boolean) => (id === me?.id ? 0 : id === activeRoom?.ownerId ? 1 : online ? 2 : 3);
+  const roster = [...members].sort(
+    (a, b) => memberRank(a.id, a.online) - memberRank(b.id, b.online) || a.username.localeCompare(b.username),
+  );
+  const onlineCount = members.filter((m) => m.online).length;
   const activeSubscribed = !!activeRoomId && subscribedRoomIds.includes(activeRoomId);
 
   useEffect(() => {
@@ -902,7 +908,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           </div>
           <div className="topbar-right">
             {offline && <span className="offline-tag">离线模式</span>}
-            <span className="member-count">{offline ? '未连接' : `${members.length} 人在线`}</span>
+            <span className="member-count">{offline ? '未连接' : `${onlineCount} 人在线`}</span>
             <StatusDot status={status} />
             {/* 订阅状态只在已连接时有意义；断开/重连中由状态灯表达 */}
             {!offline && connected && activeRoom && (
@@ -1067,25 +1073,25 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         </footer>
       </main>
 
-      {/* 成员面板（QQ 式）：在线成员 + 房主标注 + 房主踢人 */}
+      {/* 成员面板（QQ 式花名册）：离线成员置灰保留 + 房主标注 + 房主管理 */}
       {!offline && activeRoom && (
         <aside className="members-panel">
           <div className="members-header">
             <span>成员</span>
-            <span className="members-count">{members.length}</span>
+            <span className="members-count" title="在线 / 总成员">
+              {onlineCount}/{members.length}
+            </span>
           </div>
           <div className="members-list">
-            {[...members]
-              .sort((a, b) => (a.id === me?.id ? -1 : b.id === me?.id ? 1 : 0))
-              .map((m) => {
+            {roster.map((m) => {
               const isOwner = m.id === activeRoom.ownerId;
               const isSelf = m.id === me?.id;
               const canKick = activeRoom.ownerId === me?.id && !isOwner;
               return (
                 <div
                   key={m.id}
-                  className={`member-item ${isSelf ? 'self' : ''}`}
-                  title="查看资料"
+                  className={`member-item ${isSelf ? 'self' : ''} ${m.online ? 'online' : 'offline'}`}
+                  title={m.online ? '在线 · 查看资料' : '离线 · 查看资料'}
                   onClick={() => setCardMember(m)}
                 >
                   <span className="member-avatar">

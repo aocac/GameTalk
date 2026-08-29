@@ -269,4 +269,61 @@ describe('realtime + persistence', () => {
     expect((await oSeesLeft).payload.userId).toBe(member.userId);
     wsO.close();
   });
+
+  it('roster includes offline members with online flags (QQ-style presence)', async () => {
+    const owner = await registerUser('roster_owner');
+    const { room } = (
+      await app.inject({ method: 'POST', url: '/api/rooms', headers: auth(owner.token), payload: { name: 'Roster' } })
+    ).json();
+
+    // 离线成员：只走 REST 加入（DB 花名册），从不开 WS 连接
+    const offline = await registerUser('roster_offline');
+    await app.inject({
+      method: 'POST',
+      url: '/api/rooms/join',
+      headers: auth(offline.token),
+      payload: { inviteCode: room.inviteCode },
+    });
+
+    const ws = await connectWs(owner.token);
+    ws.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    const joined = await nextMessage(ws, (m) => m.type === 'room:joined');
+    const findMember = (ms: any[], username: string) => ms.find((m) => m.username === username);
+    expect(findMember(joined.payload.members, 'roster_owner').online).toBe(true);
+    expect(findMember(joined.payload.members, 'roster_offline').online).toBe(false);
+
+    // 离线成员上线：其他人收到 member:joined，重订阅后花名册标记在线
+    const wsOffline = await connectWs(offline.token);
+    const oSeesJoin = nextMessage(
+      ws,
+      (m) => m.type === 'member:joined' && m.payload.member.username === 'roster_offline',
+    );
+    wsOffline.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    await nextMessage(wsOffline, (m) => m.type === 'room:joined');
+    await oSeesJoin;
+
+    const resubscribe = async (): Promise<any[]> => {
+      ws.send(JSON.stringify({ type: 'room:leave', payload: { roomId: room.id } }));
+      ws.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+      const again = await nextMessage(ws, (m) => m.type === 'room:joined');
+      return again.payload.members;
+    };
+
+    let members = await resubscribe();
+    expect(findMember(members, 'roster_offline').online).toBe(true);
+
+    // 下线：成员不被移除，仍留在花名册，仅标记离线（QQ 式置灰）
+    const oSeesLeft = nextMessage(
+      ws,
+      (m) => m.type === 'member:left' && m.payload.userId === offline.userId,
+    );
+    wsOffline.close();
+    await oSeesLeft;
+
+    members = await resubscribe();
+    const goneOffline = findMember(members, 'roster_offline');
+    expect(goneOffline).toBeTruthy();
+    expect(goneOffline.online).toBe(false);
+    ws.close();
+  });
 });

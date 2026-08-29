@@ -6,6 +6,11 @@ export interface UserBrief {
   avatarUrl?: string | null;
 }
 
+/** 房间花名册成员：全体 DB 成员 + 在线标记（离线成员保留在列表，QQ 式置灰） */
+export interface RoomMember extends UserBrief {
+  online: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   roomId: string;
@@ -31,7 +36,7 @@ export type ClientWsMessage =
 // 服务端 -> 客户端
 export type ServerWsMessage =
   | { type: 'hello:ok'; payload: { me: UserBrief } }
-  | { type: 'room:joined'; payload: { roomId: string; members: UserBrief[] } }
+  | { type: 'room:joined'; payload: { roomId: string; members: RoomMember[] } }
   | { type: 'member:joined'; payload: { roomId: string; member: UserBrief } }
   | { type: 'member:left'; payload: { roomId: string; userId: string; username: string } }
   | { type: 'member:kicked'; payload: { roomId: string; userId: string; username: string } }

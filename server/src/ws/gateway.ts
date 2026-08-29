@@ -47,6 +47,14 @@ interface ChatMessage {
   createdAt: string;
 }
 
+/** 房间花名册成员 = 全体 DB 成员 + 当前在线标记（QQ 式：离线成员也展示，灰头像） */
+interface RosterMember {
+  id: string;
+  username: string;
+  avatarUrl: string | null;
+  online: boolean;
+}
+
 type ClientMessage =
   | { type: 'hello'; payload: { token: string } }
   | { type: 'room:join'; payload: { roomId: string } }
@@ -96,7 +104,25 @@ function publicMember(userId: string, username: string, avatarUrl?: string | nul
   return { id: userId, username, avatarUrl: avatarUrl ?? null };
 }
 
-function joinRoom(conn: Conn, roomId: string, avatarUrl?: string | null): void {
+/** 花名册：DB 全体成员（按加入时间）+ 内存连接表推导的在线标记 */
+async function roomRosterOf(db: Db, roomId: string, httpBase: string): Promise<RosterMember[]> {
+  const res = await db.query<{ id: string; username: string; avatar_url: string | null }>(
+    `SELECT u.id, u.username, u.avatar_url
+     FROM room_members rm JOIN users u ON u.id = rm.user_id
+     WHERE rm.room_id = $1
+     ORDER BY rm.joined_at ASC`,
+    [roomId],
+  );
+  const online = rooms.get(roomId);
+  return res.rows.map((r) => ({
+    id: r.id,
+    username: r.username,
+    avatarUrl: avatarHttpUrlOf(httpBase, r.id, r.avatar_url),
+    online: !!online?.has(r.id),
+  }));
+}
+
+async function joinRoom(conn: Conn, roomId: string, db: Db, avatarUrl?: string | null): Promise<void> {
   if (!conn.userId) return;
   // 幂等：重复加入也总是回复 room:joined —— 否则客户端重试加入会被静默吞掉，
   // 订阅响应一旦丢失将永远无法收敛（客户端看门狗依赖该回执）
@@ -114,13 +140,9 @@ function joinRoom(conn: Conn, roomId: string, avatarUrl?: string | null): void {
     members.set(conn.userId, entry);
   }
   entry.sockets.add(conn.socket);
-  send(conn.socket, {
-    type: 'room:joined',
-    payload: {
-      roomId,
-      members: [...members.entries()].map(([uid, e]) => publicMember(uid, e.username, e.avatarUrl)),
-    },
-  });
+  // 回执携带完整花名册（含离线成员与在线标记），客户端据此渲染 QQ 式成员列表
+  const roster = await roomRosterOf(db, roomId, conn.httpBase);
+  send(conn.socket, { type: 'room:joined', payload: { roomId, members: roster } });
   if (isNewMember) {
     broadcastToRoom(
       roomId,
@@ -139,6 +161,8 @@ function leaveRoom(conn: Conn, roomId: string): void {
     entry.sockets.delete(conn.socket);
     if (entry.sockets.size === 0) {
       members.delete(conn.userId ?? '');
+      // 该用户在此房间的最后一个连接断开 = 「离线」。
+      // 语义注意：成员关系仍在 DB 花名册中（QQ 式离线置灰），客户端不应把成员从列表移除
       broadcastToRoom(
         roomId,
         {
@@ -264,7 +288,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         conn.userId,
       ]);
       conn.avatarUrl = avatarHttpUrlOf(conn.httpBase, conn.userId, avatar.rows[0]?.avatar_url ?? null);
-      joinRoom(conn, roomId, conn.avatarUrl);
+      await joinRoom(conn, roomId, db, conn.avatarUrl);
       break;
     }
     case 'room:leave': {

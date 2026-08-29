@@ -6,7 +6,7 @@ import { useAuth } from './auth';
 import { wsUrlOf } from '../app/settings';
 import * as api from '../app/api';
 import { pushOverlayMessage } from '../app/gameMode';
-import type { UserBrief, WsStatus } from '../app/types';
+import type { RoomMember, UserBrief, WsStatus } from '../app/types';
 
 interface ChatState {
   status: WsStatus;
@@ -18,7 +18,8 @@ interface ChatState {
   /** 每房间未读消息数（非活跃房间收到新消息时累加，选中时清零） */
   unreadByRoom: Record<string, number>;
   messagesByRoom: Record<string, api.RoomMessage[]>;
-  membersByRoom: Record<string, UserBrief[]>;
+  /** 房间花名册（DB 全体成员 + 在线标记；member:left = 离线而非移除，QQ 式） */
+  membersByRoom: Record<string, RoomMember[]>;
   /** 每个房间的历史是否已加载（用于展示"加载历史中…"） */
   historyLoadedRooms: Record<string, boolean>;
   /** 每个房间是否还有更早的历史（向上翻页按钮显隐） */
@@ -268,19 +269,24 @@ export const useChat = create<ChatState>()((set, get) => ({
         case 'member:joined':
           set((s) => {
             const members = s.membersByRoom[msg.payload.roomId];
-            // 只维护已订阅房间的成员表（订阅时会收到全量成员列表）
-            if (!members || members.some((m) => m.id === msg.payload.member.id)) return s;
-            return { membersByRoom: { ...s.membersByRoom, [msg.payload.roomId]: [...members, msg.payload.member] } };
+            if (!members) return s;
+            // 已在花名册（离线成员上线）→ 置为在线并刷新资料；新成员 → 追加
+            const existing = members.some((m) => m.id === msg.payload.member.id);
+            const next = existing
+              ? members.map((m) => (m.id === msg.payload.member.id ? { ...m, ...msg.payload.member, online: true } : m))
+              : [...members, { ...msg.payload.member, online: true }];
+            return { membersByRoom: { ...s.membersByRoom, [msg.payload.roomId]: next } };
           });
           break;
         case 'member:left':
           set((s) => {
             const members = s.membersByRoom[msg.payload.roomId];
             if (!members) return s;
+            // 离线 ≠ 退房：成员仍在花名册，仅标记离线（QQ 式置灰）
             return {
               membersByRoom: {
                 ...s.membersByRoom,
-                [msg.payload.roomId]: members.filter((m) => m.id !== msg.payload.userId),
+                [msg.payload.roomId]: members.map((m) => (m.id === msg.payload.userId ? { ...m, online: false } : m)),
               },
             };
           });

@@ -140,4 +140,45 @@ describe('GameTalk room chat (integration)', () => {
     expect(statuses).toContain('reconnecting');
     s.close();
   });
+
+  it('roster keeps offline members with presence flags (QQ-style)', async () => {
+    const owner = await register('roster_owner');
+    const offlineUser = await register('roster_gray');
+    const room = await createRoom(owner.token, '花名册小队');
+
+    // 离线成员只走 REST 加入，从不开连接
+    await joinRoom(offlineUser.token, room.inviteCode);
+
+    const a = await connectAuthed(owner.token);
+    a.send({ type: 'room:join', payload: { roomId: room.id } });
+    const joined = await nextMsg(a, (m) => m.type === 'room:joined');
+    const rosterOf = () => (joined.payload as { members: Array<{ id: string; online: boolean }> }).members;
+    expect(rosterOf().find((m) => m.id === owner.userId)?.online).toBe(true);
+    expect(rosterOf().find((m) => m.id === offlineUser.userId)?.online).toBe(false);
+
+    // 离线成员上线：owner 收到 member:joined
+    const b = await connectAuthed(offlineUser.token);
+    const aSeesJoin = nextMsg(a, (m) => m.type === 'member:joined');
+    b.send({ type: 'room:join', payload: { roomId: room.id } });
+    await nextMsg(b, (m) => m.type === 'room:joined');
+    await aSeesJoin;
+
+    const resubscribe = async (): Promise<Array<{ id: string; online: boolean }>> => {
+      a.send({ type: 'room:leave', payload: { roomId: room.id } });
+      a.send({ type: 'room:join', payload: { roomId: room.id } });
+      const again = await nextMsg(a, (m) => m.type === 'room:joined');
+      return (again.payload as { members: Array<{ id: string; online: boolean }> }).members;
+    };
+    expect((await resubscribe()).find((m) => m.id === offlineUser.userId)?.online).toBe(true);
+
+    // 下线：成员保留在花名册，仅离线标记（不被移除）
+    const aSeesLeft = nextMsg(a, (m) => m.type === 'member:left');
+    b.close();
+    await aSeesLeft;
+    const after = await resubscribe();
+    const gray = after.find((m) => m.id === offlineUser.userId);
+    expect(gray).toBeTruthy();
+    expect(gray?.online).toBe(false);
+    a.close();
+  });
 });
