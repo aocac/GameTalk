@@ -24,6 +24,14 @@ export interface MentionRef {
   username: string;
 }
 
+/** 引用回复快照（随消息入库/广播，渲染不依赖原消息仍在历史窗口内） */
+export interface ReplyRef {
+  id: string;
+  username: string;
+  text: string;
+  kind: 'text' | 'image';
+}
+
 export interface ChatMessage {
   id: string;
   roomId: string;
@@ -36,6 +44,8 @@ export interface ChatMessage {
   /** 'image' 时 mediaUrl 指向图片（广播为绝对 URL，乐观期为相对路径） */
   kind?: 'text' | 'image';
   mediaUrl?: string | null;
+  /** 引用回复的原消息快照 */
+  reply?: ReplyRef;
   /** 已撤回：内容已清空，渲染占位文案 */
   recalled?: boolean;
   /** 客户端本地字段：乐观发送未确认时标记（真实服务器消息无此字段） */
@@ -51,7 +61,7 @@ export type ClientWsMessage =
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
   | { type: 'member:mute'; payload: { roomId: string; userId: string; minutes: number } }
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
-  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string } }
+  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string; replyTo?: string } }
   | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
   | { type: 'ping' };
 

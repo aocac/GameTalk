@@ -38,6 +38,11 @@ interface MessageRow extends QueryResultRow {
   kind: string;
   media_url: string | null;
   recalled: boolean;
+  reply_to: string | null;
+  reply_username: string | null;
+  reply_text: string | null;
+  reply_kind: string | null;
+  reply_recalled: boolean;
 }
 
 export interface PublicRoom {
@@ -189,9 +194,12 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
 
     const res = await db.query<MessageRow>(
       `SELECT * FROM (
-         SELECT m.id, m.room_id, m.user_id, m.username, u.avatar_url, m.text, m.mentions, m.kind, m.media_url, m.recalled, m.created_at
+         SELECT m.id, m.room_id, m.user_id, m.username, u.avatar_url, m.text, m.mentions, m.kind, m.media_url, m.recalled,
+                m.reply_to, r.username AS reply_username, r.text AS reply_text, r.kind AS reply_kind, r.recalled AS reply_recalled,
+                m.created_at
          FROM messages m
          LEFT JOIN users u ON u.id = m.user_id
+         LEFT JOIN messages r ON r.id = m.reply_to
          WHERE m.room_id = $1
            AND ($2::uuid IS NULL OR (m.created_at, m.id) < (SELECT created_at, id FROM messages WHERE id = $2))
          ORDER BY m.created_at DESC, m.id DESC
@@ -216,6 +224,14 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
       kind: m.kind ?? 'text',
       mediaUrl: m.media_url ? `${base}${m.media_url}` : null,
       recalled: m.recalled ?? false,
+      reply: m.reply_to
+        ? {
+            id: m.reply_to,
+            username: m.reply_username ?? '',
+            text: m.reply_recalled ? '消息已撤回' : String(m.reply_text ?? '').slice(0, 80),
+            kind: (m.reply_kind === 'image' ? 'image' : 'text') as 'image' | 'text',
+          }
+        : undefined,
     }));
     await reply.send({ messages, hasMore });
   });

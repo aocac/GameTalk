@@ -184,6 +184,29 @@ function renderMentions(text: string, mentions?: MentionRef[]): string | ReactEl
   return <>{parts}</>;
 }
 
+/** 复制图片到剪贴板（非 PNG 先经 canvas 转 PNG；剪贴板不支持时给出提示） */
+async function copyImageToClipboard(url: string): Promise<void> {
+  try {
+    if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
+      throw new Error('clipboard unsupported');
+    }
+    const res = await fetch(url);
+    const blob = await res.blob();
+    let png = blob;
+    if (blob.type !== 'image/png') {
+      const bmp = await createImageBitmap(blob);
+      const c = document.createElement('canvas');
+      c.width = bmp.width;
+      c.height = bmp.height;
+      c.getContext('2d')!.drawImage(bmp, 0, 0);
+      png = await new Promise<Blob>((resolve) => c.toBlob((b) => resolve(b!), 'image/png'));
+    }
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+  } catch {
+    useChat.setState({ roomError: '复制图片失败（剪贴板不可用或图片加载失败）' });
+  }
+}
+
 /** 通知中心面板：@提及 / 好友事件聚合（会话级） */
 function NotificationPanel({
   onGoRoom,
@@ -860,10 +883,13 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(1);
   const [lightboxOffset, setLightboxOffset] = useState({ x: 0, y: 0 });
-  const lightboxDrag = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const lightboxDrag = useRef<{ id: number; sx: number; sy: number; ox: number; oy: number; lx: number; ly: number } | null>(null);
+  const lightboxMoved = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   /** 待发送图片附件：上传完成后先挂起，可配文字，手动发送 */
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  /** 引用回复：待回复的原消息（发送后气泡内渲染引用块） */
+  const [replyTo, setReplyTo] = useState<RoomMessage | null>(null);
   const {
     friends,
     incoming: friendIncoming,
@@ -920,11 +946,24 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     const picks = [...pickedMentions.current.entries()]
       .filter(([, name]) => draft.includes(`@${name}`))
       .map(([id]) => id);
-    sendMessage(draft.trim(), picks, pendingImage ?? undefined);
+    sendMessage(draft.trim(), {
+      mentions: picks,
+      mediaUrl: pendingImage ?? undefined,
+      replyTo: replyTo?.id,
+      reply: replyTo
+        ? {
+            id: replyTo.id,
+            username: replyTo.username,
+            text: replyTo.kind === 'image' ? '[图片]' : replyTo.recalled ? '消息已撤回' : replyTo.text.slice(0, 80),
+            kind: replyTo.kind === 'image' ? 'image' : 'text',
+          }
+        : undefined,
+    });
     pickedMentions.current.clear();
     setDraft('');
     setMentionQuery(null);
     setPendingImage(null);
+    setReplyTo(null);
   };
 
   // 相对媒体路径 → 绝对 URL（乐观消息里是 /api/media/:id 相对路径）
@@ -1035,6 +1074,40 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const handleAddFriend = async () => {
     if (await sendRequest(addFriendInput.trim())) setAddFriendInput('');
   };
+
+  // 灯箱拖拽（window 级 mouse 监听，松手必停；拖拽结束的那次点击不关闭灯箱）
+  useEffect(() => {
+    if (!lightbox) return;
+    const onMove = (e: MouseEvent) => {
+      const d = lightboxDrag.current;
+      if (!d) return;
+      // 关键兜底：部分环境 mouseup 会丢（拖出窗口/合成输入），move 时按键已松开即结束拖拽
+      if (e.buttons === 0) {
+        setLightboxOffset({ x: d.ox + (e.clientX - d.sx), y: d.oy + (e.clientY - d.sy) });
+        lightboxDrag.current = null;
+        return;
+      }
+      const dx = e.clientX - d.sx;
+      const dy = e.clientY - d.sy;
+      if (Math.abs(dx) + Math.abs(dy) > 3) lightboxMoved.current = true;
+      d.lx = e.clientX;
+      d.ly = e.clientY;
+      setLightboxOffset({ x: d.ox + dx, y: d.oy + dy });
+    };
+    const onUp = () => {
+      const d = lightboxDrag.current;
+      if (!d) return;
+      // 定格到最后一次已知位置（合成的 up 事件坐标不可信）
+      setLightboxOffset({ x: d.ox + (d.lx - d.sx), y: d.oy + (d.ly - d.sy) });
+      lightboxDrag.current = null;
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [lightbox]);
 
   /** 成员菜单/@提及：把 @昵称 插入草稿并登记提及，光标落回输入框 */
   const mentionFromMenu = (m: UserBrief) => {
@@ -1324,7 +1397,17 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       <main className="main">
         <header className="topbar">
           <div className="topbar-title">
-            <span className="hash">#</span>
+            {activeRoom && !offline ? (
+              <span
+                className="topbar-avatar"
+                aria-hidden
+                style={{ background: `hsl(${[...(activeRoom.name || '#')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7)} 32% 42%)` }}
+              >
+                {(activeRoom.name || '#').slice(0, 1)}
+              </span>
+            ) : (
+              <span className="hash">#</span>
+            )}
             <span>{offline ? '离线模式' : (activeRoom?.name ?? '未选择房间')}</span>
             {activeRoom && !offline && <span className="me-tag">邀请码 {activeRoom.inviteCode}</span>}
           </div>
@@ -1433,16 +1516,39 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                     <span>{formatDay(m.createdAt)}</span>
                   </div>
                 )}
-                <div
-                  className={`message ${m.userId === me?.id ? 'mine' : ''} ${grouped ? 'grouped' : ''} ${m.pending ? 'pending' : ''}`}
-                  onContextMenu={(e) => {
-                    if (offline || m.pending || m.recalled) return;
-                    e.preventDefault();
-                    setMsgMenu({ msg: m, x: Math.min(e.clientX, window.innerWidth - 190), y: Math.min(e.clientY, window.innerHeight - 170) });
-                  }}
-                >
-                  <Avatar name={m.username} url={m.avatarUrl} size={30} />
-                  <div className="message-body">
+                <div className={`message ${m.userId === me?.id ? 'mine' : ''} ${grouped ? 'grouped' : ''} ${m.pending ? 'pending' : ''}`}>
+                  <span
+                    className="message-avatar"
+                    onContextMenu={(e) => {
+                      if (offline || m.pending) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const live = members.find((x) => x.id === m.userId);
+                      setMemberMenu({
+                        member: {
+                          id: m.userId,
+                          username: m.username,
+                          avatarUrl: m.avatarUrl ?? null,
+                          online: live?.online ?? false,
+                          mutedUntil: live?.mutedUntil ?? null,
+                        },
+                        x: Math.min(e.clientX, window.innerWidth - 200),
+                        y: Math.min(e.clientY, window.innerHeight - 300),
+                        confirmKick: false,
+                      });
+                    }}
+                  >
+                    <Avatar name={m.username} url={m.avatarUrl} size={30} />
+                  </span>
+                  <div
+                    className="message-body"
+                    onContextMenu={(e) => {
+                      if (offline || m.pending || m.recalled) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setMsgMenu({ msg: m, x: Math.min(e.clientX, window.innerWidth - 190), y: Math.min(e.clientY, window.innerHeight - 170) });
+                    }}
+                  >
                     <div className="message-head">
                       <span className="message-author">{m.username}</span>
                       <span className="message-time">{m.pending ? '发送中…' : new Date(m.createdAt).toLocaleTimeString()}</span>
@@ -1451,6 +1557,12 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                       <div className="message-recalled">{m.userId === me?.id ? '你撤回了一条消息' : '消息已撤回'}</div>
                     ) : (
                       <>
+                        {m.reply && (
+                          <div className="message-quote">
+                            <span className="message-quote-name">{m.reply.username}</span>
+                            <span className="message-quote-text">{m.reply.kind === 'image' ? '[图片]' : m.reply.text}</span>
+                          </div>
+                        )}
                         {m.kind === 'image' && m.mediaUrl && (
                           <img
                             className="msg-image"
@@ -1523,6 +1635,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               <img className="attachment-thumb" src={absUrl(pendingImage)} alt="待发送图片" />
               <span className="attachment-name">图片已上传，可配文字后发送</span>
               <button className="attachment-remove" title="移除图片" onClick={() => setPendingImage(null)}>
+                ×
+              </button>
+            </div>
+          )}
+          {replyTo && (
+            <div className="reply-bar">
+              <span className="reply-label">回复 {replyTo.username}</span>
+              <span className="reply-snippet">{replyTo.kind === 'image' ? '[图片]' : replyTo.recalled ? '消息已撤回' : replyTo.text}</span>
+              <button className="attachment-remove" title="取消引用" onClick={() => setReplyTo(null)}>
                 ×
               </button>
             </div>
@@ -1830,16 +1951,21 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                 复制
               </button>
             )}
+            {msgMenu.msg.kind === 'image' && msgMenu.msg.mediaUrl && (
+              <button
+                className="ctx-menu-item"
+                onClick={() => {
+                  void copyImageToClipboard(absUrl(msgMenu.msg.mediaUrl!));
+                  setMsgMenu(null);
+                }}
+              >
+                复制图片
+              </button>
+            )}
             <button
               className="ctx-menu-item"
               onClick={() => {
-                const snippet = msgMenu.msg.text.length > 40 ? `${msgMenu.msg.text.slice(0, 40)}…` : msgMenu.msg.text;
-                const line =
-                  msgMenu.msg.kind === 'image'
-                    ? `『回复 ${msgMenu.msg.username}：[图片]』`
-                    : `『回复 ${msgMenu.msg.username}：${snippet}』`;
-                setDraft((d) => (d ? `${line}\n${d}` : `${line} `));
-                composerRef.current?.focus();
+                setReplyTo(msgMenu.msg);
                 setMsgMenu(null);
               }}
             >
@@ -1899,23 +2025,23 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       {lightbox && (
         <div
           className="modal-mask lightbox"
-          onClick={() => setLightbox(null)}
+          onClick={() => {
+            // 拖拽平移结束的那次点击不关闭灯箱
+            if (lightboxMoved.current) {
+              lightboxMoved.current = false;
+              return;
+            }
+            setLightbox(null);
+          }}
           onWheel={(e) => {
             setLightboxZoom((z) => Math.min(8, Math.max(0.2, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))));
           }}
           onMouseDown={(e) => {
-            if (lightboxZoom > 1) lightboxDrag.current = { sx: e.clientX, sy: e.clientY, ox: lightboxOffset.x, oy: lightboxOffset.y };
+            if (lightboxZoom <= 1) return;
+            // 拖拽用 window 级 mouse 监听（组件挂载期注册）：松手必停
+            lightboxDrag.current = { id: 0, sx: e.clientX, sy: e.clientY, ox: lightboxOffset.x, oy: lightboxOffset.y, lx: e.clientX, ly: e.clientY };
+            lightboxMoved.current = false;
           }}
-          onMouseMove={(e) => {
-            if (lightboxDrag.current) {
-              setLightboxOffset({
-                x: lightboxDrag.current.ox + (e.clientX - lightboxDrag.current.sx),
-                y: lightboxDrag.current.oy + (e.clientY - lightboxDrag.current.sy),
-              });
-            }
-          }}
-          onMouseUp={() => (lightboxDrag.current = null)}
-          onMouseLeave={() => (lightboxDrag.current = null)}
         >
           <img
             src={lightbox}
@@ -1953,7 +2079,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       {showRoomModal && (
         <div className="modal-mask" onClick={() => setShowRoomModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>创建 / 加入房间</h3>            <label className="field">
+            <h3>创建 / 加入房间</h3>
+            <label className="field">
               <span>创建房间（输入名称）</span>
               <input
                 value={roomName}

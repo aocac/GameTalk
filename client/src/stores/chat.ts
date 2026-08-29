@@ -8,7 +8,15 @@ import { useNotifications } from './notifications';
 import { wsUrlOf } from '../app/settings';
 import * as api from '../app/api';
 import { pushOverlayMessage } from '../app/gameMode';
-import type { RoomMember, UserBrief, WsStatus } from '../app/types';
+import type { ChatMessage, RoomMember, UserBrief, WsStatus } from '../app/types';
+
+/** 发送消息的可选项：提及、图片附件、引用回复 */
+export interface SendOptions {
+  mentions?: string[];
+  mediaUrl?: string;
+  replyTo?: string;
+  reply?: ChatMessage['reply'];
+}
 
 interface ChatState {
   status: WsStatus;
@@ -50,7 +58,7 @@ interface ChatState {
   muteMember: (roomId: string, userId: string, minutes: number) => void;
   unmuteMember: (roomId: string, userId: string) => void;
   recallMessage: (roomId: string, messageId: string) => void;
-  sendMessage: (text: string, mentions?: string[], mediaUrl?: string) => void;
+  sendMessage: (text: string, opts?: SendOptions) => void;
   clearRoomError: () => void;
 }
 
@@ -150,16 +158,16 @@ function clearPending(): void {
 }
 
 /** 待发送队列：订阅未就绪时先排队（可多条），room:joined 后按序自动发出（游戏内呼出发送场景） */
-let queuedSends: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string }[] = [];
+let queuedSends: { roomId: string; text: string; opts?: SendOptions }[] = [];
 
 /** 乐观上屏：把用户刚发的消息立即显示（pending 标记），服务器确认后校正 */
-function appendOptimistic(roomId: string, text: string, mentions?: string[], mediaUrl?: string): void {
+function appendOptimistic(roomId: string, text: string, opts?: SendOptions): void {
   const me = useChat.getState().me;
   if (!me) return;
   const tempId = `tmp-${Date.now()}-${++pendingSeq}`;
   appendPending(roomId, tempId);
   // 提及快照仅带 id：高亮在确认消息上由服务器快照完成，乐观期先不做用户名匹配
-  const mentionRefs = (mentions ?? []).filter((id) => id !== me.id).map((id) => ({ id, username: '' }));
+  const mentionRefs = (opts?.mentions ?? []).filter((id) => id !== me.id).map((id) => ({ id, username: '' }));
   useChat.setState((s) => ({
     messagesByRoom: {
       ...s.messagesByRoom,
@@ -174,8 +182,9 @@ function appendOptimistic(roomId: string, text: string, mentions?: string[], med
           text,
           createdAt: new Date().toISOString(),
           mentions: mentionRefs,
-          kind: mediaUrl ? 'image' : 'text',
-          mediaUrl: mediaUrl ?? null,
+          kind: opts?.mediaUrl ? 'image' : 'text',
+          mediaUrl: opts?.mediaUrl ?? null,
+          reply: opts?.reply,
           pending: true,
         },
       ],
@@ -184,8 +193,8 @@ function appendOptimistic(roomId: string, text: string, mentions?: string[], med
 }
 
 /** 真正发送（不负责乐观上屏，由调用方决定） */
-function doSend(roomId: string, text: string, mentions?: string[], mediaUrl?: string): void {
-  const ok = socket?.send({ type: 'message:send', payload: { roomId, text, mentions, mediaUrl } });
+function doSend(roomId: string, text: string, opts?: SendOptions): void {
+  const ok = socket?.send({ type: 'message:send', payload: { roomId, text, mentions: opts?.mentions, mediaUrl: opts?.mediaUrl, replyTo: opts?.replyTo } });
   if (ok) playSendSound(useSettings.getState().soundEnabled);
 }
 
@@ -280,7 +289,7 @@ export const useChat = create<ChatState>()((set, get) => ({
             const ready = queuedSends.filter((q) => q.roomId === msg.payload.roomId);
             if (ready.length > 0) {
               queuedSends = queuedSends.filter((q) => q.roomId !== msg.payload.roomId);
-              for (const q of ready) doSend(q.roomId, q.text, q.mentions, q.mediaUrl);
+              for (const q of ready) doSend(q.roomId, q.text, q.opts);
             }
           }
           break;
@@ -675,9 +684,9 @@ export const useChat = create<ChatState>()((set, get) => ({
     socket.send({ type: 'message:recall', payload: { roomId, messageId } });
   },
 
-  sendMessage: (text, mentions, mediaUrl) => {
+  sendMessage: (text, opts) => {
     const trimmed = text.trim();
-    if (!trimmed && !mediaUrl) return;
+    if (!trimmed && !opts?.mediaUrl) return;
     const { activeRoomId, subscribedRoomIds, status, rooms } = get();
     let target = activeRoomId;
 
@@ -695,14 +704,14 @@ export const useChat = create<ChatState>()((set, get) => ({
 
     // 订阅/连接未就绪：乐观上屏 + 排队，就绪（room:joined）后自动发送
     if (status !== 'open' || !subscribedRoomIds.includes(target)) {
-      appendOptimistic(target, trimmed, mentions, mediaUrl);
-      queuedSends.push({ roomId: target, text: trimmed, mentions, mediaUrl });
+      appendOptimistic(target, trimmed, opts);
+      queuedSends.push({ roomId: target, text: trimmed, opts });
       set({ roomError: null });
       return;
     }
 
-    doSend(target, trimmed, mentions, mediaUrl);
-    appendOptimistic(target, trimmed, mentions, mediaUrl);
+    doSend(target, trimmed, opts);
+    appendOptimistic(target, trimmed, opts);
   },
 
   clearRoomError: () => set({ roomError: null }),

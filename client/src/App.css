@@ -2157,3 +2157,125 @@ body {
 .lightbox-close:hover {
   background: rgba(20, 22, 28, 0.9);
 }
+
+/* ===== v0.4.1 反馈修复：hover 治理 / 引用气泡 / 回复条 / 打磨 ===== */
+
+/* 整行 hover 灰底移除：交互面限定在气泡本体与头像 */
+.message:hover {
+  background: transparent;
+}
+
+.message-avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* 气泡内引用块（微信/QQ 式） */
+.message-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 9px;
+  margin: 0 0 6px;
+  background: rgba(51, 112, 255, 0.07);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  max-width: 420px;
+}
+
+.message.mine .message-quote {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.message-quote-name {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.message-quote-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 输入区引用回复条 */
+.reply-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  background: var(--accent-soft);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--accent);
+}
+
+.reply-label {
+  font-size: 12.5px;
+  color: var(--accent);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.reply-snippet {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ===== 打磨：顶栏房间块 / 气泡质感 / 成员面板 / 分隔线 / 滚动条 ===== */
+.topbar-avatar {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.message-body {
+  padding: 9px 13px;
+}
+
+.message-text {
+  line-height: 1.55;
+}
+
+.day-divider span {
+  background: var(--surface-3);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 12px;
+}
+
+.members-panel {
+  background: #fbfcfe;
+  border-left: 1px solid var(--border);
+}
+
+.members-header {
+  padding: 12px 10px 6px;
+}
+
+.messages::-webkit-scrollbar {
+  width: 8px;
+}
+
+.messages::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.messages::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}

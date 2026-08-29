@@ -50,6 +50,8 @@ interface ChatMessage {
   /** 'image' 时 mediaUrl 指向 /api/media/:id（对外转绝对 URL） */
   kind?: 'text' | 'image';
   mediaUrl?: string | null;
+  /** 引用回复的原消息快照 */
+  reply?: ReplyRef;
   /** 已撤回：内容已清空，客户端渲染占位文案 */
   recalled?: boolean;
 }
@@ -57,6 +59,14 @@ interface ChatMessage {
 interface MentionRef {
   id: string;
   username: string;
+}
+
+/** 引用回复快照：随消息入库/广播，渲染不依赖原消息仍在客户端历史窗口内 */
+interface ReplyRef {
+  id: string;
+  username: string;
+  text: string;
+  kind: 'text' | 'image';
 }
 
 /** 房间花名册成员 = 全体 DB 成员 + 当前在线标记（QQ 式：离线成员也展示，灰头像） */
@@ -77,7 +87,7 @@ type ClientMessage =
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
   | { type: 'member:mute'; payload: { roomId: string; userId: string; minutes: unknown } }
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
-  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown } }
+  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown; replyTo?: unknown } }
   | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
   | { type: 'ping' };
 
@@ -578,11 +588,37 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         kind = 'image';
         storedMediaUrl = mediaUrl;
       }
-      // 持久化后再广播（Phase 4：消息历史；v0.4.0：提及解析入库 + 图片消息）
+      // 引用回复：校验同房间原消息；快照（截断 80 字，原消息已撤回则占位）随消息入库与广播
+      let replyTo: string | null = null;
+      let reply: ReplyRef | undefined;
+      const rawReply = typeof msg.payload.replyTo === 'string' ? msg.payload.replyTo : '';
+      if (rawReply) {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawReply)) {
+          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid reply id' } });
+          return;
+        }
+        const r = await db.query<{ id: string; username: string; text: string; kind: string; recalled: boolean }>(
+          'SELECT id, username, text, kind, recalled FROM messages WHERE id = $1 AND room_id = $2',
+          [rawReply, roomId],
+        );
+        const row = r.rows[0];
+        if (!row) {
+          send(conn.socket, { type: 'error', payload: { code: 'message_not_found', message: 'reply target not found' } });
+          return;
+        }
+        replyTo = rawReply;
+        reply = {
+          id: row.id,
+          username: row.username,
+          text: row.recalled ? '消息已撤回' : row.text.slice(0, 80),
+          kind: (row.kind === 'image' ? 'image' : 'text') as 'image' | 'text',
+        };
+      }
+      // 持久化后再广播（Phase 4：消息历史；v0.4.0：提及解析入库 + 图片消息；v0.4.1：引用回复）
       const mentions = await resolveMentions(db, roomId, conn.userId, text, msg.payload.mentions);
       const inserted = await db.query<{ id: string; created_at: string; mentions: MentionRef[] }>(
-        'INSERT INTO messages (room_id, user_id, username, text, mentions, kind, media_url) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) RETURNING id, created_at, mentions',
-        [roomId, conn.userId, conn.username, text, JSON.stringify(mentions), kind, storedMediaUrl],
+        'INSERT INTO messages (room_id, user_id, username, text, mentions, kind, media_url, reply_to) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8) RETURNING id, created_at, mentions',
+        [roomId, conn.userId, conn.username, text, JSON.stringify(mentions), kind, storedMediaUrl, replyTo],
       );
       const row = inserted.rows[0];
       const message: ChatMessage = {
@@ -597,6 +633,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         kind,
         // 广播用发送者的 httpBase 转绝对 URL（与头像策略一致）
         mediaUrl: storedMediaUrl ? `${conn.httpBase}${storedMediaUrl}` : null,
+        reply,
       };
       broadcastToRoom(roomId, { type: 'message:new', payload: { roomId, message } });
       break;

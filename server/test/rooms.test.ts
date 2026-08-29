@@ -530,4 +530,42 @@ describe('realtime + persistence', () => {
     wsO.close();
     wsM.close();
   });
+
+  it('reply: snapshot rides broadcast and history; invalid target rejected; recalled target shows placeholder', async () => {
+    const owner = await registerUser('reply_owner');
+    const { room } = (
+      await app.inject({ method: 'POST', url: '/api/rooms', headers: auth(owner.token), payload: { name: 'ReplyRoom' } })
+    ).json();
+
+    const ws = await connectWs(owner.token);
+    ws.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    await nextMessage(ws, (m) => m.type === 'room:joined');
+
+    const got1 = nextMessage(ws, (m) => m.type === 'message:new');
+    ws.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '原始消息' } }));
+    const original = (await got1).payload.message;
+
+    // 引用回复：广播带快照
+    const got2 = nextMessage(ws, (m) => m.type === 'message:new');
+    ws.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '这是回复', replyTo: original.id } }));
+    const replyMsg = (await got2).payload.message;
+    expect(replyMsg.reply).toMatchObject({ id: original.id, username: 'reply_owner', text: '原始消息', kind: 'text' });
+
+    // 原消息撤回后，历史里回复的快照显示占位（快照在发送时定格，历史按原消息现状联查）
+    const recallEv = nextMessage(ws, (m) => m.type === 'message:recalled');
+    ws.send(JSON.stringify({ type: 'message:recall', payload: { roomId: room.id, messageId: original.id } }));
+    await recallEv;
+
+    // 非法 replyTo → invalid_input
+    const e = nextMessage(ws, (m) => m.type === 'error');
+    ws.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: 'x', replyTo: 'not-a-uuid' } }));
+    expect((await e).payload.code).toBe('invalid_input');
+
+    // 历史：回复快照指向已撤回原消息 → 占位文案
+    const hist = await app.inject({ method: 'GET', url: `/api/rooms/${room.id}/messages`, headers: auth(owner.token) });
+    const { messages } = hist.json();
+    const replyHis = messages.find((m: any) => m.id === replyMsg.id);
+    expect(replyHis.reply.text).toBe('消息已撤回');
+    ws.close();
+  });
 });
