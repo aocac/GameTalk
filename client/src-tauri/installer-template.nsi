@@ -229,8 +229,10 @@ Function PageReinstall
 
   nsis_tauri_utils::SemverCompare "${VERSION}" $R0
   Pop $R0
-  ; GameTalk 定制：升级安装（新版本 > 已安装）直接覆盖升级、跳过「安装前卸载」页（主流软件行为）；
-  ; 同版本重装与降级仍显示原选择页。运行中的旧进程由 installer-hooks.nsh 的 PREINSTALL 钩子结束。
+  ; GameTalk custom: upgrading (new version > installed) proceeds directly without
+  ; the uninstall-first page (mainstream installer behavior). Same-version reinstall
+  ; and downgrade still show the original choice page. A running old process is
+  ; terminated by the PREINSTALL hook in installer-hooks.nsh.
   ${If} $R0 = 1
     Abort
   ${EndIf}
