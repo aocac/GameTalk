@@ -16,11 +16,16 @@ export interface OverlayPositionState {
   y: number;
 }
 
+/** Windows 系统通知档位：all=全部他人消息 / mention=仅 @我 与私聊 / none=不弹系统通知 */
+export type NotifyLevel = 'all' | 'mention' | 'none';
+
 export interface AppSettings {
   /** 服务端地址（REST），WS 地址由此推导 */
   serverUrl: string;
   /** 消息提示音开关 */
   soundEnabled: boolean;
+  /** Windows 系统通知档位 */
+  notifyLevel: NotifyLevel;
   /** 游戏模式开关 */
   gameModeEnabled: boolean;
   /** 呼出输入框的全局快捷键 */
@@ -41,6 +46,7 @@ export interface AppSettings {
   proxyAddress: string;
   setServerUrl: (url: string) => void;
   setSoundEnabled: (v: boolean) => void;
+  setNotifyLevel: (v: NotifyLevel) => void;
   setGameModeEnabled: (v: boolean) => void;
   setHotkey: (v: string) => void;
   setOverlayPosition: (v: OverlayPosition) => void;
@@ -90,6 +96,7 @@ export const useSettings = create<AppSettings>()(
     (set) => ({
       serverUrl: DEFAULT_SERVER_URL,
       soundEnabled: true,
+      notifyLevel: 'mention',
       gameModeEnabled: true,
       hotkey: DEFAULT_HOTKEY,
       overlayPosition: 'top-left',
@@ -101,6 +108,7 @@ export const useSettings = create<AppSettings>()(
       proxyAddress: '',
       setServerUrl: (serverUrl) => set({ serverUrl: serverUrl.trim().replace(/\/+$/, '') }),
       setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
+      setNotifyLevel: (notifyLevel) => set({ notifyLevel }),
       setGameModeEnabled: (gameModeEnabled) => set({ gameModeEnabled }),
       setHotkey: (hotkey) => set({ hotkey: hotkey.trim() || DEFAULT_HOTKEY }),
       setOverlayPosition: (overlayPosition) => set({ overlayPosition }),

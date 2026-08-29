@@ -87,7 +87,7 @@ gametalk/
 {"type":"member:muted","payload":{"roomId":"...","userId":"...","mutedUntil":"..."}}
 {"type":"member:unmuted","payload":{"roomId":"...","userId":"..."}}
 {"type":"message:new","payload":{"roomId":"...","message":{...,"mentions":[{"id":"...","username":"..."}],"kind":"text|image","mediaUrl":"..."}}}
-{"type":"message:recalled","payload":{"roomId":"...","messageId":"..."}}
+{"type":"message:recalled","payload":{"roomId":"...","messageId":"...","operatorId":"...","operatorUsername":"..."}}
 {"type":"message:edited","payload":{"roomId":"...","messageId":"...","text":"...","editedAt":"..."}}
 {"type":"dm:new","payload":{"message":{"id":"...","from":"...","to":"...","username":"...","text":"...","kind":"text|image","mediaUrl":null,"recalled":false}}}
 {"type":"dm:recalled","payload":{"messageId":"...","from":"...","to":"..."}}
@@ -106,7 +106,7 @@ gametalk/
 
 **花名册与在线状态**：房间成员关系持久于 DB（`room_members`），`room:joined` 回执返回**完整花名册**（含离线成员）+ 实时 `online` 标记（由内存连接表推导）。`member:joined` = 新成员进房或离线成员上线；`member:left` = 该用户最后一个连接断开（语义为「离线」而非移除，客户端置灰保留）。好友上/下线额外广播 `presence:friend` 给其在线好友。
 
-**提及**：服务端解析消息——客户端显式 picks（成员校验）∪ 文本 `@用户名` 兜底匹配（用户名唯一，按名精确匹配），剔除自己后以 `[{id, username}]` 快照入库（历史渲染不依赖成员表）；广播与历史均携带。被提及者客户端累计 @未读并推送通知中心。
+**提及**：服务端解析消息——客户端显式 picks（成员校验）∪ 文本 `@用户名` 兜底匹配（用户名唯一，按名精确匹配），剔除自己后以 `[{id, username}]` 快照入库（历史渲染不依赖成员表）；广播与历史均携带。被提及者客户端累计 @未读（橙色角标）；Windows 系统通知按设置档位弹出。
 
 **禁言**：`member:mute`（仅房主、1 分钟–30 天、不能禁言自己/房主）写 `room_mutes` 并广播 `member:muted`；`message:send` 对生效中的禁言回 `error(code=muted, mutedUntil)`；到期自动失效（惰性判断），`member:unmute` 提前解除。花名册携带 `mutedUntil` 供全员展示禁言标签。
 
@@ -115,6 +115,8 @@ gametalk/
 **好友**：`friendships`（pending/accepted，双向唯一）；支持 userId / 用户名 / `#8 位短 ID` 查找；反向申请等价于互加。实时事件（`friend:request/accepted/declined/removed`）经 WS 推送在线方。好友与房间完全分离管理。
 
 **好友私聊（DM）**：仅 accepted 好友可互发（`dm:send` 服务端校验，非好友回 `not_friends`）。独立 `dm_messages` 表（与房间消息分离，无提及/禁言语义），消息含 `from/to/username 快照/kind/media_url/reply_to/recalled`；持久化后向**双方所有连接**广播 `dm:new`（发送者自己也收到，多端一致）。撤回 `dm:recall` 仅发送者本人（无房主概念，他人撤回回 `only_sender`），广播 `dm:recalled`，内容清空。REST：`GET /api/dm/conversations`（DISTINCT ON 聚合每会话最后一条，侧栏预览一次拉齐）、`GET /api/dm/:peerId/messages`（游标分页，非好友 403）。删除好友不删历史（重新加好友后消息仍在，UI 隐藏会话）。客户端：乐观发送 + 按序校正，`activeDmPeerId` 与 `activeRoomId` 互斥表达活跃会话。
+
+**撤回操作者**：`message:recalled` 广播与 REST 历史均携带 `recalledBy`（房主代撤时 ≠ 消息作者）；客户端撤回行据此刻画——自己撤「你撤回了一条消息」、作者撤「XX撤回了一条消息」、房主代撤「房主撤回了 XX 的消息」；侧栏预览同步操作者。旧数据 recalled_by 为空回落作者。
 
 **消息编辑**：`message:edit` / `dm:edit`（仅发送者本人、未撤回、文本非空；他人编辑回 `only_sender`，撤回后不可编辑回 `message_not_found`）。编辑只更新 `text` 并记 `edited_at`（原版本不保留，微信/QQ 式），广播 `message:edited` / `dm:edited` 携带新文本与时间；REST 历史与广播均带 `editedAt` 供客户端展示「已编辑」小标。房间与私聊语义一致。
 
@@ -144,6 +146,7 @@ gametalk/
 - `009_replies`：`messages.reply_to`（引用回复）
 - `010_dm_messages`：`dm_messages`（好友私聊，双向索引）
 - `011_edited`：`messages.edited_at` / `dm_messages.edited_at`（消息编辑）
+- `012_recalled_by`：`messages.recalled_by`（撤回操作者，房主代撤文案用）
 
 ## 6. 游戏 Overlay（透明置顶窗口方案）
 

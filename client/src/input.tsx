@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { emit } from '@tauri-apps/api/event';
+import { emit, listen } from '@tauri-apps/api/event';
 import './input.css';
 
 // 游戏内输入框同样是桌面窗口：屏蔽网页右键菜单（输入框自身保留）
@@ -12,8 +12,23 @@ document.addEventListener('contextmenu', (e) => {
 
 function InputApp() {
   const [text, setText] = useState('');
+  /** 当前发送目标（主窗口下发；左右箭头可循环切换房间/私聊） */
+  const [target, setTarget] = useState({ name: '未选择', prefix: '#' });
   const ref = useRef<HTMLInputElement>(null);
   const gotFocus = useRef(false);
+
+  useEffect(() => {
+    const off = listen<{ name: string; prefix: string }>('game-input-context', (e) => {
+      setTarget({ name: String(e.payload?.name ?? ''), prefix: String(e.payload?.prefix ?? '#') });
+    });
+    return () => {
+      void off.then((fn) => fn());
+    };
+  }, []);
+
+  const cycleTarget = (dir: 1 | -1) => {
+    void emit('game-input-cycle', { dir });
+  };
 
   useEffect(() => {
     // 窗口显示后聚焦输入框
@@ -45,7 +60,7 @@ function InputApp() {
 
   return (
     <div className="input-shell">
-      <span className="input-prefix">#</span>
+      <span className="input-prefix">{target.prefix}</span>
       <input
         ref={ref}
         className="input-box"
@@ -70,6 +85,15 @@ function InputApp() {
         发送
       </button>
       <span className="input-hint">Enter ↵</span>
+      <span className="input-target" title="发送目标，箭头切换房间/私聊">
+        <button className="input-cycle" onClick={() => cycleTarget(-1)}>
+          ‹
+        </button>
+        <span className="input-target-name">{target.name}</span>
+        <button className="input-cycle" onClick={() => cycleTarget(1)}>
+          ›
+        </button>
+      </span>
     </div>
   );
 }

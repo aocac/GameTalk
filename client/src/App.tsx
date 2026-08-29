@@ -4,7 +4,6 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useChat } from './stores/chat';
 import { useFriends } from './stores/friends';
-import { useNotifications } from './stores/notifications';
 import * as api from './app/api';
 import type { MentionRef, RoomMember, UserBrief } from './app/types';
 import type { RoomMessage } from './app/api';
@@ -54,6 +53,14 @@ function StatusDot({ status }: { status: string }) {
       {s.label}
     </span>
   );
+}
+
+/** 撤回行文案：操作者 = 我 →「你撤回了…」；操作者 = 作者 →「XX撤回了一条消息」；房主代撤 →「房主撤回了 XX 的消息」 */
+function recallLineOf(m: { userId: string; username: string; recalledBy?: { id: string; username: string } }, meId?: string): string {
+  const op = m.recalledBy ?? { id: m.userId, username: m.username };
+  if (meId && op.id === meId) return '你撤回了一条消息';
+  if (op.id === m.userId) return `${op.username}撤回了一条消息`;
+  return `${op.username}撤回了 ${m.username} 的消息`;
 }
 
 /** 右键菜单容器：渲染后按实际尺寸夹紧视口边界（防菜单底部/右侧被窗口裁切） */
@@ -241,7 +248,7 @@ async function copyImageToClipboard(url: string): Promise<void> {
 
 /** 打开独立设置窗口（Tauri 运行时创建；浏览器调试回退为普通标签页）。
  *  section：可选初始分类；窗口已存在时发导航事件而不是重建 */
-async function openSettingsWindow(section?: 'general' | 'game' | 'overlay' | 'about'): Promise<void> {
+async function openSettingsWindow(section?: 'general' | 'notify' | 'game' | 'overlay' | 'about'): Promise<void> {
   const { emit } = await import('@tauri-apps/api/event');
   const existing = await import('@tauri-apps/api/webviewWindow')
     .then(({ WebviewWindow }) => WebviewWindow.getByLabel('settings'))
@@ -271,55 +278,6 @@ async function openSettingsWindow(section?: 'general' | 'game' | 'overlay' | 'ab
   } catch {
     window.open(section ? `settings.html?section=${section}` : 'settings.html', '_blank');
   }
-}
-
-/** 通知中心面板：@提及 / 好友事件聚合（会话级） */
-function NotificationPanel({
-  onGoRoom,
-  onGoFriends,
-  onClose,
-}: {
-  onGoRoom: (roomId: string) => void;
-  onGoFriends: () => void;
-  onClose: () => void;
-}) {
-  const { items, markAllRead, clear } = useNotifications();
-  return (
-    <>
-      <div className="menu-mask" onClick={onClose} />
-      <div className="notif-panel">
-        <div className="notif-head">
-          <span>通知中心</span>
-          <div className="row-gap">
-            <button className="notif-action" onClick={markAllRead}>
-              全部已读
-            </button>
-            <button className="notif-action" onClick={clear}>
-              清空
-            </button>
-          </div>
-        </div>
-        <div className="notif-list">
-          {items.length === 0 && <div className="notif-empty">暂无通知</div>}
-          {items.map((n) => (
-            <button
-              key={n.id}
-              className={`notif-item ${n.read ? '' : 'unread'}`}
-              onClick={() => {
-                if (n.kind === 'mention' && n.roomId) onGoRoom(n.roomId);
-                else if (n.kind === 'friend_request') onGoFriends();
-                onClose();
-              }}
-            >
-              <span className={`notif-dot ${n.kind}`} />
-              <span className="notif-text">{n.text}</span>
-              <span className="notif-time">{new Date(n.createdAt).toLocaleTimeString()}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </>
-  );
 }
 
 /** 个人资料：头像 / 昵称 / 个性签名 / ID / 注册时间（与软件设置分离） */
@@ -732,7 +690,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     editDm,
   } = useChat();
   const { user, logout } = useAuth();
-  const { gameModeEnabled, hotkey, soundEnabled } = useSettings();
+  const { gameModeEnabled, hotkey, soundEnabled, notifyLevel } = useSettings();
   // 输入草稿按会话（房间/私聊）独立保存：切换会话互不串扰，回来还在
   const [draftMap, setDraftMap] = useState<Record<string, string>>({});
   const convKey = activeDmPeerId ? `dm:${activeDmPeerId}` : `room:${activeRoomId ?? 'none'}`;
@@ -757,9 +715,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   /** 侧栏双 Tab（QQ 式）：消息=房间列表 / 好友=好友管理 */
   const [sideTab, setSideTab] = useState<'rooms' | 'friends'>('rooms');
   const [addFriendInput, setAddFriendInput] = useState('');
-  /** 通知中心 */
-  const [showNotif, setShowNotif] = useState(false);
-  const { unread: notifUnread, markAllRead } = useNotifications();
   /** @自动补全：start=草稿中 @ 的位置，caret=当前光标 */
   const [mentionQuery, setMentionQuery] = useState<{ start: number; token: string; caret: number } | null>(null);
   const [mentionPick, setMentionPick] = useState(0);
@@ -1086,6 +1041,9 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         case 'soundEnabled':
           s.setSoundEnabled(!!value);
           break;
+        case 'notifyLevel':
+          s.setNotifyLevel(value as 'all' | 'mention' | 'none');
+          break;
         case 'gameModeEnabled':
           s.setGameModeEnabled(!!value);
           break;
@@ -1152,12 +1110,48 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       if (st.activeDmPeerId) st.sendDm(text);
       else st.sendMessage(text);
     });
+    // 快捷输入框的发送目标：当前会话（私聊 → @好友，房间 → #房间名）
+    gameMode.setInputTargetProvider(() => {
+      const st = useChat.getState();
+      if (st.activeDmPeerId) {
+        const f = useFriends.getState().friends.find((x) => x.id === st.activeDmPeerId);
+        return { name: f?.username ?? '私聊', prefix: '@' };
+      }
+      const room = st.rooms.find((r) => r.id === st.activeRoomId) ?? st.rooms[0];
+      return { name: room?.name ?? '未选择房间', prefix: '#' };
+    });
+    // 快捷输入框里左右箭头切换发送目标（房间 ∪ 好友私聊，循环）；随本 effect 卸载解除
+    let offCycle: (() => void) | undefined;
+    let disposed = false;
+    void listen<{ dir?: number }>('game-input-cycle', (e) => {
+      const st = useChat.getState();
+      const friends = useFriends.getState().friends;
+      const targets: Array<{ kind: 'room' | 'dm'; id: string; name: string }> = [
+        ...st.rooms.map((r) => ({ kind: 'room' as const, id: r.id, name: r.name })),
+        ...friends.map((f) => ({ kind: 'dm' as const, id: f.id, name: f.username })),
+      ];
+      if (targets.length === 0) return;
+      const curIdx = st.activeDmPeerId
+        ? targets.findIndex((t) => t.kind === 'dm' && t.id === st.activeDmPeerId)
+        : targets.findIndex((t) => t.kind === 'room' && t.id === st.activeRoomId);
+      const dir = e.payload?.dir === -1 ? -1 : 1;
+      const next = targets[((curIdx < 0 ? 0 : curIdx) + dir + targets.length) % targets.length];
+      if (next.kind === 'dm') void st.openDm(next.id);
+      else void st.selectRoom(next.id);
+      // 会话切换是异步的，直接用目标信息立即回发上下文（input 窗口即时刷新）
+      void gameMode.emitInputTarget({ name: next.name, prefix: next.kind === 'dm' ? '@' : '#' });
+    }).then((off) => {
+      if (disposed) off();
+      else offCycle = off;
+    });
     if (gameModeEnabled) {
       void gameMode.startGameMode();
     } else {
       void gameMode.stopGameMode();
     }
     return () => {
+      disposed = true;
+      offCycle?.();
       if (gameModeEnabled) void gameMode.stopGameMode();
     };
   }, [gameModeEnabled]);
@@ -1246,22 +1240,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         <div className="sidebar-brand">
           <img src={appIcon} alt="GameTalk" className="logo-img" draggable={false} />
           <span className="brand-name">GameTalk</span>
-          {!offline && (
-            <button
-              className="bell-btn"
-              title="通知中心"
-              onClick={() => {
-                if (!showNotif) markAllRead();
-                setShowNotif((v) => !v);
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
-              {notifUnread > 0 && <span className="tab-badge">{notifUnread > 99 ? '99+' : notifUnread}</span>}
-            </button>
-          )}
         </div>
         {!offline && (
           <div className="side-tabs">
@@ -1282,16 +1260,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               )}
             </button>
           </div>
-        )}
-        {showNotif && !offline && (
-          <NotificationPanel
-            onGoRoom={(rid) => {
-              setSideTab('rooms');
-              void selectRoom(rid);
-            }}
-            onGoFriends={() => setSideTab('friends')}
-            onClose={() => setShowNotif(false)}
-          />
         )}
         {(offline || sideTab === 'rooms') ? (
         <>
@@ -1703,7 +1671,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                       <span>{formatDay(m.createdAt)}</span>
                     </div>
                   )}
-                  <div className="recall-line">{m.userId === me?.id ? '你' : m.username}撤回了一条消息</div>
+                  <div className="recall-line">{recallLineOf(m, me?.id)}</div>
                 </Fragment>
               );
             }
@@ -2056,8 +2024,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <button className="status-item" title="在设置中管理" onClick={() => void openSettingsWindow('game')}>
             游戏模式 {offline ? '未登录' : gameModeEnabled ? `已开启 · ${hotkey}` : '已关闭'}
           </button>
-          <button className="status-item" title="在设置中管理" onClick={() => void openSettingsWindow('general')}>
-            提示音 {soundEnabled ? '已开启' : '已关闭'}
+          <button className="status-item" title="在设置中管理" onClick={() => void openSettingsWindow('notify')}>
+            通知 {soundEnabled ? '提示音开' : '提示音关'} · {notifyLevel === 'all' ? '全部通知' : notifyLevel === 'mention' ? '仅@通知' : '不通知'}
           </button>
         </footer>
       </main>

@@ -44,6 +44,7 @@ fn set_proxy(window: tauri::WebviewWindow, enabled: bool, addr: Option<String>) 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 单实例：显示并聚焦主窗口
             if let Some(w) = app.get_webview_window("main") {

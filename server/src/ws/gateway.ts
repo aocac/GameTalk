@@ -689,12 +689,16 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           return;
         }
       }
+      // 记录撤回操作者（房主代撤时客户端文案为「房主撤回了 XX 的消息」，历史同样可查）
       const updated = await db.query<{ id: string }>(
-        'UPDATE messages SET recalled = true, text = \'\', media_url = NULL, mentions = \'[]\'::jsonb WHERE id = $1 RETURNING id',
-        [messageId],
+        'UPDATE messages SET recalled = true, text = \'\', media_url = NULL, mentions = \'[]\'::jsonb, recalled_by = $3 WHERE id = $1 AND room_id = $2 RETURNING id',
+        [messageId, roomId, conn.userId],
       );
       if (updated.rows.length > 0) {
-        broadcastToRoom(roomId, { type: 'message:recalled', payload: { roomId, messageId } });
+        broadcastToRoom(roomId, {
+          type: 'message:recalled',
+          payload: { roomId, messageId, operatorId: conn.userId, operatorUsername: conn.username },
+        });
       }
       break;
     }

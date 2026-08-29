@@ -146,6 +146,8 @@ export interface RoomMessage {
   recalled?: boolean;
   /** 编辑时间（ISO；仅编辑过的消息携带） */
   editedAt?: string;
+  /** 撤回操作者（房主代撤时与作者不同） */
+  recalledBy?: { id: string; username: string };
   /** 客户端本地字段：乐观发送未确认时标记（服务器返回的消息无此字段） */
   pending?: boolean;
 }

@@ -29,13 +29,31 @@ const OVERLAY_MARGIN = 20;
 
 
 type SendHandler = (text: string) => void;
+/** 快捷输入框当前发送目标（房间/私聊名），主窗口提供、呼出时下发给 input 窗口展示 */
+type TargetProvider = () => { name: string; prefix: string };
 
 let started = false;
 let onSend: SendHandler = () => undefined;
+let targetProvider: TargetProvider = () => ({ name: '未选择', prefix: '#' });
 const unlisteners: UnlistenFn[] = [];
 
 export function setOnSend(handler: SendHandler): void {
   onSend = handler;
+}
+
+export function setInputTargetProvider(provider: TargetProvider): void {
+  targetProvider = provider;
+}
+
+/** 把当前发送目标下发给 input 窗口（呼出时调用，读 provider） */
+export async function pushInputTargetContext(): Promise<void> {
+  const { name, prefix } = targetProvider();
+  await emit('game-input-context', { name, prefix });
+}
+
+/** 直接下发指定目标（切换目标后立即回发，不等异步的会话切换完成） */
+export async function emitInputTarget(target: { name: string; prefix: string }): Promise<void> {
+  await emit('game-input-context', target);
 }
 
 function getInputWindow(): Promise<WebviewWindow | null> {
@@ -241,6 +259,8 @@ export async function showInputWindow(): Promise<void> {
   await win.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
   await win.show();
   inputVisible = true;
+  // 呼出即下发当前发送目标（input 窗口展示 + 可切换）
+  await pushInputTargetContext().catch(() => undefined);
   // Windows 上 show 后需要一点时间才能聚焦
   setTimeout(() => void win.setFocus(), 60);
 }

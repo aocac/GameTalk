@@ -4,11 +4,22 @@ import { playMessageSound, playSendSound } from '../app/audio';
 import { useSettings, DEFAULT_HOTKEY } from '../app/settings';
 import { useAuth } from './auth';
 import { useFriends } from './friends';
-import { useNotifications } from './notifications';
 import { wsUrlOf } from '../app/settings';
 import * as api from '../app/api';
 import { pushOverlayMessage } from '../app/gameMode';
 import type { ChatMessage, DmMessage, RoomMember, UserBrief, WsStatus } from '../app/types';
+
+/** Windows 系统通知（档位判断在调用方；浏览器/无权限环境静默忽略） */
+async function sendWindowsNotify(title: string, body: string): Promise<void> {
+  try {
+    const { isPermissionGranted, requestPermission, sendNotification } = await import('@tauri-apps/plugin-notification');
+    let granted = await isPermissionGranted();
+    if (!granted) granted = (await requestPermission()) === 'granted';
+    if (granted && body) sendNotification({ title, body });
+  } catch {
+    // 非 Tauri 环境（浏览器调试）无插件，忽略
+  }
+}
 
 /** 发送消息的可选项：提及、图片附件、引用回复 */
 export interface SendOptions {
@@ -472,23 +483,15 @@ export const useChat = create<ChatState>()((set, get) => ({
           });
           const isMine = msg.payload.message.userId === state.me?.id;
           const active = get().activeRoomId;
-          // @我：非自己消息且提及含我 → 通知中心 + 非活跃房间累计 @未读
+          // @我：非自己消息且提及含我 → 非活跃房间累计 @未读
           const mentionedMe = !isMine && (msg.payload.message.mentions ?? []).some((m) => m.id === state.me?.id);
-          if (mentionedMe) {
-            const roomName = get().rooms.find((r) => r.id === msg.payload.roomId)?.name ?? '房间';
-            useNotifications.getState().push({
-              kind: 'mention',
-              text: `${msg.payload.message.username} 在 #${roomName} 里提到了你`,
-              roomId: msg.payload.roomId,
-            });
-            if (active !== msg.payload.roomId) {
-              set((s) => ({
-                mentionByRoom: {
-                  ...s.mentionByRoom,
-                  [msg.payload.roomId]: (s.mentionByRoom[msg.payload.roomId] ?? 0) + 1,
-                },
-              }));
-            }
+          if (mentionedMe && active !== msg.payload.roomId) {
+            set((s) => ({
+              mentionByRoom: {
+                ...s.mentionByRoom,
+                [msg.payload.roomId]: (s.mentionByRoom[msg.payload.roomId] ?? 0) + 1,
+              },
+            }));
           }
           if (!isMine) {
             // 非活跃房间累加未读数；提示音只对别人的消息生效
@@ -501,6 +504,15 @@ export const useChat = create<ChatState>()((set, get) => ({
               }));
             }
             playMessageSound(useSettings.getState().soundEnabled);
+            // Windows 系统通知：按设置档位（仅@我 / 全部；当前正打开的房间不弹，消息就在眼前）
+            const level = useSettings.getState().notifyLevel;
+            if (active !== msg.payload.roomId && (level === 'all' || (level === 'mention' && mentionedMe))) {
+              const roomName = get().rooms.find((r) => r.id === msg.payload.roomId)?.name ?? '房间';
+              void sendWindowsNotify(
+                `#${roomName} · ${msg.payload.message.username}`,
+                previewTextOf(msg.payload.message),
+              );
+            }
           }
           // 侧栏预览实时更新（多房间订阅使非活跃房间也能即时刷新）；图片/撤回显示对应占位
           set((s) => ({
@@ -522,22 +534,39 @@ export const useChat = create<ChatState>()((set, get) => ({
         }
         case 'message:recalled':
           set((s) => {
+            // operator = 实际执行撤回的人（房主代撤时 ≠ 消息作者；旧服务端无此字段回落作者）
+            const operator =
+              msg.payload.operatorId && msg.payload.operatorUsername
+                ? { id: msg.payload.operatorId, username: msg.payload.operatorUsername }
+                : undefined;
             const list = s.messagesByRoom[msg.payload.roomId];
             const messages = list
               ? {
                   messagesByRoom: {
                     ...s.messagesByRoom,
                     [msg.payload.roomId]: list.map((m) =>
-                      m.id === msg.payload.messageId ? { ...m, recalled: true, text: '', mediaUrl: null, mentions: [] } : m,
+                      m.id === msg.payload.messageId
+                        ? { ...m, recalled: true, text: '', mediaUrl: null, mentions: [], recalledBy: operator ?? m.recalledBy }
+                        : m,
                     ),
                   },
                 }
               : {};
             const preview = s.previewByRoom[msg.payload.roomId];
-            // 被撤回的正是侧栏预览那条 → 预览同步为撤回提示（QQ 式）
+            // 被撤回的正是侧栏预览那条 → 预览作者换成操作者、文案撤回（渲染层拼「XX撤回了一条消息」）
             const previewPatch =
               preview?.id === msg.payload.messageId
-                ? { previewByRoom: { ...s.previewByRoom, [msg.payload.roomId]: { ...preview, text: '撤回了一条消息' } } }
+                ? {
+                    previewByRoom: {
+                      ...s.previewByRoom,
+                      [msg.payload.roomId]: {
+                        ...preview,
+                        userId: operator?.id ?? preview.userId,
+                        username: operator?.username ?? preview.username,
+                        text: '撤回了一条消息',
+                      },
+                    },
+                  }
                 : {};
             return { ...messages, ...previewPatch };
           });
@@ -546,6 +575,12 @@ export const useChat = create<ChatState>()((set, get) => ({
           set((s) => {
             const list = s.messagesByRoom[msg.payload.roomId];
             if (!list) return s;
+            const preview = s.previewByRoom[msg.payload.roomId];
+            // 预览正是被编辑的那条 → 同步编辑后的文本
+            const previewPatch =
+              preview?.id === msg.payload.messageId
+                ? { previewByRoom: { ...s.previewByRoom, [msg.payload.roomId]: { ...preview, text: msg.payload.text } } }
+                : {};
             return {
               messagesByRoom: {
                 ...s.messagesByRoom,
@@ -553,6 +588,7 @@ export const useChat = create<ChatState>()((set, get) => ({
                   m.id === msg.payload.messageId ? { ...m, text: msg.payload.text, editedAt: msg.payload.editedAt } : m,
                 ),
               },
+              ...previewPatch,
             };
           });
           break;
@@ -579,6 +615,11 @@ export const useChat = create<ChatState>()((set, get) => ({
               set((s) => ({ dmUnread: { ...s.dmUnread, [peerId]: (s.dmUnread[peerId] ?? 0) + 1 } }));
             }
             playMessageSound(useSettings.getState().soundEnabled);
+            // Windows 系统通知：私聊 = 点对点定向，「仅@」档同样弹出（正打开的会话不弹）
+            const level = useSettings.getState().notifyLevel;
+            if (get().activeDmPeerId !== peerId && level !== 'none') {
+              void sendWindowsNotify(`${dm.username} · 私聊`, previewTextOf(dm));
+            }
           }
           // 侧栏私聊预览实时更新
           set((s) => ({
@@ -625,6 +666,11 @@ export const useChat = create<ChatState>()((set, get) => ({
           set((s) => {
             const list = s.dmMessages[peerId];
             if (!list) return s;
+            const preview = s.dmPreviews[peerId];
+            const previewPatch =
+              preview?.id === msg.payload.messageId
+                ? { dmPreviews: { ...s.dmPreviews, [peerId]: { ...preview, text: msg.payload.text } } }
+                : {};
             return {
               dmMessages: {
                 ...s.dmMessages,
@@ -632,6 +678,7 @@ export const useChat = create<ChatState>()((set, get) => ({
                   m.id === msg.payload.messageId ? { ...m, text: msg.payload.text, editedAt: msg.payload.editedAt } : m,
                 ),
               },
+              ...previewPatch,
             };
           });
           break;
@@ -850,7 +897,14 @@ export const useChat = create<ChatState>()((set, get) => ({
           set((s) => ({
             previewByRoom: {
               ...s.previewByRoom,
-              [r.id]: { id: last.id, username: last.username, userId: last.userId, text: previewTextOf(last), createdAt: last.createdAt },
+              [r.id]: {
+                id: last.id,
+                // 撤回消息的预览作者 = 撤回操作者（房主代撤），而非消息作者
+                username: last.recalledBy?.username ?? last.username,
+                userId: last.recalledBy?.id ?? last.userId,
+                text: previewTextOf(last),
+                createdAt: last.createdAt,
+              },
             },
           }));
         } catch {

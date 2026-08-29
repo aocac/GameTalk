@@ -38,6 +38,7 @@ function change(
     | 'overlayDurationSec'
     | 'useProxy'
     | 'proxyAddress'
+    | 'notifyLevel'
     | 'overlayEnabled'
     | 'overlayReset',
   value: unknown,
@@ -47,10 +48,10 @@ function change(
   void emit('settings:changed', { key, value }).catch(() => undefined);
 }
 
-type Section = 'general' | 'game' | 'overlay' | 'about';
+type Section = 'general' | 'notify' | 'game' | 'overlay' | 'about';
 
 /** 初始分类：主窗口打开时可用 ?section= 指定 */
-const VALID_SECTIONS: Section[] = ['general', 'game', 'overlay', 'about'];
+const VALID_SECTIONS: Section[] = ['general', 'notify', 'game', 'overlay', 'about'];
 
 function initialSection(): Section {
   const q = new URLSearchParams(window.location.search).get('section');
@@ -97,6 +98,7 @@ export default function SettingsWindow() {
 
   const navItems: Array<{ key: Section; label: string }> = [
     { key: 'general', label: '通用' },
+    { key: 'notify', label: '通知' },
     { key: 'game', label: '游戏模式' },
     { key: 'overlay', label: '屏幕覆盖' },
     { key: 'about', label: '关于 GameTalk' },
@@ -137,13 +139,6 @@ export default function SettingsWindow() {
               />
               <span className="field-hint">填写你部署的 GameTalk 服务器地址；本地开发调试可用 http://127.0.0.1:8787</span>
             </label>
-            <label className="field">
-              <span>消息提示音</span>
-              <div className="switch-row">
-                <input type="checkbox" checked={settings.soundEnabled} onChange={(e) => change('soundEnabled', e.target.checked)} />
-                {settings.soundEnabled ? '已开启' : '已关闭'}
-              </div>
-            </label>
             <div className="settings-section">
               <span className="section-title">网络代理</span>
               <label className="field">
@@ -175,6 +170,39 @@ export default function SettingsWindow() {
               )}
               <span className="field-hint">连接国内/自建服务器建议保持关闭（直连最快）；仅当服务器需要经代理访问时再开启。</span>
             </div>
+          </>
+        )}
+
+        {section === 'notify' && (
+          <>
+            <h3>通知</h3>
+            <div className="field">
+              <span>Windows 系统通知程度</span>
+              <div className="position-chips">
+                {([
+                  ['all', '全部消息'],
+                  ['mention', '仅 @我 和私聊'],
+                  ['none', '不弹通知'],
+                ] as Array<[string, string]>).map(([v, label]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={`chip ${settings.notifyLevel === v ? 'active' : ''}`}
+                    onClick={() => change('notifyLevel', v)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="field-hint">当前正打开的会话不弹系统通知（消息就在眼前）；游戏内的消息悬浮层不受此设置影响。</span>
+            </div>
+            <label className="field">
+              <span>消息提示音</span>
+              <div className="switch-row">
+                <input type="checkbox" checked={settings.soundEnabled} onChange={(e) => change('soundEnabled', e.target.checked)} />
+                {settings.soundEnabled ? '已开启' : '已关闭'}
+              </div>
+            </label>
           </>
         )}
 

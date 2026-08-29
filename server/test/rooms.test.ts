@@ -499,6 +499,9 @@ describe('realtime + persistence', () => {
     wsO.send(JSON.stringify({ type: 'message:recall', payload: { roomId: room.id, messageId: bMsg.id } }));
     const recallEv = await oSeesRecall;
     expect(recallEv.payload.messageId).toBe(bMsg.id);
+    // 广播携带撤回操作者（房主代撤 → 客户端文案「房主撤回了 XX 的消息」）
+    expect(recallEv.payload.operatorId).toBe(owner.userId);
+    expect(recallEv.payload.operatorUsername).toBe('mute_owner');
     await mSeesRecall;
 
     // 发送者撤自己的
@@ -517,12 +520,15 @@ describe('realtime + persistence', () => {
     wsM.send(JSON.stringify({ type: 'message:recall', payload: { roomId: room.id, messageId: ownerMsg.id } }));
     expect((await e4).payload.code).toBe('only_owner');
 
-    // 历史：已撤回消息 recalled=true 且内容为空
+    // 历史：已撤回消息 recalled=true、内容为空，且带撤回操作者
     const hist = await app.inject({ method: 'GET', url: `/api/rooms/${room.id}/messages`, headers: auth(owner.token) });
     const { messages } = hist.json();
     const recalledHis = messages.find((m: any) => m.id === bMsg.id);
     expect(recalledHis.recalled).toBe(true);
     expect(recalledHis.text).toBe('');
+    expect(recalledHis.recalledBy).toMatchObject({ id: owner.userId, username: 'mute_owner' });
+    const selfRecalled = messages.find((m: any) => m.id === ownMsg.id);
+    expect(selfRecalled.recalledBy).toMatchObject({ id: member.userId, username: 'mute_member' });
     const intact = messages.find((m: any) => m.id === ownerMsg.id);
     expect(intact.recalled).toBe(false);
     expect(intact.text).toBe('房主的话');

@@ -50,6 +50,8 @@ export interface ChatMessage {
   recalled?: boolean;
   /** 编辑时间（ISO；仅编辑过的消息携带） */
   editedAt?: string;
+  /** 撤回操作者（房主代撤时与作者不同；旧数据/旧服务端无此字段，渲染回落消息作者） */
+  recalledBy?: { id: string; username: string };
   /** 客户端本地字段：乐观发送未确认时标记（真实服务器消息无此字段） */
   pending?: boolean;
 }
@@ -98,7 +100,7 @@ export type ServerWsMessage =
   | { type: 'member:muted'; payload: { roomId: string; userId: string; mutedUntil: string } }
   | { type: 'member:unmuted'; payload: { roomId: string; userId: string } }
   | { type: 'message:new'; payload: { roomId: string; message: ChatMessage } }
-  | { type: 'message:recalled'; payload: { roomId: string; messageId: string } }
+  | { type: 'message:recalled'; payload: { roomId: string; messageId: string; operatorId?: string; operatorUsername?: string } }
   | { type: 'message:edited'; payload: { roomId: string; messageId: string; text: string; editedAt: string } }
   | { type: 'room:deleted'; payload: { roomId: string } }
   | { type: 'friend:request'; payload: { requestId: string; from: FriendProfile } }
