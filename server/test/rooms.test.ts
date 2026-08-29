@@ -397,12 +397,12 @@ describe('realtime + persistence', () => {
     const { id, url } = up.json();
     expect(url).toBe(`/api/media/${id}`);
 
-    // 读取：需登录，字节与类型正确
+    // 读取：免认证（<img> 带不了 Authorization 头），字节与类型正确
     const got = await app.inject({ method: 'GET', url: `/api/media/${id}`, headers: auth(owner.token) });
     expect(got.statusCode).toBe(200);
     expect(got.headers['content-type']).toBe('image/png');
-    const noAuth = await app.inject({ method: 'GET', url: `/api/media/${id}` });
-    expect(noAuth.statusCode).toBe(401);
+    const anon = await app.inject({ method: 'GET', url: `/api/media/${id}` });
+    expect(anon.statusCode).toBe(200);
 
     const ws = await connectWs(owner.token);
     ws.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));

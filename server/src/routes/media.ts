@@ -50,8 +50,9 @@ export function registerMediaRoutes(app: FastifyInstance, deps: MediaDeps): void
     },
   );
 
-  // 图片读取：需登录（id 为不可枚举 UUID，防遍历）；内容不可变，可长缓存
-  app.get('/api/media/:id', { preHandler: [auth] }, async (req, reply) => {
+  // 图片读取：免认证（与头像端点同策略——id 为不可枚举 UUID，防遍历）。
+  // 必须免认证：<img> 标签无法附带 Authorization 头，强制登录会导致消息里全部裂图。
+  app.get('/api/media/:id', async (req, reply) => {
     const id = (req.params as { id: string }).id;
     if (!MEDIA_ID_RE.test(id)) {
       await reply.code(404).send();
@@ -63,6 +64,6 @@ export function registerMediaRoutes(app: FastifyInstance, deps: MediaDeps): void
       await reply.code(404).send();
       return;
     }
-    await reply.header('content-type', row.mime).header('cache-control', 'private, max-age=31536000, immutable').send(row.bytes);
+    await reply.header('content-type', row.mime).header('cache-control', 'public, max-age=31536000, immutable').send(row.bytes);
   });
 }

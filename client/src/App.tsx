@@ -1159,6 +1159,13 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   });
                 }}
               >
+                <div
+                  className="room-avatar"
+                  aria-hidden
+                  style={{ background: `hsl(${[...(r.name || '#')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7)} 32% 42%)`, color: '#fff' }}
+                >
+                  {(r.name || '#').slice(0, 1)}
+                </div>
                 <div className="room-main">
                   <div className="room-line1">
                     <span className="room-name">{r.name}</span>

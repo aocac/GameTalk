@@ -117,12 +117,26 @@ body {
 .room-item {
   display: flex;
   align-items: center;
+  gap: 10px;
   padding: 7px 9px;
   border-radius: var(--radius);
   color: var(--side-text);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
   font-size: 13.5px;
+}
+
+/* QQ 式群头像方块：取房间名首字符，色相随名稳定 */
+.room-avatar {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .room-item:hover {
