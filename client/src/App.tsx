@@ -11,9 +11,7 @@ import type { RoomMessage } from './app/api';
 import { useAuth } from './stores/auth';
 import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
 import * as gameMode from './app/gameMode';
-import HotkeyRecorder from './components/HotkeyRecorder';
 import appIcon from './assets/app-icon.png';
-import pkg from '../package.json';
 
 function Avatar({ name, url, size = 28 }: { name: string; url?: string | null; size?: number }) {
   if (url) {
@@ -78,16 +76,6 @@ function CtxMenu({ x, y, children }: { x: number; y: number; children: ReactNode
   );
 }
 
-const POSITION_LABELS: Record<OverlayPosition, string> = {
-  'top-left': '左上',
-  'top-center': '顶部居中',
-  'top-right': '右上',
-  'bottom-left': '左下',
-  'bottom-center': '底部居中',
-  'bottom-right': '右下',
-  custom: '自定义（拖拽）',
-};
-
 const MAX_AVATAR_BYTES = 3 * 1024 * 1024; // 3MB
 
 /** 表情面板数据（精选常用集合，纯 Unicode，零资源文件） */
@@ -100,19 +88,20 @@ const EMOJIS = [
   '💔', '💯', '🍺', '🍻', '🥤', '🍕', '🍗', '🍜', '🀄', '🎲', '🚀', '🐴',
 ];
 
-function loadRecentEmojis(): string[] {
+/** 常用表情按账号隔离（换账号不继承） */
+function loadRecentEmojis(userId: string): string[] {
   try {
-    const list = JSON.parse(localStorage.getItem('gt-emoji-recent') ?? '[]');
+    const list = JSON.parse(localStorage.getItem(`gt-emoji-recent#${userId}`) ?? '[]');
     return Array.isArray(list) ? list.filter((e) => typeof e === 'string').slice(0, 16) : [];
   } catch {
     return [];
   }
 }
 
-function saveRecentEmoji(e: string): string[] {
-  const list = [e, ...loadRecentEmojis().filter((x) => x !== e)].slice(0, 16);
+function saveRecentEmoji(e: string, userId: string): string[] {
+  const list = [e, ...loadRecentEmojis(userId).filter((x) => x !== e)].slice(0, 16);
   try {
-    localStorage.setItem('gt-emoji-recent', JSON.stringify(list));
+    localStorage.setItem(`gt-emoji-recent#${userId}`, JSON.stringify(list));
   } catch {
     // 忽略存储失败
   }
@@ -225,6 +214,33 @@ async function copyImageToClipboard(url: string): Promise<void> {
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
   } catch {
     useChat.setState({ roomError: '复制图片失败（剪贴板不可用或图片加载失败）' });
+  }
+}
+
+/** 打开独立设置窗口（Tauri 运行时创建；浏览器调试回退为普通标签页） */
+async function openSettingsWindow(): Promise<void> {
+  const existing = await import('@tauri-apps/api/webviewWindow')
+    .then(({ WebviewWindow }) => WebviewWindow.getByLabel('settings'))
+    .catch(() => null);
+  if (existing) {
+    void existing.show();
+    void existing.setFocus();
+    return;
+  }
+  try {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+    new WebviewWindow('settings', {
+      title: 'GameTalk 设置',
+      url: 'settings.html',
+      width: 820,
+      height: 600,
+      minWidth: 720,
+      minHeight: 520,
+      center: true,
+      resizable: true,
+    });
+  } catch {
+    window.open('settings.html', '_blank');
   }
 }
 
@@ -506,208 +522,6 @@ function MemberCardModal({
   );
 }
 
-/** 软件设置：服务器 / 声音 / 代理 / 游戏模式 / Overlay（个人资料在头像菜单单独入口） */
-function SettingsModal({ onClose }: { onClose: () => void }) {
-  const {
-    serverUrl,
-    setServerUrl,
-    setSoundEnabled,
-    gameModeEnabled,
-    setGameModeEnabled,
-    hotkey,
-    setHotkey,
-    overlayPosition,
-    setOverlayPosition,
-    setOverlayCustomPosition,
-    overlayScale,
-    setOverlayScale,
-    overlayDurationSec,
-    setOverlayDurationSec,
-    useProxy,
-    setUseProxy,
-    proxyAddress,
-    setProxyAddress,
-    soundEnabled,
-  } = useSettings();
-  const [proxyMsg, setProxyMsg] = useState<string | null>(null);
-
-  // 用户主动调整位置/缩放：立即应用 + 5 秒预览（Overlay 平时隐藏，必须主动显示让用户看到效果）
-  // 显式传入 position，不依赖 store 中转（修复 select 选择后位置未应用的问题）
-  const applyAndPreview = (position?: OverlayPosition) => {
-    void gameMode.stopOverlayAdjust();
-    if (position) setOverlayPosition(position);
-    void gameMode.applyOverlayConfig(position).then(() => void gameMode.previewOverlay());
-  };
-
-  const closeModal = () => {
-    // 防止调整模式残留卡死
-    void gameMode.stopOverlayAdjust();
-    onClose();
-  };
-
-  const onHotkeyChange = (v: string) => {
-    setHotkey(v);
-    if (gameModeEnabled) void gameMode.reapplyHotkey();
-  };
-
-  return (
-    <div className="modal-mask" onClick={closeModal}>
-      <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>设置</h3>
-
-        <label className="field">
-          <span>服务器地址</span>
-          <input
-            value={serverUrl}
-            placeholder="https://chat.example.com"
-            onChange={(e) => setServerUrl(e.target.value)}
-          />
-          <span className="field-hint">填写你部署的 GameTalk 服务器地址（如 https://chat.example.com）；本地开发调试可用 http://127.0.0.1:8787</span>
-        </label>
-
-        <label className="field">
-          <span>消息提示音</span>
-          <div className="switch-row">
-            <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
-            {soundEnabled ? '已开启' : '已关闭'}
-          </div>
-        </label>
-
-        <div className="settings-section">
-          <span className="section-title">网络代理</span>
-          <label className="field">
-            <span>启用代理（默认关闭 = 直连，不走系统代理）</span>
-            <div className="switch-row">
-              <input
-                type="checkbox"
-                checked={useProxy}
-                onChange={(e) => {
-                  setUseProxy(e.target.checked);
-                  void applyProxySetting(e.target.checked, proxyAddress);
-                  setProxyMsg('已应用（立即生效）');
-                  setTimeout(() => setProxyMsg(null), 2000);
-                }}
-              />
-              {useProxy ? '已启用' : '已关闭'}
-            </div>
-          </label>
-          {useProxy && (
-            <label className="field">
-              <span>代理地址（HTTP 混合代理，如 127.0.0.1:7890）</span>
-              <input
-                value={proxyAddress}
-                placeholder="127.0.0.1:7890"
-                onChange={(e) => {
-                  setProxyAddress(e.target.value);
-                  void applyProxySetting(true, e.target.value);
-                  setProxyMsg('已应用（立即生效）');
-                  setTimeout(() => setProxyMsg(null), 2000);
-                }}
-              />
-              {proxyMsg && <span className="ok-text">{proxyMsg}</span>}
-            </label>
-          )}
-          <span className="field-hint">
-            连接国内/自建服务器建议保持关闭（直连最快）；仅当服务器需要经代理访问时再开启。
-          </span>
-        </div>
-
-        <div className="settings-section">
-          <span className="section-title">游戏模式</span>
-          <label className="field">
-            <span>启用游戏模式（全局快捷键 + Overlay）</span>
-            <div className="switch-row">
-              <input type="checkbox" checked={gameModeEnabled} onChange={(e) => setGameModeEnabled(e.target.checked)} />
-              {gameModeEnabled ? '已启用' : '已停用'}
-            </div>
-          </label>
-          <label className="field">
-            <span>呼出快捷键（点击后按下组合键）</span>
-            <HotkeyRecorder value={hotkey} onChange={onHotkeyChange} />
-          </label>
-        </div>
-
-        <div className="settings-section">
-          <span className="section-title">消息 Overlay</span>
-          <div className="field">
-            <span>显示位置（点击即应用并预览 5 秒）</span>
-            <div className="position-chips">
-              {Object.entries(POSITION_LABELS).map(([v, label]) => (
-                <button
-                  key={v}
-                  type="button"
-                  className={`chip ${v === overlayPosition ? 'active' : ''}`}
-                  onClick={() => {
-                    if (v === 'custom') {
-                      // 选择「自定义」= 进入拖拽调整，保持当前位置，绝不跳位；
-                      // 只同步窗口尺寸（move:false），不应用已保存的自定义坐标
-                      setOverlayPosition(v);
-                      void gameMode.stopOverlayAdjust();
-                      void gameMode
-                        .applyOverlayConfig(undefined, { move: false })
-                        .then(() => void gameMode.startOverlayAdjust());
-                    } else {
-                      // 预设：立即应用 + 5 秒预览（每次点击必触发，即使值与当前相同）
-                      applyAndPreview(v as OverlayPosition);
-                    }
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <span className="position-current">当前位置：{POSITION_LABELS[overlayPosition]}</span>
-          </div>
-          <button
-            className="btn ghost block"
-            onClick={() => {
-              void gameMode.stopOverlayAdjust();
-              setOverlayCustomPosition(null);
-              applyAndPreview('top-left');
-            }}
-          >
-            复位到左上角
-          </button>
-          <label className="field">
-            <span>缩放比例：{Math.round(overlayScale * 100)}%</span>
-            <input
-              type="range"
-              min={0.5}
-              max={2}
-              step={0.1}
-              value={overlayScale}
-              onChange={(e) => {
-                setOverlayScale(parseFloat(e.target.value));
-                applyAndPreview();
-              }}
-            />
-          </label>
-          <label className="field">
-            <span>显示时长：{overlayDurationSec} 秒</span>
-            <input
-              type="range"
-              min={2}
-              max={15}
-              step={1}
-              value={overlayDurationSec}
-              onChange={(e) => {
-                setOverlayDurationSec(parseInt(e.target.value, 10));
-                // 显式传播新时长到 Overlay（不移动窗口）
-                void gameMode.applyOverlayConfig(undefined, { move: false });
-              }}
-            />
-          </label>
-        </div>
-
-        <button className="btn primary block" onClick={closeModal}>
-          完成
-        </button>
-        <div className="settings-version">GameTalk v{pkg.version}</div>
-      </div>
-    </div>
-  );
-}
-
 function LoginView({ onOffline }: { onOffline: () => void }) {
   const { login, register, busy, error, clearError } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -884,7 +698,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   /** 成员卡片：当前查看的成员 */
   const [cardMember, setCardMember] = useState<UserBrief | null>(null);
   const [showRoomModal, setShowRoomModal] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   /** 侧栏双 Tab（QQ 式）：消息=房间列表 / 好友=好友管理 */
@@ -901,7 +714,12 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   /** 图片消息 / 表情面板 / 灯箱 */
   const [uploading, setUploading] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
-  const [recentEmojis, setRecentEmojis] = useState<string[]>(() => loadRecentEmojis());
+  const emojiOwner = me?.id ?? 'guest';
+  const [recentEmojis, setRecentEmojis] = useState<string[]>(() => loadRecentEmojis(emojiOwner));
+  // 换账号后重读该账号的常用表情
+  useEffect(() => {
+    setRecentEmojis(loadRecentEmojis(emojiOwner));
+  }, [emojiOwner]);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(1);
   const [lightboxOffset, setLightboxOffset] = useState({ x: 0, y: 0 });
@@ -1034,7 +852,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     const pos = el?.selectionStart ?? draft.length;
     const next = draft.slice(0, pos) + e + draft.slice(pos);
     setDraft(next);
-    setRecentEmojis(saveRecentEmoji(e));
+    setRecentEmojis(saveRecentEmoji(e, emojiOwner));
     requestAnimationFrame(() => {
       el?.focus();
       el?.setSelectionRange(pos + e.length, pos + e.length);
@@ -1076,6 +894,74 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   useEffect(() => {
     const { useProxy: up, proxyAddress: pa } = useSettings.getState();
     void applyProxySetting(up, pa);
+  }, []);
+
+  // 独立设置窗口的变更经事件回流主窗口：更新 store 并执行主窗口侧效果（快捷键/Overlay/代理）
+  useEffect(() => {
+    let offChanged: UnlistenFn | undefined;
+    let offAdjust: UnlistenFn | undefined;
+    void listen<{ key?: string; value?: unknown }>('settings:changed', (e) => {
+      const { key, value } = e.payload ?? {};
+      if (!key) return;
+      const s = useSettings.getState();
+      switch (key) {
+        case 'serverUrl':
+          s.setServerUrl(String(value));
+          break;
+        case 'soundEnabled':
+          s.setSoundEnabled(!!value);
+          break;
+        case 'gameModeEnabled':
+          s.setGameModeEnabled(!!value);
+          break;
+        case 'hotkey':
+          s.setHotkey(String(value));
+          if (s.gameModeEnabled) void gameMode.reapplyHotkey();
+          break;
+        case 'overlayPosition':
+          s.setOverlayPosition(value as OverlayPosition);
+          void gameMode.applyOverlayConfig(value as OverlayPosition).then(() => void gameMode.previewOverlay());
+          break;
+        case 'overlayScale':
+          s.setOverlayScale(value as number);
+          void gameMode.applyOverlayConfig(undefined, { move: false });
+          break;
+        case 'overlayDurationSec':
+          s.setOverlayDurationSec(value as number);
+          void gameMode.applyOverlayConfig(undefined, { move: false });
+          break;
+        case 'overlayReset':
+          s.setOverlayCustomPosition(null);
+          s.setOverlayPosition('top-left');
+          void gameMode.stopOverlayAdjust();
+          void gameMode.applyOverlayConfig('top-left').then(() => void gameMode.previewOverlay());
+          break;
+        case 'useProxy':
+          s.setUseProxy(!!value);
+          void applyProxySetting(!!value, s.proxyAddress);
+          break;
+        case 'proxyAddress':
+          s.setProxyAddress(String(value));
+          void applyProxySetting(s.useProxy, String(value));
+          break;
+        default:
+          break;
+      }
+    }).then((fn) => (offChanged = fn));
+    void listen<{ active?: boolean }>('settings:adjust-overlay', (e) => {
+      if (e.payload?.active) {
+        void gameMode.stopOverlayAdjust();
+        void gameMode
+          .applyOverlayConfig(undefined, { move: false })
+          .then(() => void gameMode.startOverlayAdjust());
+      } else {
+        void gameMode.stopOverlayAdjust();
+      }
+    }).then((fn) => (offAdjust = fn));
+    return () => {
+      offChanged?.();
+      offAdjust?.();
+    };
   }, []);
 
   // 游戏模式生命周期：启停快捷键 + Overlay 事件监听
@@ -1395,7 +1281,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                 className="user-menu-item"
                 onClick={() => {
                   setUserMenuOpen(false);
-                  setShowSettings(true);
+                  void openSettingsWindow();
                 }}
               >
                 设置
@@ -1406,6 +1292,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   onClick={() => {
                     setUserMenuOpen(false);
                     logout();
+                    // 清空上一账号的房间/消息/好友，新账号登录不继承
+                    useChat.getState().resetAccountState();
                   }}
                 >
                   退出登录
@@ -1435,7 +1323,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           </div>
           <div className="topbar-right">
             {offline && <span className="offline-tag">离线模式</span>}
-            <span className="member-count">{offline ? '未连接' : `${onlineCount} 人在线`}</span>
             <StatusDot status={status} />
             {/* 订阅状态只在已连接时有意义；断开/重连中由状态灯表达 */}
             {!offline && connected && activeRoom && (
@@ -1773,10 +1660,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         </footer>
 
         <footer className="status-bar">
-          <button className="status-item" title="在设置中管理" onClick={() => setShowSettings(true)}>
+          <button className="status-item" title="在设置中管理" onClick={() => void openSettingsWindow()}>
             游戏模式 {offline ? '未登录' : gameModeEnabled ? `已开启 · ${hotkey}` : '已关闭'}
           </button>
-          <button className="status-item" title="在设置中管理" onClick={() => setShowSettings(true)}>
+          <button className="status-item" title="在设置中管理" onClick={() => void openSettingsWindow()}>
             提示音 {soundEnabled ? '已开启' : '已关闭'}
           </button>
         </footer>
@@ -2007,7 +1894,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           </CtxMenu>
         </>
       )}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
       {cardMember && activeRoom && (
         <MemberCardModal

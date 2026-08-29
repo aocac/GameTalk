@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { ChatSocket } from '../app/ws';
 import { playMessageSound, playSendSound } from '../app/audio';
-import { useSettings } from '../app/settings';
+import { useSettings, DEFAULT_HOTKEY } from '../app/settings';
 import { useAuth } from './auth';
 import { useFriends } from './friends';
 import { useNotifications } from './notifications';
@@ -46,6 +46,8 @@ interface ChatState {
   connectionError: string | null;
   connect: () => void;
   disconnect: () => void;
+  /** 换账号（登出/注册新号）时清空上一账号的房间/消息/选中态，防止越权请求与界面残留 */
+  resetAccountState: () => void;
   refreshRooms: () => Promise<void>;
   createRoom: (name: string) => Promise<api.Room | null>;
   joinRoomByCode: (code: string) => Promise<api.Room | null>;
@@ -258,7 +260,19 @@ export const useChat = create<ChatState>()((set, get) => ({
     socket.onMessage((msg) => {
       const state = get();
       switch (msg.type) {
-        case 'hello:ok':
+        case 'hello:ok': {
+          // 换账号守卫：同一连接生命周期内身份变化（登出后注册/登录新号）→
+          // 先清空上一账号的房间/消息/选中态，防止刷新列表时仍按旧 activeRoomId 拉历史（403「你不在该房间中」）
+          const prev = get().me;
+          if (prev && prev.id !== msg.payload.me.id) {
+            get().resetAccountState();
+            // resetAccountState 会关 socket，这里需要按现有 token 重建连接
+            socket?.close();
+            socket = null;
+            set({ status: 'idle' });
+            get().connect();
+            return;
+          }
           set({ me: msg.payload.me });
           // 好友列表/申请与房间并行加载
           void useFriends.getState().load();
@@ -277,6 +291,7 @@ export const useChat = create<ChatState>()((set, get) => ({
               }
             });
           break;
+        }
         case 'room:joined':
           set((s) => ({
             subscribedRoomIds: s.subscribedRoomIds.includes(msg.payload.roomId)
@@ -490,6 +505,32 @@ export const useChat = create<ChatState>()((set, get) => ({
     // 保留 me（认证身份，与连接状态无关）与 rooms/messages：
     // 清掉 me 会导致断开期间自己的消息被渲染到左边、成员列表失去自身定位
     set({ status: 'closed', subscribedRoomIds: [] });
+  },
+
+  resetAccountState: () => {
+    stopSubWatchdog();
+    clearPending();
+    queuedSends = [];
+    // 快捷键/表情等个性化随账号走：换账号时快捷键还原默认（表情按用户读取在 App 层处理）
+    useSettings.getState().setHotkey(DEFAULT_HOTKEY);
+    set({
+      status: 'closed',
+      me: null,
+      rooms: [],
+      activeRoomId: null,
+      subscribedRoomIds: [],
+      unreadByRoom: {},
+      mentionByRoom: {},
+      messagesByRoom: {},
+      membersByRoom: {},
+      historyLoadedRooms: {},
+      hasMoreByRoom: {},
+      previewByRoom: {},
+      loadingOlderRooms: {},
+      roomError: null,
+      connectionError: null,
+    });
+    useFriends.getState().reset();
   },
 
   refreshRooms: async () => {

@@ -26,6 +26,8 @@ interface FriendsState {
   relationOf: (userId: string) => 'self' | 'friends' | 'pending' | 'none';
   handleWs: (msg: ServerWsMessage) => void;
   clearNotice: () => void;
+  /** 换账号时清空好友域状态（上一账号的好友/申请不能带给下一账号） */
+  reset: () => void;
 }
 
 export const useFriends = create<FriendsState>()((set, get) => ({
@@ -168,4 +170,8 @@ export const useFriends = create<FriendsState>()((set, get) => ({
   },
 
   clearNotice: () => set({ notice: null }),
+
+  reset: () => {
+    set({ friends: [], incoming: [], outgoing: [], loaded: false, error: null, notice: null });
+  },
 }));
