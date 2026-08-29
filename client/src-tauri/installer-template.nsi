@@ -28,7 +28,9 @@ ManifestDPIAwareness PerMonitorV2
 ${StrCase}
 ${StrLoc}
 
-!include "C:\Users\Root\Desktop\AIGC\GameTalk\client\src-tauri\installer-hooks.nsh"
+{{#if installer_hooks}}
+!include "{{installer_hooks}}"
+{{/if}}
 
 !define WEBVIEW2APPGUID "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 
@@ -45,7 +47,7 @@ ${StrLoc}
 !define UNINSTALLERICON ""
 !define UNINSTALLERHEADERIMAGE ""
 !define MAINBINARYNAME "gametalk"
-!define MAINBINARYSRCPATH "C:\Users\Root\Desktop\AIGC\GameTalk\client\src-tauri\target\release\gametalk.exe"
+!define MAINBINARYSRCPATH "{{main_binary_path}}"
 !define BUNDLEID "com.gametalk.app"
 !define COPYRIGHT ""
 !define OUTFILE "nsis-output.exe"
@@ -469,8 +471,9 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_RESERVEFILE_LANGDLL
-  !include "C:\Users\Root\Desktop\AIGC\GameTalk\client\src-tauri\target\release\nsis\x64\SimpChinese.nsh"
-  !include "C:\Users\Root\Desktop\AIGC\GameTalk\client\src-tauri\target\release\nsis\x64\English.nsh"
+{{#each language_files}}
+  !include "{{this}}"
+{{/each}}
 
 Function .onInit
   ${GetOptions} $CMDLINE "/P" $PassiveMode
