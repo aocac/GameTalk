@@ -41,7 +41,8 @@ type Section = 'general' | 'game' | 'overlay' | 'about';
 export default function SettingsWindow() {
   const [section, setSection] = useState<Section>('general');
   const settings = useSettings();
-  const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'latest' | 'newer'>('idle');
+  const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'latest' | 'newer' | 'dev-newer'>('idle');
+  const [updateError, setUpdateError] = useState(false);
   const [latestVersion, setLatestVersion] = useState('');
 
   const open = (url: string) => {
@@ -50,21 +51,28 @@ export default function SettingsWindow() {
 
   const checkUpdate = async () => {
     setUpdateState('checking');
+    setUpdateError(false);
     try {
       const res = await fetch('https://api.github.com/repos/aocac/GameTalk/releases/latest');
       const data = (await res.json()) as { tag_name?: string };
-      const tag = String(data.tag_name ?? '');
-      const latest = tag.replace(/^v/, '');
-      const cur = pkg.version;
-      const newer =
-        latest !== cur &&
-        latest.split('.').some((n, i) => Number(n) > Number(cur.split('.')[i] ?? 0));
+      const latest = String(data.tag_name ?? '').replace(/^v/, '');
+      if (!latest) throw new Error('no release');
+      const cur = pkg.version.split('.').map(Number);
+      const rel = latest.split('.').map(Number);
+      // 逐段比较：发布版更高=有更新；当前更高=本地为未发布的新版本
+      let cmp = 0;
+      for (let i = 0; i < 3; i++) {
+        if ((rel[i] ?? 0) !== (cur[i] ?? 0)) {
+          cmp = (rel[i] ?? 0) > (cur[i] ?? 0) ? 1 : -1;
+          break;
+        }
+      }
       setLatestVersion(latest);
-      setUpdateState(newer ? 'newer' : 'latest');
+      setUpdateState(cmp > 0 ? 'newer' : cmp < 0 ? 'dev-newer' : 'latest');
     } catch {
-      // 网络失败：退回「打开发布页」自行查看
-      setUpdateState('latest');
-      setLatestVersion('');
+      // 网络失败：如实提示失败可重试，不误报「已是最新」
+      setUpdateError(true);
+      setUpdateState('idle');
     }
   };
 
@@ -157,7 +165,6 @@ export default function SettingsWindow() {
               <span>呼出快捷键（点击后按下组合键；游戏中再按一次可关闭输入框）</span>
               <HotkeyRecorder value={settings.hotkey} onChange={(v) => change('hotkey', v)} />
             </label>
-            <span className="field-hint">建议使用单 Alt 组合键（如 Alt+G）；避免使用 Space 等游戏内常用按键。</span>
           </>
         )}
 
@@ -174,7 +181,8 @@ export default function SettingsWindow() {
                     className={`chip ${v === settings.overlayPosition ? 'active' : ''}`}
                     onClick={() => {
                       if (v === 'custom') {
-                        // 自定义 = 进入拖拽调整（主窗口侧接管，overlay 窗口内拖动）
+                        // 自定义：切换高亮到自定义（持久化），并进入拖拽调整（主窗口侧接管）
+                        change('overlayPosition', 'custom');
                         void emit('settings:adjust-overlay', { active: true });
                       } else {
                         change('overlayPosition', v);
@@ -253,11 +261,15 @@ export default function SettingsWindow() {
                 <div className="about-update">
                   {updateState === 'idle' && (
                     <button className="btn primary small" onClick={() => void checkUpdate()}>
-                      检查更新
+                      {updateError ? '重试' : '检查更新'}
                     </button>
                   )}
+                  {updateError && <span className="about-hint err">检查失败，请确认网络</span>}
                   {updateState === 'checking' && <span className="about-hint">检查中…</span>}
                   {updateState === 'latest' && <span className="about-hint">已是最新版本 ✓</span>}
+                  {updateState === 'dev-newer' && (
+                    <span className="about-hint">当前版本 v{pkg.version} 领先最新发布（v{latestVersion}），更新功能尚未发版</span>
+                  )}
                   {updateState === 'newer' && (
                     <>
                       <span className="about-new">发现新版本 v{latestVersion}</span>

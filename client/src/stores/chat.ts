@@ -37,7 +37,7 @@ interface ChatState {
   /** 每个房间是否还有更早的历史（向上翻页按钮显隐） */
   hasMoreByRoom: Record<string, boolean>;
   /** 每个房间的最新一条消息摘要（侧栏预览用，实时更新） */
-  previewByRoom: Record<string, { username: string; userId: string; text: string; createdAt: string }>;
+  previewByRoom: Record<string, { id: string; username: string; userId: string; text: string; createdAt: string }>;
   /** 正在加载更早历史的房间（按钮 loading 态） */
   loadingOlderRooms: Record<string, boolean>;
   loadingRooms: boolean;
@@ -161,6 +161,12 @@ function clearPending(): void {
 
 /** 待发送队列：订阅未就绪时先排队（可多条），room:joined 后按序自动发出（游戏内呼出发送场景） */
 let queuedSends: { roomId: string; text: string; opts?: SendOptions }[] = [];
+
+/** 侧栏预览文本：图片无文字显示[图片]、已撤回显示撤回提示 */
+function previewTextOf(m: { kind?: 'text' | 'image'; text: string; recalled?: boolean }): string {
+  if (m.recalled) return '撤回了一条消息';
+  return m.kind === 'image' && !m.text ? '[图片]' : m.text;
+}
 
 /** 乐观上屏：把用户刚发的消息立即显示（pending 标记），服务器确认后校正 */
 function appendOptimistic(roomId: string, text: string, opts?: SendOptions): void {
@@ -415,14 +421,15 @@ export const useChat = create<ChatState>()((set, get) => ({
             }
             playMessageSound(useSettings.getState().soundEnabled);
           }
-          // 侧栏预览实时更新（多房间订阅使非活跃房间也能即时刷新）；图片消息显示占位文案
+          // 侧栏预览实时更新（多房间订阅使非活跃房间也能即时刷新）；图片/撤回显示对应占位
           set((s) => ({
             previewByRoom: {
               ...s.previewByRoom,
               [msg.payload.roomId]: {
+                id: msg.payload.message.id,
                 username: msg.payload.message.username,
                 userId: msg.payload.message.userId,
-                text: msg.payload.message.kind === 'image' ? '[图片]' : msg.payload.message.text,
+                text: previewTextOf(msg.payload.message),
                 createdAt: msg.payload.message.createdAt,
               },
             },
@@ -435,15 +442,23 @@ export const useChat = create<ChatState>()((set, get) => ({
         case 'message:recalled':
           set((s) => {
             const list = s.messagesByRoom[msg.payload.roomId];
-            if (!list) return s;
-            return {
-              messagesByRoom: {
-                ...s.messagesByRoom,
-                [msg.payload.roomId]: list.map((m) =>
-                  m.id === msg.payload.messageId ? { ...m, recalled: true, text: '', mediaUrl: null, mentions: [] } : m,
-                ),
-              },
-            };
+            const messages = list
+              ? {
+                  messagesByRoom: {
+                    ...s.messagesByRoom,
+                    [msg.payload.roomId]: list.map((m) =>
+                      m.id === msg.payload.messageId ? { ...m, recalled: true, text: '', mediaUrl: null, mentions: [] } : m,
+                    ),
+                  },
+                }
+              : {};
+            const preview = s.previewByRoom[msg.payload.roomId];
+            // 被撤回的正是侧栏预览那条 → 预览同步为撤回提示（QQ 式）
+            const previewPatch =
+              preview?.id === msg.payload.messageId
+                ? { previewByRoom: { ...s.previewByRoom, [msg.payload.roomId]: { ...preview, text: '撤回了一条消息' } } }
+                : {};
+            return { ...messages, ...previewPatch };
           });
           break;
         case 'friend:request':
@@ -652,7 +667,7 @@ export const useChat = create<ChatState>()((set, get) => ({
           set((s) => ({
             previewByRoom: {
               ...s.previewByRoom,
-              [r.id]: { username: last.username, userId: last.userId, text: last.kind === 'image' ? '[图片]' : last.text, createdAt: last.createdAt },
+              [r.id]: { id: last.id, username: last.username, userId: last.userId, text: previewTextOf(last), createdAt: last.createdAt },
             },
           }));
         } catch {

@@ -108,6 +108,28 @@ function saveRecentEmoji(e: string, userId: string): string[] {
   return list;
 }
 
+/** 自定义表情包：按账号存储 media URL 列表（GIF/图片，点击即作为图片消息发送） */
+const MAX_STICKERS = 24;
+
+function loadStickers(userId: string): string[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(`gt-stickers#${userId}`) ?? '[]');
+    return Array.isArray(list) ? list.filter((e) => typeof e === 'string').slice(0, MAX_STICKERS) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStickers(list: string[], userId: string): string[] {
+  const trimmed = list.slice(0, MAX_STICKERS);
+  try {
+    localStorage.setItem(`gt-stickers#${userId}`, JSON.stringify(trimmed));
+  } catch {
+    // 忽略存储失败
+  }
+  return trimmed;
+}
+
 /** 图片文件 → 压缩后的 data URL（最长边 1920，JPEG 0.85；GIF 保留原样避免丢动画） */
 async function fileToCompressedDataUrl(file: File): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -716,9 +738,14 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [showEmoji, setShowEmoji] = useState(false);
   const emojiOwner = me?.id ?? 'guest';
   const [recentEmojis, setRecentEmojis] = useState<string[]>(() => loadRecentEmojis(emojiOwner));
-  // 换账号后重读该账号的常用表情
+  const [stickers, setStickers] = useState<string[]>(() => loadStickers(emojiOwner));
+  const [emojiTab, setEmojiTab] = useState<'emoji' | 'stickers'>('emoji');
+  const stickerInputRef = useRef<HTMLInputElement>(null);
+  const [stickerUploading, setStickerUploading] = useState(false);
+  // 换账号后重读该账号的常用表情与表情包
   useEffect(() => {
     setRecentEmojis(loadRecentEmojis(emojiOwner));
+    setStickers(loadStickers(emojiOwner));
   }, [emojiOwner]);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(1);
@@ -859,6 +886,34 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     });
   };
 
+  // 添加自定义表情包：上传到媒体库并记入本人表情包列表（上限 24 个）
+  const onPickStickerFile = async (file: File | undefined) => {
+    if (!file || offline || !connected) return;
+    setStickerUploading(true);
+    try {
+      const { token } = useAuth.getState();
+      if (!token) return;
+      const dataUrl = await fileToCompressedDataUrl(file);
+      const { url } = await api.uploadImage(token, dataUrl);
+      setStickers(saveStickers([url, ...loadStickers(emojiOwner).filter((x) => x !== url)], emojiOwner));
+    } catch (e) {
+      useChat.setState({ roomError: e instanceof Error ? e.message : '表情包添加失败' });
+    } finally {
+      setStickerUploading(false);
+    }
+  };
+
+  const removeSticker = (url: string) => {
+    setStickers(saveStickers(loadStickers(emojiOwner).filter((x) => x !== url), emojiOwner));
+  };
+
+  // 发送表情包：作为图片消息直接发出（GIF 原样保留动画）
+  const sendSticker = (url: string) => {
+    if (offline || !connected || !activeRoom) return;
+    setShowEmoji(false);
+    sendMessage('', { mediaUrl: url });
+  };
+
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
@@ -920,6 +975,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           break;
         case 'overlayPosition':
           s.setOverlayPosition(value as OverlayPosition);
+          // 自定义 = 进入拖拽调整模式，由紧随的 adjust 事件接管，不执行应用+预览
+          if (value === 'custom') break;
           void gameMode.applyOverlayConfig(value as OverlayPosition).then(() => void gameMode.previewOverlay());
           break;
         case 'overlayScale':
@@ -1414,10 +1471,23 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           )}
           {messages.map((m, i) => {
             const prev = messages[i - 1];
-            const grouped = isGroupedWithPrev(prev, m);
+            const grouped = !m.recalled && !prev?.recalled && isGroupedWithPrev(prev, m);
             const showDay =
               i === 0 ||
               new Date(m.createdAt).toDateString() !== new Date(prev.createdAt).toDateString();
+            if (m.recalled) {
+              // QQ 式撤回：气泡消失，居中小字提示
+              return (
+                <Fragment key={m.id}>
+                  {showDay && (
+                    <div className="day-divider">
+                      <span>{formatDay(m.createdAt)}</span>
+                    </div>
+                  )}
+                  <div className="recall-line">{m.userId === me?.id ? '你' : m.username}撤回了一条消息</div>
+                </Fragment>
+              );
+            }
             return (
               <Fragment key={m.id}>
                 {showDay && (
@@ -1462,30 +1532,24 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                       <span className="message-author">{m.username}</span>
                       <span className="message-time">{m.pending ? '发送中…' : new Date(m.createdAt).toLocaleTimeString()}</span>
                     </div>
-                    {m.recalled ? (
-                      <div className="message-recalled">{m.userId === me?.id ? '你撤回了一条消息' : '消息已撤回'}</div>
-                    ) : (
-                      <>
-                        {m.reply && (
-                          <div className="message-quote">
-                            <span className="message-quote-name">{m.reply.username}</span>
-                            <span className="message-quote-text">{m.reply.kind === 'image' ? '[图片]' : m.reply.text}</span>
-                          </div>
-                        )}
-                        {m.kind === 'image' && m.mediaUrl && (
-                          <img
-                            className="msg-image"
-                            src={absUrl(m.mediaUrl)}
-                            alt="图片"
-                            loading="lazy"
-                            onClick={() => {
-                              if (m.mediaUrl) openLightbox(absUrl(m.mediaUrl));
-                            }}
-                          />
-                        )}
-                        {m.text && <div className="message-text">{renderMentions(m.text, m.mentions)}</div>}
-                      </>
+                    {m.reply && (
+                      <div className="message-quote">
+                        <span className="message-quote-name">{m.reply.username}</span>
+                        <span className="message-quote-text">{m.reply.kind === 'image' ? '[图片]' : m.reply.text}</span>
+                      </div>
                     )}
+                    {m.kind === 'image' && m.mediaUrl && (
+                      <img
+                        className="msg-image"
+                        src={absUrl(m.mediaUrl)}
+                        alt="图片"
+                        loading="lazy"
+                        onClick={() => {
+                          if (m.mediaUrl) openLightbox(absUrl(m.mediaUrl));
+                        }}
+                      />
+                    )}
+                    {m.text && <div className="message-text">{renderMentions(m.text, m.mentions)}</div>}
                   </div>
                 </div>
               </Fragment>
@@ -1497,28 +1561,83 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           {showEmoji && <div className="menu-mask" onClick={() => setShowEmoji(false)} />}
           {showEmoji && (
             <div className="emoji-pop">
-              {recentEmojis.length > 0 && (
+              <div className="emoji-tabs">
+                <button type="button" className={`emoji-tab ${emojiTab === 'emoji' ? 'active' : ''}`} onClick={() => setEmojiTab('emoji')}>
+                  表情
+                </button>
+                <button type="button" className={`emoji-tab ${emojiTab === 'stickers' ? 'active' : ''}`} onClick={() => setEmojiTab('stickers')}>
+                  表情包
+                </button>
+              </div>
+              {emojiTab === 'emoji' ? (
                 <>
-                  <div className="emoji-section">最近</div>
+                  {recentEmojis.length > 0 && (
+                    <>
+                      <div className="emoji-section">最近</div>
+                      <div className="emoji-grid">
+                        {recentEmojis.map((e) => (
+                          <button key={`r-${e}`} type="button" className="emoji-cell" onMouseDown={(ev) => { ev.preventDefault(); insertEmoji(e); }}>
+                            {e}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  <div className="emoji-section">全部</div>
                   <div className="emoji-grid">
-                    {recentEmojis.map((e) => (
-                      <button key={`r-${e}`} type="button" className="emoji-cell" onMouseDown={(ev) => { ev.preventDefault(); insertEmoji(e); }}>
+                    {EMOJIS.map((e) => (
+                      <button key={e} type="button" className="emoji-cell" onMouseDown={(ev) => { ev.preventDefault(); insertEmoji(e); }}>
                         {e}
                       </button>
                     ))}
                   </div>
                 </>
+              ) : (
+                <div className="sticker-wrap">
+                  <div className="sticker-hint">点击发送；支持 GIF 动图，最多 {MAX_STICKERS} 个</div>
+                  <div className="sticker-grid">
+                    {stickers.map((url) => (
+                      <div key={url} className="sticker-cell">
+                        <button
+                          type="button"
+                          className="sticker-img-btn"
+                          title="点击发送"
+                          onMouseDown={(ev) => { ev.preventDefault(); sendSticker(url); }}
+                        >
+                          <img src={absUrl(url)} alt="表情包" loading="lazy" />
+                        </button>
+                        <button type="button" className="sticker-remove" title="移除" onClick={() => removeSticker(url)}>
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                    {stickers.length < MAX_STICKERS && (
+                      <button
+                        type="button"
+                        className="sticker-add"
+                        title={stickerUploading ? '上传中…' : '添加表情包'}
+                        disabled={stickerUploading}
+                        onClick={() => stickerInputRef.current?.click()}
+                      >
+                        {stickerUploading ? '…' : '+'}
+                      </button>
+                    )}
+                  </div>
+                  {stickers.length === 0 && <div className="sticker-empty">还没有表情包，点「+」从本地添加 GIF/图片</div>}
+                </div>
               )}
-              <div className="emoji-section">全部</div>
-              <div className="emoji-grid">
-                {EMOJIS.map((e) => (
-                  <button key={e} type="button" className="emoji-cell" onMouseDown={(ev) => { ev.preventDefault(); insertEmoji(e); }}>
-                    {e}
-                  </button>
-                ))}
-              </div>
             </div>
           )}
+          <input
+            ref={stickerInputRef}
+            type="file"
+            accept="image/gif,image/png,image/jpeg,image/webp"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              void onPickStickerFile(e.target.files?.[0]);
+              e.target.value = '';
+            }}
+          />
           {mentionQuery && mentionCandidates.length > 0 && (
             <div className="mention-pop">
               {mentionCandidates.map((m, i) => (
@@ -1606,6 +1725,14 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             placeholder={offline ? '离线模式：未连接服务器' : connected ? (activeRoom ? '输入消息，Enter 发送，@ 唤起提及' : '先选择或创建房间') : '未连接'}
             disabled={offline || !connected || !activeRoom}
             maxLength={2000}
+            onPaste={(e) => {
+              // 支持直接粘贴截图/图片：走附件上传流程（可配文字后发送）
+              const file = [...e.clipboardData.items].find((it) => it.type.startsWith('image/'))?.getAsFile();
+              if (file) {
+                e.preventDefault();
+                void onPickImageFile(file);
+              }
+            }}
             onChange={(e) => {
               const v = e.target.value;
               setDraft(v);

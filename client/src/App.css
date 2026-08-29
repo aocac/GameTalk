@@ -2459,3 +2459,137 @@ body {
   border-radius: var(--radius-lg);
   padding: 6px 12px;
 }
+
+/* ===== v0.4.5：撤回居中提示 / 表情包页签 ===== */
+
+/* QQ 式撤回提示：整行居中小字 */
+.recall-line {
+  align-self: center;
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 3px 0;
+}
+
+/* 表情面板页签 */
+.emoji-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.emoji-tab {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  padding: 5px 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.emoji-tab:hover {
+  background: var(--surface-2);
+}
+
+.emoji-tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* 表情包网格 */
+.sticker-wrap {
+  min-height: 120px;
+}
+
+.sticker-hint {
+  font-size: 11.5px;
+  color: var(--text-3);
+  margin-bottom: 6px;
+}
+
+.sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.sticker-cell {
+  position: relative;
+}
+
+.sticker-img-btn {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 0;
+  padding: 0;
+  border-radius: 8px;
+  background: var(--surface-2);
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sticker-img-btn:hover {
+  outline: 2px solid var(--accent);
+}
+
+.sticker-img-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.sticker-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(20, 22, 28, 0.6);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0;
+  cursor: pointer;
+  display: none;
+}
+
+.sticker-cell:hover .sticker-remove {
+  display: block;
+}
+
+.sticker-add {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.sticker-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sticker-empty {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.about-hint.err {
+  color: var(--danger);
+}
