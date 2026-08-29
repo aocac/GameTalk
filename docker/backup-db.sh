@@ -12,7 +12,7 @@ PG_USER="${PG_USER:-gametalk}"
 PG_DB="${PG_DB:-gametalk}"
 
 mkdir -p "$BACKUP_DIR"
-chmod 700 "$BACKUP_DIR"
+chmod 755 "$BACKUP_DIR"   # 目录需可进入：异地副本由 ubuntu 账户经 scp 拉取
 
 # 防重叠：上一次尚未结束时直接跳过（flock 不等待）
 exec 9>"$BACKUP_DIR/.lock"
@@ -45,8 +45,10 @@ if [ "$toc_lines" -lt 2 ]; then
 fi
 
 # 3) 配置快照：自定义 compose 与 .env 同样只存在于本机盘，一并纳入备份
+#    （含密钥，保持 root-only，仅作服务器本地副本；异地只拉数据库 dump）
 tar czf "$cfg" -C "$REPO_ROOT" docker/docker-compose.yml docker/.env
 chmod 600 "$cfg"
+chmod 644 "$dump"
 
 # 4) 轮转：保留最近 KEEP_DAYS 天
 find "$BACKUP_DIR" -name 'gametalk-db-*.dump' -mtime +"$KEEP_DAYS" -delete
