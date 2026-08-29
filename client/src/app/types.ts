@@ -9,6 +9,8 @@ export interface UserBrief {
 /** 房间花名册成员：全体 DB 成员 + 在线标记（离线成员保留在列表，QQ 式置灰） */
 export interface RoomMember extends UserBrief {
   online: boolean;
+  /** 生效中的禁言截止时间（ISO；null/undefined = 未被禁言） */
+  mutedUntil?: string | null;
 }
 
 /** 好友/申请条目里的公开资料 */
@@ -45,6 +47,8 @@ export type ClientWsMessage =
   | { type: 'room:leave'; payload: { roomId: string } }
   | { type: 'room:delete'; payload: { roomId: string } }
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
+  | { type: 'member:mute'; payload: { roomId: string; userId: string; minutes: number } }
+  | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string } }
   | { type: 'ping' };
 
@@ -55,6 +59,8 @@ export type ServerWsMessage =
   | { type: 'member:joined'; payload: { roomId: string; member: UserBrief } }
   | { type: 'member:left'; payload: { roomId: string; userId: string; username: string } }
   | { type: 'member:kicked'; payload: { roomId: string; userId: string; username: string } }
+  | { type: 'member:muted'; payload: { roomId: string; userId: string; mutedUntil: string } }
+  | { type: 'member:unmuted'; payload: { roomId: string; userId: string } }
   | { type: 'message:new'; payload: { roomId: string; message: ChatMessage } }
   | { type: 'room:deleted'; payload: { roomId: string } }
   | { type: 'friend:request'; payload: { requestId: string; from: FriendProfile } }
@@ -62,7 +68,7 @@ export type ServerWsMessage =
   | { type: 'friend:declined'; payload: { userId: string } }
   | { type: 'friend:removed'; payload: { userId: string } }
   | { type: 'presence:friend'; payload: { userId: string; online: boolean } }
-  | { type: 'error'; payload: { code: string; message: string; roomId?: string } }
+  | { type: 'error'; payload: { code: string; message: string; roomId?: string; mutedUntil?: string } }
   | { type: 'pong' };
 
 export type WsStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed';

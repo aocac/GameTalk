@@ -47,6 +47,8 @@ interface ChatState {
   deleteRoom: (roomId: string) => void;
   leaveActiveRoom: () => Promise<void>;
   kickMember: (roomId: string, userId: string) => void;
+  muteMember: (roomId: string, userId: string, minutes: number) => void;
+  unmuteMember: (roomId: string, userId: string) => void;
   sendMessage: (text: string, mentions?: string[], mediaUrl?: string) => void;
   clearRoomError: () => void;
 }
@@ -328,6 +330,22 @@ export const useChat = create<ChatState>()((set, get) => ({
           }
           break;
         }
+        case 'member:muted':
+        case 'member:unmuted':
+          set((s) => {
+            const members = s.membersByRoom[msg.payload.roomId];
+            if (!members) return s;
+            const mutedUntil = msg.type === 'member:muted' ? msg.payload.mutedUntil : null;
+            return {
+              membersByRoom: {
+                ...s.membersByRoom,
+                [msg.payload.roomId]: members.map((m) =>
+                  m.id === msg.payload.userId ? { ...m, mutedUntil } : m,
+                ),
+              },
+            };
+          });
+          break;
         case 'message:new': {
           set((s) => {
             // 自己发出的消息：先移除对应的乐观占位，再追加服务器确认版本（避免重复）
@@ -423,6 +441,10 @@ export const useChat = create<ChatState>()((set, get) => ({
             set({ roomError: '只有房主才能删除房间' });
           } else if (msg.payload.code === 'rate_limited') {
             set({ roomError: '发送过于频繁，请稍候再试' });
+          } else if (msg.payload.code === 'muted') {
+            const until = msg.payload.mutedUntil ? new Date(msg.payload.mutedUntil) : null;
+            const mins = until ? Math.max(1, Math.ceil((until.getTime() - Date.now()) / 60000)) : null;
+            set({ roomError: mins ? `你已被禁言，约 ${mins} 分钟后恢复` : '你已被禁言' });
           } else if (msg.payload.code === 'room_not_found') {
             set({ roomError: '房间不存在或已被删除' });
           }
@@ -607,6 +629,25 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
     // 服务端校验房主权限，成功后广播 member:kicked（各端含被踢者自行清理）
     socket.send({ type: 'member:kick', payload: { roomId, userId } });
+  },
+
+  muteMember: (roomId, userId, minutes) => {
+    const { status } = get();
+    if (status !== 'open' || !socket) {
+      set({ roomError: '连接未就绪，无法操作。请确认已连接服务器。' });
+      return;
+    }
+    // 服务端校验房主权限与时长，成功后广播 member:muted（花名册带 mutedUntil）
+    socket.send({ type: 'member:mute', payload: { roomId, userId, minutes } });
+  },
+
+  unmuteMember: (roomId, userId) => {
+    const { status } = get();
+    if (status !== 'open' || !socket) {
+      set({ roomError: '连接未就绪，无法操作。请确认已连接服务器。' });
+      return;
+    }
+    socket.send({ type: 'member:unmute', payload: { roomId, userId } });
   },
 
   sendMessage: (text, mentions, mediaUrl) => {

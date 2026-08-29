@@ -63,6 +63,8 @@ interface RosterMember {
   username: string;
   avatarUrl: string | null;
   online: boolean;
+  /** 生效中的禁言截止时间（ISO；null = 未被禁言） */
+  mutedUntil: string | null;
 }
 
 type ClientMessage =
@@ -71,6 +73,8 @@ type ClientMessage =
   | { type: 'room:leave'; payload: { roomId: string } }
   | { type: 'room:delete'; payload: { roomId: string } }
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
+  | { type: 'member:mute'; payload: { roomId: string; userId: string; minutes: unknown } }
+  | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown } }
   | { type: 'ping' };
 
@@ -159,11 +163,13 @@ function publicMember(userId: string, username: string, avatarUrl?: string | nul
   return { id: userId, username, avatarUrl: avatarUrl ?? null };
 }
 
-/** 花名册：DB 全体成员（按加入时间）+ 内存连接表推导的在线标记 */
+/** 花名册：DB 全体成员（按加入时间）+ 内存连接表推导的在线标记 + 生效中的禁言 */
 async function roomRosterOf(db: Db, roomId: string, httpBase: string): Promise<RosterMember[]> {
-  const res = await db.query<{ id: string; username: string; avatar_url: string | null }>(
-    `SELECT u.id, u.username, u.avatar_url
-     FROM room_members rm JOIN users u ON u.id = rm.user_id
+  const res = await db.query<{ id: string; username: string; avatar_url: string | null; muted_until: string | null }>(
+    `SELECT u.id, u.username, u.avatar_url, m.muted_until
+     FROM room_members rm
+     JOIN users u ON u.id = rm.user_id
+     LEFT JOIN room_mutes m ON m.room_id = rm.room_id AND m.user_id = rm.user_id AND m.muted_until > now()
      WHERE rm.room_id = $1
      ORDER BY rm.joined_at ASC`,
     [roomId],
@@ -174,6 +180,7 @@ async function roomRosterOf(db: Db, roomId: string, httpBase: string): Promise<R
     username: r.username,
     avatarUrl: avatarHttpUrlOf(httpBase, r.id, r.avatar_url),
     online: !!online?.has(r.id),
+    mutedUntil: r.muted_until ? new Date(r.muted_until).toISOString() : null,
   }));
 }
 
@@ -459,6 +466,69 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       for (const s of kickedSockets) send(s, notice);
       break;
     }
+    case 'member:mute': {
+      // 房主管理权限：限时禁言成员（到期自动失效）；房主本人不可被禁言
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const roomId = sanitizeRoomId(msg.payload.roomId);
+      const targetId = String(msg.payload.userId ?? '');
+      const minutes = Math.floor(Number(msg.payload.minutes));
+      const found = await db.query<{ owner_id: string }>('SELECT owner_id FROM rooms WHERE id = $1', [roomId]);
+      if (found.rows.length === 0) {
+        send(conn.socket, { type: 'error', payload: { code: 'room_not_found', message: 'room not found' } });
+        return;
+      }
+      if (found.rows[0].owner_id !== conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'only_owner', message: 'only the room owner can mute members' } });
+        return;
+      }
+      if (!Number.isFinite(minutes) || minutes < 1 || minutes > 60 * 24 * 30) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'mute duration must be 1 minute to 30 days' } });
+        return;
+      }
+      if (!targetId || targetId === conn.userId || targetId === found.rows[0].owner_id) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'cannot mute yourself or the owner' } });
+        return;
+      }
+      const isMember = await db.query('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, targetId]);
+      if (isMember.rows.length === 0) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'target is not a member', roomId } });
+        return;
+      }
+      await db.query(
+        `INSERT INTO room_mutes (room_id, user_id, muted_until) VALUES ($1, $2, now() + ($3 || ' minutes')::interval)
+         ON CONFLICT (room_id, user_id) DO UPDATE SET muted_until = excluded.muted_until, created_at = now()`,
+        [roomId, targetId, String(minutes)],
+      );
+      broadcastToRoom(roomId, {
+        type: 'member:muted',
+        payload: { roomId, userId: targetId, mutedUntil: new Date(Date.now() + minutes * 60_000).toISOString() },
+      });
+      break;
+    }
+    case 'member:unmute': {
+      // 房主解除禁言
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const roomId = sanitizeRoomId(msg.payload.roomId);
+      const targetId = String(msg.payload.userId ?? '');
+      const found = await db.query<{ owner_id: string }>('SELECT owner_id FROM rooms WHERE id = $1', [roomId]);
+      if (found.rows.length === 0) {
+        send(conn.socket, { type: 'error', payload: { code: 'room_not_found', message: 'room not found' } });
+        return;
+      }
+      if (found.rows[0].owner_id !== conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'only_owner', message: 'only the room owner can unmute members' } });
+        return;
+      }
+      await db.query('DELETE FROM room_mutes WHERE room_id = $1 AND user_id = $2', [roomId, targetId]);
+      broadcastToRoom(roomId, { type: 'member:unmuted', payload: { roomId, userId: targetId } });
+      break;
+    }
     case 'message:send': {
       if (!conn.userId) {
         send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
@@ -474,6 +544,18 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       }
       if (!conn.rooms.has(roomId)) {
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
+        return;
+      }
+      // 禁言检查：生效中的禁言拒绝发送（带截止时间供客户端展示）
+      const muted = await db.query<{ muted_until: string }>(
+        'SELECT muted_until FROM room_mutes WHERE room_id = $1 AND user_id = $2 AND muted_until > now()',
+        [roomId, conn.userId],
+      );
+      if (muted.rows.length > 0) {
+        send(conn.socket, {
+          type: 'error',
+          payload: { code: 'muted', message: 'you are muted in this room', roomId, mutedUntil: new Date(muted.rows[0].muted_until).toISOString() },
+        });
         return;
       }
       // 图片消息：mediaUrl 必须是本服务媒体端点且属于发送者（防伪造他人媒体引用）

@@ -427,4 +427,69 @@ describe('realtime + persistence', () => {
     expect(img.mediaUrl).toMatch(/\/api\/media\/[0-9a-f-]{36}$/);
     ws.close();
   });
+
+  it('mute: owner-only, blocks sending with mutedUntil, unmute restores, owner immune', async () => {
+    const owner = await registerUser('mute_owner');
+    const { room } = (
+      await app.inject({ method: 'POST', url: '/api/rooms', headers: auth(owner.token), payload: { name: 'MuteRoom' } })
+    ).json();
+    const member = await registerUser('mute_member');
+    await app.inject({
+      method: 'POST',
+      url: '/api/rooms/join',
+      headers: auth(member.token),
+      payload: { inviteCode: room.inviteCode },
+    });
+
+    const wsO = await connectWs(owner.token);
+    const wsM = await connectWs(member.token);
+    for (const w of [wsO, wsM]) {
+      w.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+      await nextMessage(w, (m) => m.type === 'room:joined');
+    }
+
+    // 非房主禁言 → only_owner
+    const e1 = nextMessage(wsM, (m) => m.type === 'error');
+    wsM.send(JSON.stringify({ type: 'member:mute', payload: { roomId: room.id, userId: owner.userId, minutes: 10 } }));
+    expect((await e1).payload.code).toBe('only_owner');
+
+    // 房主禁言自己 → invalid_input
+    const e2 = nextMessage(wsO, (m) => m.type === 'error');
+    wsO.send(JSON.stringify({ type: 'member:mute', payload: { roomId: room.id, userId: owner.userId, minutes: 10 } }));
+    expect((await e2).payload.code).toBe('invalid_input');
+
+    // 正常禁言：双方收到 member:muted，花名册带 mutedUntil
+    const oSeesMuted = nextMessage(wsO, (m) => m.type === 'member:muted');
+    const mSeesMuted = nextMessage(wsM, (m) => m.type === 'member:muted');
+    wsO.send(JSON.stringify({ type: 'member:mute', payload: { roomId: room.id, userId: member.userId, minutes: 10 } }));
+    const mutedEv = await oSeesMuted;
+    expect(mutedEv.payload.userId).toBe(member.userId);
+    expect(mutedEv.payload.mutedUntil).toBeTruthy();
+    await mSeesMuted;
+
+    // 重新订阅拿花名册：mutedUntil 应带出
+    wsM.send(JSON.stringify({ type: 'room:leave', payload: { roomId: room.id } }));
+    wsM.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    const rejoined = await nextMessage(wsM, (m) => m.type === 'room:joined');
+    const meEntry = rejoined.payload.members.find((x: any) => x.id === member.userId);
+    expect(meEntry.mutedUntil).toBeTruthy();
+
+    // 被禁言者发消息 → muted 错误
+    const e3 = nextMessage(wsM, (m) => m.type === 'error');
+    wsM.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: ' hello' } }));
+    const mutedErr = await e3;
+    expect(mutedErr.payload.code).toBe('muted');
+    expect(mutedErr.payload.mutedUntil).toBeTruthy();
+
+    // 解除禁言 → 发送恢复
+    const mSeesUnmuted = nextMessage(wsM, (m) => m.type === 'member:unmuted');
+    wsO.send(JSON.stringify({ type: 'member:unmute', payload: { roomId: room.id, userId: member.userId } }));
+    await mSeesUnmuted;
+    const got = nextMessage(wsO, (m) => m.type === 'message:new');
+    wsM.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '解封发言' } }));
+    expect((await got).payload.message.text).toBe('解封发言');
+
+    wsO.close();
+    wsM.close();
+  });
 });

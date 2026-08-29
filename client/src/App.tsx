@@ -818,6 +818,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     leaveActiveRoom,
     deleteRoom,
     kickMember,
+    muteMember,
+    unmuteMember,
     sendMessage,
     clearRoomError,
   } = useChat();
@@ -827,6 +829,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   /** 房间右键菜单：所在位置 + 目标房间 */
   const [roomMenu, setRoomMenu] = useState<{ id: string; invite: string; isOwner: boolean; x: number; y: number } | null>(null);
   const [confirmDeleteInMenu, setConfirmDeleteInMenu] = useState(false);
+  /** 成员右键菜单：目标成员 + 位置（@提及 / 加好友 / 房主管理） */
+  const [memberMenu, setMemberMenu] = useState<{ member: RoomMember; x: number; y: number; confirmKick: boolean } | null>(null);
   /** 踢出二次确认：记录待确认的成员 userId（3s 内再点一次生效） */
   const [confirmKickId, setConfirmKickId] = useState<string | null>(null);
   const kickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1015,6 +1019,21 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
 
   const handleAddFriend = async () => {
     if (await sendRequest(addFriendInput.trim())) setAddFriendInput('');
+  };
+
+  /** 成员菜单/@提及：把 @昵称 插入草稿并登记提及，光标落回输入框 */
+  const mentionFromMenu = (m: UserBrief) => {
+    setSideTab('rooms');
+    const el = composerRef.current;
+    const pos = el?.selectionStart ?? draft.length;
+    const next = draft.slice(0, pos) + `@${m.username} ` + draft.slice(pos);
+    setDraft(next);
+    pickedMentions.current.set(m.id, m.username);
+    requestAnimationFrame(() => {
+      el?.focus();
+      const caret = pos + m.username.length + 2;
+      el?.setSelectionRange(caret, caret);
+    });
   };
 
   // 好友操作提示 3s 自动消退
@@ -1593,6 +1612,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   className={`member-item ${isSelf ? 'self' : ''} ${m.online ? 'online' : 'offline'}`}
                   title={m.online ? '在线 · 查看资料' : '离线 · 查看资料'}
                   onClick={() => setCardMember(m)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setMemberMenu({
+                      member: m,
+                      x: Math.min(e.clientX, window.innerWidth - 200),
+                      y: Math.min(e.clientY, window.innerHeight - 300),
+                      confirmKick: false,
+                    });
+                  }}
                 >
                   <span className="member-avatar">
                     <Avatar name={m.username} url={m.avatarUrl} size={26} />
@@ -1601,6 +1629,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                     {m.username}
                     {isSelf ? '（我）' : ''}
                   </span>
+                  {m.mutedUntil && new Date(m.mutedUntil) > new Date() && (
+                    <span className="mute-chip" title={`禁言至 ${new Date(m.mutedUntil).toLocaleTimeString()}`}>
+                      禁言
+                    </span>
+                  )}
                   {isOwner && (
                     <span className="owner-chip" title="房主">
                       房主
@@ -1653,6 +1686,98 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                 {confirmDeleteInMenu ? '确认删除？' : '删除房间'}
               </button>
             )}
+          </div>
+        </>
+      )}
+      {memberMenu && activeRoom && (
+        <>
+          <div className="menu-mask" onClick={() => setMemberMenu(null)} />
+          <div className="ctx-menu" style={{ left: memberMenu.x, top: memberMenu.y }}>
+            <div className="ctx-menu-title">{memberMenu.member.username}</div>
+            {memberMenu.member.id !== me?.id && (
+              <button
+                className="ctx-menu-item"
+                onClick={() => {
+                  mentionFromMenu(memberMenu.member);
+                  setMemberMenu(null);
+                }}
+              >
+                @ 提及
+              </button>
+            )}
+            {memberMenu.member.id !== me?.id && relationOf(memberMenu.member.id) === 'none' && (
+              <button
+                className="ctx-menu-item"
+                onClick={() => {
+                  void sendRequest(memberMenu.member.id);
+                  setMemberMenu(null);
+                }}
+              >
+                添加好友
+              </button>
+            )}
+            {memberMenu.member.id !== me?.id && relationOf(memberMenu.member.id) === 'pending' && (
+              <div className="ctx-menu-item disabled">好友申请处理中</div>
+            )}
+            <button
+              className="ctx-menu-item"
+              onClick={() => {
+                setCardMember(memberMenu.member);
+                setMemberMenu(null);
+              }}
+            >
+              查看资料
+            </button>
+            {activeRoom.ownerId === me?.id && memberMenu.member.id !== me?.id && (
+              memberMenu.member.mutedUntil && new Date(memberMenu.member.mutedUntil) > new Date() ? (
+                <button
+                  className="ctx-menu-item danger"
+                  onClick={() => {
+                    unmuteMember(activeRoom.id, memberMenu.member.id);
+                    setMemberMenu(null);
+                  }}
+                >
+                  解除禁言
+                </button>
+              ) : (
+                <>
+                  <div className="ctx-menu-title small">禁言</div>
+                  {[
+                    [10, '10 分钟'],
+                    [60, '1 小时'],
+                    [1440, '1 天'],
+                  ].map(([min, label]) => (
+                    <button
+                      key={min}
+                      className="ctx-menu-item"
+                      onClick={() => {
+                        muteMember(activeRoom.id, memberMenu.member.id, min as number);
+                        setMemberMenu(null);
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </>
+              )
+            )}
+            {activeRoom.ownerId === me?.id &&
+              memberMenu.member.id !== me?.id &&
+              memberMenu.member.id !== activeRoom.ownerId && (
+                <button
+                  className={`ctx-menu-item danger ${memberMenu.confirmKick ? 'confirming' : ''}`}
+                  onClick={() => {
+                    if (!memberMenu.confirmKick) {
+                      setMemberMenu({ ...memberMenu, confirmKick: true });
+                      return;
+                    }
+                    kickMember(activeRoom.id, memberMenu.member.id);
+                    setMemberMenu(null);
+                  }}
+                >
+                  {memberMenu.confirmKick ? '确认移出？' : '移出房间'}
+                </button>
+              )}
           </div>
         </>
       )}
