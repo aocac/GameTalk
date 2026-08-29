@@ -28,9 +28,43 @@
 
 全程双手不离键盘，视线不离游戏。
 
-| ![房间聊天](docs/ui-chat-owner.png) |
-|:---:|
-| **房间聊天**：多房间 · 未读角标 · 成员列表（👑 房主）· 消息气泡 |
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/ui-chat-owner.png" alt="房间聊天" /><br />
+      <sub><b>房间聊天</b>：多房间预览 · 成员列表 · 消息气泡 · 未读提醒</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/ui-member-card.png" alt="成员卡片" /><br />
+      <sub><b>成员卡片</b>：个性签名 · ID 复制 · 房主移出成员</sub>
+    </td>
+  </tr>
+</table>
+
+<details>
+<summary>更多截图</summary>
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/ui-room-context-menu.png" alt="房间右键菜单" /><br />
+      <sub><b>房间右键菜单</b>：复制邀请码 / 删除房间</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/ui-profile.png" alt="个人资料" /><br />
+      <sub><b>个人资料</b>：头像 · 昵称 · 个性签名 · 注册时间</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/ui-login.png" alt="登录页" /><br />
+      <sub><b>登录页</b>：注册 / 登录 / 离线试用</sub>
+    </td>
+    <td></td>
+  </tr>
+</table>
+
+</details>
 
 ## 🎮 核心特性
 
@@ -82,7 +116,8 @@ bash deploy.sh        # 首次运行生成 .env，按提示填入域名后再次
 完成后你会得到一个 `https://你的域名` 的服务器（Caddy 自动签发 HTTPS/WSS 证书），
 把它填进客户端「设置 → 服务器地址」即可。和朋友们共用一台服务器，邀请码互通。
 
-> 已有自己的域名和 VPS？完整指引见 [部署文档](docs/deployment.md)。
+部署脚本会顺手装好**每日数据库自动备份**（systemd 定时，保留 14 天），恢复方法见
+[部署文档](docs/deployment.md)。已有自己的域名和 VPS？完整指引同样见部署文档。
 
 ## 🖥️ 本地开发
 
@@ -110,10 +145,24 @@ Windows 下也可以直接双击仓库根目录的 `dev/start-local.cmd` 一键�
 
 - **客户端**：Tauri 2 + React 19 + TypeScript + zustand；Rust 侧仅保留托盘 / 单实例等系统能力
 - **服务端**：Fastify 5 + WebSocket + `pg`；开发测试用 PGlite（与生产同源 SQL 迁移）
-- **部署**：Docker Compose + Caddy（自动 HTTPS/WSS）
+- **部署**：Docker Compose + Caddy（自动 HTTPS/WSS）+ 每日数据库备份
 - **测试**：server 33 + client 12 vitest 用例（含真实 WebSocket 集成测试）、ESLint、CI 全绿门禁
 
 更多细节见 [架构文档](docs/architecture.md) 与 [测试文档](docs/testing.md)。
+
+## ❓ 常见问题
+
+**连接不上服务器？**
+核对「设置 → 服务器地址」与服务端部署地址完全一致（含端口，最常填错的就是端口）；确认服务器已启动、防火墙已放行。
+
+**游戏里看不到消息悬浮层？**
+游戏需以「无边框窗口化」运行——全屏独占模式下悬浮层会被游戏画面遮挡。悬浮层的位置、缩放、显示时长都在设置里可调。
+
+**全局快捷键没有反应？**
+到「设置 → 游戏模式」重新录制一次快捷键；如果游戏以管理员身份运行，客户端也需要以管理员身份运行。
+
+**我的聊天数据存在哪里？**
+全部存在你自己部署的服务器 PostgreSQL 中，客户端本机只保存登录状态。部署脚本已默认开启每日备份，也建议定期做一次恢复演练（见部署文档）。
 
 ## 🗺️ 路线图
 
@@ -121,9 +170,9 @@ Windows 下也可以直接双击仓库根目录的 `dev/start-local.cmd` 一键�
 - [x] 多房间并行 + 未读角标
 - [x] 房主管理（移出成员 / 删除房间）
 - [x] 服务端限流与连接加固
+- [x] 服务器数据库自动备份
 - [ ] 消息图片 / 表情
 - [ ] @提及 与 通知中心
-- [ ] 服务器数据库自动备份
 
 ## 🤝 参与贡献
 
