@@ -8,6 +8,7 @@ import type { JwtService } from './lib/jwt.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerRoomsRoutes } from './routes/rooms.js';
+import { registerFriendsRoutes } from './routes/friends.js';
 import { registerWsRoutes } from './ws/gateway.js';
 
 export interface AppDeps {
@@ -31,6 +32,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   await app.register(cors, { origin: config.corsOrigin === '*' ? true : config.corsOrigin.split(',') });
+  // 无 body 的 POST（Content-Type: application/json 但 body 为空，如「接受好友/离开房间」）
+  // Fastify 5 默认 400 FST_ERR_CTP_EMPTY_JSON_BODY —— 宽容为空对象，老客户端同样受益
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    if (body === '' || body === undefined) {
+      done(null, {});
+      return;
+    }
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (e) {
+      done(e as Error);
+    }
+  });
   // maxPayload：拒绝超大 WS 帧（合法消息 ≤2000 字符 + JWT，64KB 上限足够宽裕），防滥用
   await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
   // REST 全局限流；认证类路由在 routes/auth.ts 内单独加严
@@ -48,6 +62,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerHealthRoutes(app, { db });
   registerAuthRoutes(app, { config, db, jwt });
   registerRoomsRoutes(app, { db, jwt });
+  registerFriendsRoutes(app, { db, jwt });
   registerWsRoutes(app, { config, db, jwt });
 
   return app;

@@ -11,6 +11,11 @@ export interface RoomMember extends UserBrief {
   online: boolean;
 }
 
+/** 好友/申请条目里的公开资料 */
+export interface FriendProfile extends UserBrief {
+  bio?: string | null;
+}
+
 export interface ChatMessage {
   id: string;
   roomId: string;
@@ -42,6 +47,11 @@ export type ServerWsMessage =
   | { type: 'member:kicked'; payload: { roomId: string; userId: string; username: string } }
   | { type: 'message:new'; payload: { roomId: string; message: ChatMessage } }
   | { type: 'room:deleted'; payload: { roomId: string } }
+  | { type: 'friend:request'; payload: { requestId: string; from: FriendProfile } }
+  | { type: 'friend:accepted'; payload: { user: FriendProfile } }
+  | { type: 'friend:declined'; payload: { userId: string } }
+  | { type: 'friend:removed'; payload: { userId: string } }
+  | { type: 'presence:friend'; payload: { userId: string; online: boolean } }
   | { type: 'error'; payload: { code: string; message: string; roomId?: string } }
   | { type: 'pong' };
 

@@ -47,7 +47,8 @@ async function request<T>(
       res = await fetch(`${base}${path}`, {
         method: options.method ?? 'GET',
         headers: {
-          'Content-Type': 'application/json',
+          // 仅在有 body 时携带 JSON Content-Type：Fastify 5 对「声明 JSON 但 body 为空」会 400
+          ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
           ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
         },
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -162,4 +163,50 @@ export function roomMessages(
   return request<{ messages: RoomMessage[]; hasMore: boolean }>(`/api/rooms/${roomId}/messages${qs ? `?${qs}` : ''}`, {
     token,
   });
+}
+
+// ============ 好友 ============
+
+export interface Friend {
+  id: string;
+  username: string;
+  avatarUrl: string | null;
+  bio: string | null;
+  online: boolean;
+}
+
+export interface FriendRequestItem {
+  id: string;
+  createdAt: string;
+  user: { id: string; username: string; avatarUrl: string | null; bio: string | null };
+}
+
+export function listFriends(token: string): Promise<{ friends: Friend[] }> {
+  return request<{ friends: Friend[] }>('/api/friends', { token });
+}
+
+export function sendFriendRequest(
+  token: string,
+  target: { userId?: string; username?: string },
+): Promise<{ request: { id: string; status: string; user: { id: string; username: string } } }> {
+  return request<{ request: { id: string; status: string; user: { id: string; username: string } } }>(
+    '/api/friends/requests',
+    { method: 'POST', token, body: target },
+  );
+}
+
+export function listFriendRequests(token: string): Promise<{ incoming: FriendRequestItem[]; outgoing: FriendRequestItem[] }> {
+  return request<{ incoming: FriendRequestItem[]; outgoing: FriendRequestItem[] }>('/api/friends/requests', { token });
+}
+
+export function acceptFriendRequest(token: string, id: string): Promise<{ friend: Friend | null }> {
+  return request<{ friend: Friend | null }>(`/api/friends/requests/${id}/accept`, { method: 'POST', token });
+}
+
+export function declineFriendRequest(token: string, id: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/friends/requests/${id}/decline`, { method: 'POST', token });
+}
+
+export function removeFriend(token: string, userId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/friends/${userId}/remove`, { method: 'POST', token });
 }

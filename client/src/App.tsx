@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useChat } from './stores/chat';
+import { useFriends } from './stores/friends';
 import * as api from './app/api';
 import type { UserBrief } from './app/types';
 import type { RoomMessage } from './app/api';
@@ -207,18 +208,24 @@ function ProfileModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** 成员卡片：点击成员查看公开资料；房主可直接移出 */
+/** 成员卡片：点击成员查看公开资料；房主可移出；可加/删好友 */
 function MemberCardModal({
   member,
   isOwner,
   canKick,
   onKick,
+  friendStatus,
+  onAddFriend,
+  onRemoveFriend,
   onClose,
 }: {
   member: UserBrief;
   isOwner: boolean;
   canKick: boolean;
   onKick: () => void;
+  friendStatus?: 'self' | 'friends' | 'pending' | 'none';
+  onAddFriend?: () => void;
+  onRemoveFriend?: () => void;
   onClose: () => void;
 }) {
   const { token } = useAuth();
@@ -227,7 +234,9 @@ function MemberCardModal({
   const [reloadKey, setReloadKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const [confirmKick, setConfirmKick] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const kickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const removeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -255,6 +264,16 @@ function MemberCardModal({
     }
     if (kickTimer.current) clearTimeout(kickTimer.current);
     onKick();
+  };
+
+  const handleRemoveFriend = () => {
+    if (!confirmRemove) {
+      setConfirmRemove(true);
+      removeTimer.current = setTimeout(() => setConfirmRemove(false), 3000);
+      return;
+    }
+    if (removeTimer.current) clearTimeout(removeTimer.current);
+    onRemoveFriend?.();
   };
 
   return (
@@ -293,6 +312,21 @@ function MemberCardModal({
           <span className="id-copy">{copied ? '已复制 ✓' : '复制 ID'}</span>
         </button>
         {profile && <div className="card-meta">注册于 {new Date(profile.createdAt).toLocaleDateString()}</div>}
+        {friendStatus === 'none' && onAddFriend && (
+          <button className="btn primary block" onClick={onAddFriend}>
+            添加好友
+          </button>
+        )}
+        {friendStatus === 'pending' && (
+          <button className="btn ghost block" disabled>
+            好友申请处理中
+          </button>
+        )}
+        {friendStatus === 'friends' && onRemoveFriend && (
+          <button className={`btn ghost block danger ${confirmRemove ? 'confirming' : ''}`} onClick={handleRemoveFriend}>
+            {confirmRemove ? '确认删除好友？' : '删除好友'}
+          </button>
+        )}
         {canKick && (
           <button className={`btn ghost block danger ${confirmKick ? 'confirming' : ''}`} onClick={handleKick}>
             {confirmKick ? '确认移出该成员？' : '移出房间'}
@@ -680,6 +714,22 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [showSettings, setShowSettings] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
+  /** 侧栏双 Tab（QQ 式）：消息=房间列表 / 好友=好友管理 */
+  const [sideTab, setSideTab] = useState<'rooms' | 'friends'>('rooms');
+  const [addFriendInput, setAddFriendInput] = useState('');
+  const {
+    friends,
+    incoming: friendIncoming,
+    notice: friendNotice,
+    error: friendsError,
+    load: loadFriends,
+    sendRequest,
+    accept: acceptFriend,
+    decline: declineFriend,
+    remove: removeFriendById,
+    relationOf,
+    clearNotice,
+  } = useFriends();
   const listRef = useRef<HTMLDivElement>(null);
   /** 向上翻页 prepend 后的滚动锚定基准（翻页期间的 messages.length 变化不滚到底部） */
   const anchorRef = useRef<number | null>(null);
@@ -760,6 +810,17 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     kickMember(activeRoom.id, m.id);
   };
 
+  const handleAddFriend = async () => {
+    if (await sendRequest(addFriendInput.trim())) setAddFriendInput('');
+  };
+
+  // 好友操作提示 3s 自动消退
+  useEffect(() => {
+    if (!friendNotice) return;
+    const t = setTimeout(clearNotice, 3000);
+    return () => clearTimeout(t);
+  }, [friendNotice, clearNotice]);
+
   const submitRoomModal = async (kind: 'create' | 'join') => {
     if (kind === 'create') {
       if (!roomName.trim()) return;
@@ -779,6 +840,28 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <img src={appIcon} alt="GameTalk" className="logo-img" draggable={false} />
           <span className="brand-name">GameTalk</span>
         </div>
+        {!offline && (
+          <div className="side-tabs">
+            <button type="button" className={`side-tab ${sideTab === 'rooms' ? 'active' : ''}`} onClick={() => setSideTab('rooms')}>
+              消息
+            </button>
+            <button
+              type="button"
+              className={`side-tab ${sideTab === 'friends' ? 'active' : ''}`}
+              onClick={() => {
+                setSideTab('friends');
+                void loadFriends();
+              }}
+            >
+              好友
+              {friendIncoming.length > 0 && (
+                <span className="tab-badge">{friendIncoming.length > 99 ? '99+' : friendIncoming.length}</span>
+              )}
+            </button>
+          </div>
+        )}
+        {(offline || sideTab === 'rooms') ? (
+        <>
         <div className="rooms-header">
           <span>房间</span>
           <button
@@ -848,6 +931,75 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             );
           })}
         </nav>
+        </>
+        ) : (
+        <div className="friends-panel">
+          <div className="friends-add">
+            <input
+              value={addFriendInput}
+              placeholder="输入用户名或 #ID 加好友"
+              maxLength={32}
+              onChange={(e) => setAddFriendInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                if (e.key === 'Enter' && addFriendInput.trim()) void handleAddFriend();
+              }}
+            />
+            <button className="btn primary small" disabled={!addFriendInput.trim()} onClick={() => void handleAddFriend()}>
+              加好友
+            </button>
+          </div>
+          {friendNotice && <div className="friends-notice ok" onClick={clearNotice}>{friendNotice}</div>}
+          {friendsError && <div className="friends-notice err" onClick={clearNotice}>{friendsError}</div>}
+          {friendIncoming.length > 0 && (
+            <div className="friends-section">
+              <div className="friends-section-title">好友申请</div>
+              {friendIncoming.map((r) => (
+                <div key={r.id} className="friend-item request">
+                  <span className="member-avatar">
+                    <Avatar name={r.user.username} url={r.user.avatarUrl} size={30} />
+                  </span>
+                  <span className="friend-info">
+                    <span className="member-name">{r.user.username}</span>
+                    <span className="friend-sub">请求添加你为好友</span>
+                  </span>
+                  <button className="btn primary small" onClick={() => void acceptFriend(r.id)}>
+                    接受
+                  </button>
+                  <button className="btn ghost small" onClick={() => void declineFriend(r.id)}>
+                    拒绝
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="friends-list">
+            {friends.length === 0 && (
+              <div className="rooms-hint">
+                还没有好友
+                <br />
+                上方输入对方用户名或 #ID 添加
+              </div>
+            )}
+            {friends.map((f) => (
+              <div
+                key={f.id}
+                className={`friend-item ${f.online ? 'online' : 'offline'}`}
+                title={f.online ? '在线 · 查看资料' : '离线 · 查看资料'}
+                onClick={() => setCardMember(f)}
+              >
+                <span className="member-avatar">
+                  <Avatar name={f.username} url={f.avatarUrl} size={30} />
+                </span>
+                <span className="friend-info">
+                  <span className="member-name">{f.username}</span>
+                  <span className="friend-sub">{f.bio || (f.online ? '在线' : '离线')}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        )}
         <div className="sidebar-footer user-block">
           <button
             className={`user-trigger ${userMenuOpen ? 'open' : ''}`}
@@ -1165,6 +1317,28 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           canKick={activeRoom.ownerId === me?.id && cardMember.id !== me?.id}
           onKick={() => {
             kickMember(activeRoom.id, cardMember.id);
+            setCardMember(null);
+          }}
+          friendStatus={relationOf(cardMember.id)}
+          onAddFriend={() => void sendRequest(cardMember.id)}
+          onRemoveFriend={() => {
+            void removeFriendById(cardMember.id);
+            setCardMember(null);
+          }}
+          onClose={() => setCardMember(null)}
+        />
+      )}
+      {/* 好友卡片：从好友列表点开（无房间上下文） */}
+      {cardMember && !activeRoom && !offline && (
+        <MemberCardModal
+          member={cardMember}
+          isOwner={false}
+          canKick={false}
+          onKick={() => undefined}
+          friendStatus={relationOf(cardMember.id)}
+          onAddFriend={() => void sendRequest(cardMember.id)}
+          onRemoveFriend={() => {
+            void removeFriendById(cardMember.id);
             setCardMember(null);
           }}
           onClose={() => setCardMember(null)}

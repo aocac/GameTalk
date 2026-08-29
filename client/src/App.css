@@ -1518,3 +1518,165 @@ body {
 .ctx-menu-item.danger:hover {
   background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
+
+/* ===== 侧栏双 Tab（消息 / 好友）与好友面板 ===== */
+.side-tabs {
+  display: flex;
+  margin: 4px 10px 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.side-tab {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--side-text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.side-tab:hover {
+  color: var(--side-text-strong);
+}
+
+.side-tab.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--side-text-strong);
+  font-weight: 500;
+}
+
+.tab-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--unread);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+}
+
+.friends-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 8px 8px;
+}
+
+.friends-add {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.friends-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--side-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--side-text-strong);
+  font-size: 13px;
+}
+
+.friends-add input::placeholder {
+  color: var(--side-text);
+}
+
+.friends-add input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.friends-notice {
+  margin: 0 2px 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.friends-notice.ok {
+  background: rgba(52, 199, 123, 0.12);
+  color: var(--ok);
+}
+
+.friends-notice.err {
+  background: rgba(229, 72, 77, 0.12);
+  color: var(--danger);
+}
+
+.friends-section {
+  margin-bottom: 10px;
+}
+
+.friends-section-title {
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--side-text);
+}
+
+.friend-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.friend-item:hover {
+  background: var(--side-hover);
+}
+
+.friend-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.friend-item .member-name {
+  color: var(--side-text-strong);
+  font-size: 13px;
+}
+
+.friend-item.offline .member-name {
+  color: var(--side-text);
+}
+
+.friend-item.offline .member-avatar .avatar-img,
+.friend-item.offline .member-avatar .avatar {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+
+.friend-sub {
+  font-size: 12px;
+  color: var(--side-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.friends-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}

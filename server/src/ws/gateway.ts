@@ -76,6 +76,22 @@ const rooms = new Map<string, Map<string, { username: string; avatarUrl: string 
 /** 全部存活连接（心跳巡检 / 踢人清理用；close 事件负责移除） */
 const connections = new Set<Conn>();
 
+/** 向指定用户的所有在线连接推送（好友请求 / 好友动态等系统通知） */
+export function sendToUser(userId: string, msg: unknown): void {
+  for (const c of connections) {
+    if (c.userId === userId) send(c.socket, msg);
+  }
+}
+
+/** 当前在线用户集合（好友列表在线标记用） */
+export function onlineUserIds(): Set<string> {
+  const s = new Set<string>();
+  for (const c of connections) {
+    if (c.userId) s.add(c.userId);
+  }
+  return s;
+}
+
 function sanitizeRoomId(id: string): string {
   return id.trim().slice(0, 64);
 }
@@ -176,6 +192,23 @@ function leaveRoom(conn: Conn, roomId: string): void {
   if (members.size === 0) rooms.delete(roomId);
 }
 
+/** 好友在线状态广播：某用户首次上线 / 最后下线时通知其全部在线好友 */
+async function broadcastFriendPresence(db: Db, userId: string, online: boolean): Promise<void> {
+  try {
+    const res = await db.query<{ requester_id: string; addressee_id: string }>(
+      `SELECT requester_id, addressee_id FROM friendships
+       WHERE status = 'accepted' AND (requester_id = $1 OR addressee_id = $1)`,
+      [userId],
+    );
+    for (const row of res.rows) {
+      const friendId = row.requester_id === userId ? row.addressee_id : row.requester_id;
+      sendToUser(friendId, { type: 'presence:friend', payload: { userId, online } });
+    }
+  } catch (e) {
+    console.error('friend presence broadcast failed:', e);
+  }
+}
+
 export function registerWsRoutes(app: FastifyInstance, deps: { config: Config; db: Db; jwt: JwtService }): void {
   const { db, jwt } = deps;
 
@@ -220,6 +253,11 @@ export function registerWsRoutes(app: FastifyInstance, deps: { config: Config; d
     socket.on('close', () => {
       connections.delete(conn);
       for (const roomId of [...conn.rooms]) leaveRoom(conn, roomId);
+      // 该用户的最后一个连接断开 → 通知其在线好友「已离线」
+      if (conn.userId) {
+        const stillOnline = [...connections].some((c) => c.userId === conn.userId);
+        if (!stillOnline) void broadcastFriendPresence(db, conn.userId, false);
+      }
     });
     socket.on('error', () => {
       // error 后必然触发 close，房间清理统一交给 close
@@ -259,6 +297,9 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           // data URL 头像一律转成 HTTP 端点 URL，避免 base64 随广播/成员表内嵌
           conn.avatarUrl = avatarHttpUrlOf(conn.httpBase, user.id, user.avatar_url);
           send(conn.socket, { type: 'hello:ok', payload: { me: publicMember(user.id, user.username, conn.avatarUrl) } });
+          // 该用户的第一个连接 → 通知其在线好友「已上线」
+          const wasOnline = [...connections].some((c) => c !== conn && c.userId === user.id);
+          if (!wasOnline) void broadcastFriendPresence(db, user.id, true);
         } catch {
           send(conn.socket, { type: 'error', payload: { code: 'unauthorized', message: 'invalid token' } });
           conn.socket.close();

@@ -3,6 +3,7 @@ import { ChatSocket } from '../app/ws';
 import { playMessageSound, playSendSound } from '../app/audio';
 import { useSettings } from '../app/settings';
 import { useAuth } from './auth';
+import { useFriends } from './friends';
 import { wsUrlOf } from '../app/settings';
 import * as api from '../app/api';
 import { pushOverlayMessage } from '../app/gameMode';
@@ -235,6 +236,8 @@ export const useChat = create<ChatState>()((set, get) => ({
       switch (msg.type) {
         case 'hello:ok':
           set({ me: msg.payload.me });
+          // 好友列表/申请与房间并行加载
+          void useFriends.getState().load();
           // 登录后加载房间列表，并订阅全部房间（refreshRooms 失败也要重订阅）
           void get()
             .refreshRooms()
@@ -356,6 +359,14 @@ export const useChat = create<ChatState>()((set, get) => ({
           void pushOverlayMessage(msg.payload.message, room?.name, isMine);
           break;
         }
+        case 'friend:request':
+        case 'friend:accepted':
+        case 'friend:declined':
+        case 'friend:removed':
+        case 'presence:friend':
+          // 好友域事件由 friends store 处理（chat socket 是唯一的 WS 通道）
+          useFriends.getState().handleWs(msg);
+          break;
         case 'error':
           // 服务器返回错误：清掉未确认的乐观占位与排队消息，避免"幽灵消息"卡在界面上
           clearPending();
