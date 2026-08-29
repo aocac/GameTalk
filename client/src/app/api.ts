@@ -112,6 +112,11 @@ export function uploadAvatar(token: string, dataUrl: string): Promise<{ user: Pu
   return request<{ user: PublicUser }>('/api/auth/avatar', { method: 'POST', token, body: { dataUrl } });
 }
 
+/** 上传消息图片（服务端校验类型与 5MB 上限），返回相对 url（/api/media/:id） */
+export function uploadImage(token: string, dataUrl: string): Promise<{ id: string; url: string }> {
+  return request<{ id: string; url: string }>('/api/media', { method: 'POST', token, body: { dataUrl } });
+}
+
 // ============ 房间 ============
 
 export interface Room {
@@ -133,6 +138,8 @@ export interface RoomMessage {
   createdAt: string;
   /** 提及快照（服务端解析后的 {id, username}） */
   mentions?: Array<{ id: string; username: string }>;
+  kind?: 'text' | 'image';
+  mediaUrl?: string | null;
   /** 客户端本地字段：乐观发送未确认时标记（服务器返回的消息无此字段） */
   pending?: boolean;
 }

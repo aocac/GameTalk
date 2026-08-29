@@ -4,7 +4,7 @@ import type { Config } from '../config.js';
 import type { Db } from '../db/db.js';
 import type { JwtService } from '../lib/jwt.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
-import { validateAvatarDataUrl } from '../lib/image.js';
+import { MAX_AVATAR_BYTES, validateImageDataUrl } from '../lib/image.js';
 import { avatarHttpUrlOf, httpBaseOf } from '../lib/avatar.js';
 import { makeAuthPreHandler } from '../plugins/auth.js';
 
@@ -147,9 +147,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     { preHandler: [auth], bodyLimit: 5 * 1024 * 1024, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
     async (req, reply) => {
       const body = (req.body ?? {}) as { dataUrl?: unknown };
-      const result = validateAvatarDataUrl(body.dataUrl);
+      const result = validateImageDataUrl(body.dataUrl, MAX_AVATAR_BYTES);
       if (!result.ok) {
-        await reply.code(400).send({ error: { code: result.error, message: '头像格式不支持（仅 PNG/JPEG/WebP/GIF，且 ≤3MB）' } });
+        const msg =
+          result.error === 'image_too_large'
+            ? '头像需 ≤3MB，请换一张更小的图'
+            : '头像格式不支持（仅 PNG/JPEG/WebP/GIF）';
+        await reply.code(400).send({ error: { code: result.error ?? 'invalid_avatar', message: msg } });
         return;
       }
       const updated = await db.query<UserRow>(

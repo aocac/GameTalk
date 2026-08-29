@@ -1861,3 +1861,93 @@ body {
   font-size: 11px;
   color: var(--text-3);
 }
+
+/* ===== 图片消息 / 表情面板 / 灯箱 ===== */
+.composer-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.composer-icon:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.composer-icon:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.msg-image {
+  display: block;
+  max-width: min(320px, 100%);
+  max-height: 240px;
+  border-radius: var(--radius);
+  cursor: zoom-in;
+  margin-top: 4px;
+}
+
+.emoji-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 90px;
+  width: 300px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  z-index: 50;
+}
+
+.emoji-section {
+  font-size: 11px;
+  color: var(--text-3);
+  padding: 2px 4px 4px;
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  margin-bottom: 6px;
+}
+
+.emoji-cell {
+  border: 0;
+  background: none;
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.emoji-cell:hover {
+  background: var(--surface-3);
+}
+
+.modal-mask.lightbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+
+.modal-mask.lightbox img {
+  max-width: 92vw;
+  max-height: 92vh;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+}

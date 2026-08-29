@@ -369,4 +369,62 @@ describe('realtime + persistence', () => {
     expect(messages[0].mentions).toEqual([{ id: member.userId, username: 'mention_member' }]);
     expect(messages[1].mentions).toEqual([]);
   });
+
+  it('image messages: upload → send → broadcast/history carry kind and absolute mediaUrl', async () => {
+    const owner = await registerUser('media_owner');
+    const { room } = (
+      await app.inject({ method: 'POST', url: '/api/rooms', headers: auth(owner.token), payload: { name: 'Media' } })
+    ).json();
+    const pngDataUrl =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+    // 垃圾数据拒绝
+    const bad = await app.inject({
+      method: 'POST',
+      url: '/api/media',
+      headers: { ...auth(owner.token), 'content-type': 'application/json' },
+      payload: { dataUrl: 'data:image/png;base64,not-png' },
+    });
+    expect(bad.statusCode).toBe(400);
+
+    const up = await app.inject({
+      method: 'POST',
+      url: '/api/media',
+      headers: { ...auth(owner.token), 'content-type': 'application/json' },
+      payload: { dataUrl: pngDataUrl },
+    });
+    expect(up.statusCode).toBe(201);
+    const { id, url } = up.json();
+    expect(url).toBe(`/api/media/${id}`);
+
+    // 读取：需登录，字节与类型正确
+    const got = await app.inject({ method: 'GET', url: `/api/media/${id}`, headers: auth(owner.token) });
+    expect(got.statusCode).toBe(200);
+    expect(got.headers['content-type']).toBe('image/png');
+    const noAuth = await app.inject({ method: 'GET', url: `/api/media/${id}` });
+    expect(noAuth.statusCode).toBe(401);
+
+    const ws = await connectWs(owner.token);
+    ws.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    await nextMessage(ws, (m) => m.type === 'room:joined');
+
+    const got1 = nextMessage(ws, (m) => m.type === 'message:new');
+    ws.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '', mediaUrl: url } }));
+    const msg = await got1;
+    expect(msg.payload.message.kind).toBe('image');
+    expect(msg.payload.message.mediaUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/media\/[0-9a-f-]{36}$/);
+
+    // 伪造他人/不存在的媒体引用 → invalid_input
+    const errPromise = nextMessage(ws, (m) => m.type === 'error');
+    ws.send(
+      JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '', mediaUrl: `/api/media/${'0'.repeat(8)}-0000-4000-8000-000000000000` } }),
+    );
+    expect((await errPromise).payload.code).toBe('invalid_input');
+
+    const hist = await app.inject({ method: 'GET', url: `/api/rooms/${room.id}/messages`, headers: auth(owner.token) });
+    const { messages } = hist.json();
+    const img = messages.find((m: any) => m.kind === 'image');
+    expect(img.mediaUrl).toMatch(/\/api\/media\/[0-9a-f-]{36}$/);
+    ws.close();
+  });
 });

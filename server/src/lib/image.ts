@@ -1,5 +1,6 @@
-// 头像 data URL 校验：格式、大小、magic bytes
-const MAX_AVATAR_BYTES = 3 * 1024 * 1024; // 3MB
+// 图片 data URL 校验：格式、大小、magic bytes（头像与消息图片共用）
+export const MAX_AVATAR_BYTES = 3 * 1024 * 1024; // 3MB
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB
 
 const MAGIC: Array<{ bytes: number[]; mime: string }> = [
   { bytes: [0x89, 0x50, 0x4e, 0x47], mime: 'image/png' },
@@ -8,23 +9,25 @@ const MAGIC: Array<{ bytes: number[]; mime: string }> = [
   { bytes: [0x47, 0x49, 0x46, 0x38], mime: 'image/gif' },
 ];
 
-export interface AvatarResult {
+export interface ImageDataUrlResult {
   ok: boolean;
   dataUrl?: string;
+  mime?: string;
+  bytes?: Buffer;
   error?: string;
 }
 
 /**
- * 解析并校验头像 data URL。
- * 返回 { ok: true, dataUrl } 或 { ok: false, error }。
+ * 解析并校验图片 data URL（maxBytes 控制上限：头像 3MB / 消息图片 5MB）。
+ * 返回 { ok, dataUrl, mime, bytes } 或 { ok: false, error }。
  */
-export function validateAvatarDataUrl(input: unknown): AvatarResult {
+export function validateImageDataUrl(input: unknown, maxBytes: number): ImageDataUrlResult {
   if (typeof input !== 'string') {
-    return { ok: false, error: 'invalid_avatar' };
+    return { ok: false, error: 'invalid_image_type' };
   }
   const m = /^data:(image\/(?:png|jpeg|webp|gif));base64,(.+)$/s.exec(input);
   if (!m) {
-    return { ok: false, error: 'invalid_avatar_type' };
+    return { ok: false, error: 'invalid_image_type' };
   }
   const mime = m[1];
   const b64 = m[2];
@@ -32,10 +35,10 @@ export function validateAvatarDataUrl(input: unknown): AvatarResult {
   try {
     buf = Buffer.from(b64, 'base64');
   } catch {
-    return { ok: false, error: 'invalid_avatar_encoding' };
+    return { ok: false, error: 'invalid_image_encoding' };
   }
-  if (buf.length === 0 || buf.length > MAX_AVATAR_BYTES) {
-    return { ok: false, error: 'avatar_too_large' };
+  if (buf.length === 0 || buf.length > maxBytes) {
+    return { ok: false, error: 'image_too_large' };
   }
   // magic bytes 校验（webp 需额外检查 "WEBP" 在第 8-11 字节）
   const matched = MAGIC.some(({ bytes, mime: mm }) => {
@@ -49,8 +52,7 @@ export function validateAvatarDataUrl(input: unknown): AvatarResult {
     return buf.length >= bytes.length && bytes.every((b, i) => buf[i] === b);
   });
   if (!matched) {
-    return { ok: false, error: 'invalid_avatar_content' };
+    return { ok: false, error: 'invalid_image_content' };
   }
-  // 归一化：按实际校验的 mime 输出
-  return { ok: true, dataUrl: `data:${mime};base64,${b64}` };
+  return { ok: true, dataUrl: `data:${mime};base64,${b64}`, mime, bytes: buf };
 }

@@ -47,6 +47,9 @@ interface ChatMessage {
   createdAt: string;
   /** 被提及的用户快照（历史渲染不依赖成员表） */
   mentions?: MentionRef[];
+  /** 'image' 时 mediaUrl 指向 /api/media/:id（对外转绝对 URL） */
+  kind?: 'text' | 'image';
+  mediaUrl?: string | null;
 }
 
 interface MentionRef {
@@ -68,7 +71,7 @@ type ClientMessage =
   | { type: 'room:leave'; payload: { roomId: string } }
   | { type: 'room:delete'; payload: { roomId: string } }
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
-  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown } }
+  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown } }
   | { type: 'ping' };
 
 interface UserRow extends QueryResultRow {
@@ -463,7 +466,9 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       }
       const roomId = sanitizeRoomId(msg.payload.roomId);
       const text = safeText(msg.payload.text);
-      if (!text) {
+      const mediaUrl = typeof msg.payload.mediaUrl === 'string' ? msg.payload.mediaUrl : null;
+      // 图片消息允许空文本；纯文本消息仍拒绝空串
+      if (!text && !mediaUrl) {
         send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'message is empty' } });
         return;
       }
@@ -471,11 +476,28 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
         return;
       }
-      // 持久化后再广播（Phase 4：消息历史；v0.4.0：提及解析入库）
+      // 图片消息：mediaUrl 必须是本服务媒体端点且属于发送者（防伪造他人媒体引用）
+      let kind: 'text' | 'image' = 'text';
+      let storedMediaUrl: string | null = null;
+      if (mediaUrl) {
+        const m = /^\/api\/media\/([0-9a-f-]{36})$/.exec(mediaUrl);
+        if (!m) {
+          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid media url' } });
+          return;
+        }
+        const owned = await db.query('SELECT 1 FROM media WHERE id = $1 AND owner_id = $2', [m[1], conn.userId]);
+        if (owned.rows.length === 0) {
+          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'media not found' } });
+          return;
+        }
+        kind = 'image';
+        storedMediaUrl = mediaUrl;
+      }
+      // 持久化后再广播（Phase 4：消息历史；v0.4.0：提及解析入库 + 图片消息）
       const mentions = await resolveMentions(db, roomId, conn.userId, text, msg.payload.mentions);
       const inserted = await db.query<{ id: string; created_at: string; mentions: MentionRef[] }>(
-        'INSERT INTO messages (room_id, user_id, username, text, mentions) VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id, created_at, mentions',
-        [roomId, conn.userId, conn.username, text, JSON.stringify(mentions)],
+        'INSERT INTO messages (room_id, user_id, username, text, mentions, kind, media_url) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) RETURNING id, created_at, mentions',
+        [roomId, conn.userId, conn.username, text, JSON.stringify(mentions), kind, storedMediaUrl],
       );
       const row = inserted.rows[0];
       const message: ChatMessage = {
@@ -487,6 +509,9 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         text,
         createdAt: row.created_at,
         mentions: row.mentions ?? [],
+        kind,
+        // 广播用发送者的 httpBase 转绝对 URL（与头像策略一致）
+        mediaUrl: storedMediaUrl ? `${conn.httpBase}${storedMediaUrl}` : null,
       };
       broadcastToRoom(roomId, { type: 'message:new', payload: { roomId, message } });
       break;

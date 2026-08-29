@@ -31,6 +31,9 @@ export interface ChatMessage {
   text: string;
   createdAt: string;
   mentions?: MentionRef[];
+  /** 'image' 时 mediaUrl 指向图片（广播为绝对 URL，乐观期为相对路径） */
+  kind?: 'text' | 'image';
+  mediaUrl?: string | null;
   /** 客户端本地字段：乐观发送未确认时标记（真实服务器消息无此字段） */
   pending?: boolean;
 }
@@ -42,7 +45,7 @@ export type ClientWsMessage =
   | { type: 'room:leave'; payload: { roomId: string } }
   | { type: 'room:delete'; payload: { roomId: string } }
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
-  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[] } }
+  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string } }
   | { type: 'ping' };
 
 // 服务端 -> 客户端

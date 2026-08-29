@@ -47,7 +47,7 @@ interface ChatState {
   deleteRoom: (roomId: string) => void;
   leaveActiveRoom: () => Promise<void>;
   kickMember: (roomId: string, userId: string) => void;
-  sendMessage: (text: string, mentions?: string[]) => void;
+  sendMessage: (text: string, mentions?: string[], mediaUrl?: string) => void;
   clearRoomError: () => void;
 }
 
@@ -147,10 +147,10 @@ function clearPending(): void {
 }
 
 /** 待发送队列：订阅未就绪时先排队（可多条），room:joined 后按序自动发出（游戏内呼出发送场景） */
-let queuedSends: { roomId: string; text: string; mentions?: string[] }[] = [];
+let queuedSends: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string }[] = [];
 
 /** 乐观上屏：把用户刚发的消息立即显示（pending 标记），服务器确认后校正 */
-function appendOptimistic(roomId: string, text: string, mentions?: string[]): void {
+function appendOptimistic(roomId: string, text: string, mentions?: string[], mediaUrl?: string): void {
   const me = useChat.getState().me;
   if (!me) return;
   const tempId = `tmp-${Date.now()}-${++pendingSeq}`;
@@ -171,6 +171,8 @@ function appendOptimistic(roomId: string, text: string, mentions?: string[]): vo
           text,
           createdAt: new Date().toISOString(),
           mentions: mentionRefs,
+          kind: mediaUrl ? 'image' : 'text',
+          mediaUrl: mediaUrl ?? null,
           pending: true,
         },
       ],
@@ -179,8 +181,8 @@ function appendOptimistic(roomId: string, text: string, mentions?: string[]): vo
 }
 
 /** 真正发送（不负责乐观上屏，由调用方决定） */
-function doSend(roomId: string, text: string, mentions?: string[]): void {
-  const ok = socket?.send({ type: 'message:send', payload: { roomId, text, mentions } });
+function doSend(roomId: string, text: string, mentions?: string[], mediaUrl?: string): void {
+  const ok = socket?.send({ type: 'message:send', payload: { roomId, text, mentions, mediaUrl } });
   if (ok) playSendSound(useSettings.getState().soundEnabled);
 }
 
@@ -275,7 +277,7 @@ export const useChat = create<ChatState>()((set, get) => ({
             const ready = queuedSends.filter((q) => q.roomId === msg.payload.roomId);
             if (ready.length > 0) {
               queuedSends = queuedSends.filter((q) => q.roomId !== msg.payload.roomId);
-              for (const q of ready) doSend(q.roomId, q.text, q.mentions);
+              for (const q of ready) doSend(q.roomId, q.text, q.mentions, q.mediaUrl);
             }
           }
           break;
@@ -370,14 +372,14 @@ export const useChat = create<ChatState>()((set, get) => ({
             }
             playMessageSound(useSettings.getState().soundEnabled);
           }
-          // 侧栏预览实时更新（多房间订阅使非活跃房间也能即时刷新）
+          // 侧栏预览实时更新（多房间订阅使非活跃房间也能即时刷新）；图片消息显示占位文案
           set((s) => ({
             previewByRoom: {
               ...s.previewByRoom,
               [msg.payload.roomId]: {
                 username: msg.payload.message.username,
                 userId: msg.payload.message.userId,
-                text: msg.payload.message.text,
+                text: msg.payload.message.kind === 'image' ? '[图片]' : msg.payload.message.text,
                 createdAt: msg.payload.message.createdAt,
               },
             },
@@ -563,7 +565,7 @@ export const useChat = create<ChatState>()((set, get) => ({
           set((s) => ({
             previewByRoom: {
               ...s.previewByRoom,
-              [r.id]: { username: last.username, userId: last.userId, text: last.text, createdAt: last.createdAt },
+              [r.id]: { username: last.username, userId: last.userId, text: last.kind === 'image' ? '[图片]' : last.text, createdAt: last.createdAt },
             },
           }));
         } catch {
@@ -607,9 +609,9 @@ export const useChat = create<ChatState>()((set, get) => ({
     socket.send({ type: 'member:kick', payload: { roomId, userId } });
   },
 
-  sendMessage: (text, mentions) => {
+  sendMessage: (text, mentions, mediaUrl) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed && !mediaUrl) return;
     const { activeRoomId, subscribedRoomIds, status, rooms } = get();
     let target = activeRoomId;
 
@@ -627,14 +629,14 @@ export const useChat = create<ChatState>()((set, get) => ({
 
     // 订阅/连接未就绪：乐观上屏 + 排队，就绪（room:joined）后自动发送
     if (status !== 'open' || !subscribedRoomIds.includes(target)) {
-      appendOptimistic(target, trimmed, mentions);
-      queuedSends.push({ roomId: target, text: trimmed, mentions });
+      appendOptimistic(target, trimmed, mentions, mediaUrl);
+      queuedSends.push({ roomId: target, text: trimmed, mentions, mediaUrl });
       set({ roomError: null });
       return;
     }
 
-    doSend(target, trimmed, mentions);
-    appendOptimistic(target, trimmed, mentions);
+    doSend(target, trimmed, mentions, mediaUrl);
+    appendOptimistic(target, trimmed, mentions, mediaUrl);
   },
 
   clearRoomError: () => set({ roomError: null }),

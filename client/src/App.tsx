@@ -69,6 +69,59 @@ const POSITION_LABELS: Record<OverlayPosition, string> = {
 
 const MAX_AVATAR_BYTES = 3 * 1024 * 1024; // 3MB
 
+/** 表情面板数据（精选常用集合，纯 Unicode，零资源文件） */
+const EMOJIS = [
+  '😀', '😂', '🤣', '😊', '😍', '😘', '😜', '🤔', '😎', '🥳', '😭', '😅',
+  '🙃', '😴', '🤯', '🥺', '😡', '😱', '🤗', '🤫', '🤭', '😏', '😌', '🙄',
+  '😐', '🤡', '👻', '💀', '🤖', '👽', '🎃', '👊', '👍', '👎', '👌', '✌️',
+  '🤙', '💪', '🙏', '👏', '🤝', '🎮', '🕹️', '💻', '⌨️', '📱', '🏆', '🎯',
+  '⚡', '🔥', '💥', '⭐', '🌈', '☀️', '🌙', '💡', '🎉', '🎊', '🎁', '❤️',
+  '💔', '💯', '🍺', '🍻', '🥤', '🍕', '🍗', '🍜', '🀄', '🎲', '🚀', '🐴',
+];
+
+function loadRecentEmojis(): string[] {
+  try {
+    const list = JSON.parse(localStorage.getItem('gt-emoji-recent') ?? '[]');
+    return Array.isArray(list) ? list.filter((e) => typeof e === 'string').slice(0, 16) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentEmoji(e: string): string[] {
+  const list = [e, ...loadRecentEmojis().filter((x) => x !== e)].slice(0, 16);
+  try {
+    localStorage.setItem('gt-emoji-recent', JSON.stringify(list));
+  } catch {
+    // 忽略存储失败
+  }
+  return list;
+}
+
+/** 图片文件 → 压缩后的 data URL（最长边 1920，JPEG 0.85；GIF 保留原样避免丢动画） */
+async function fileToCompressedDataUrl(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result ?? ''));
+    r.onerror = () => reject(new Error('read failed'));
+    r.readAsDataURL(file);
+  });
+  if (file.type === 'image/gif') return dataUrl;
+  const img = new Image();
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error('decode failed'));
+    img.src = dataUrl;
+  });
+  const scale = Math.min(1, 1920 / Math.max(img.width, img.height));
+  if (scale === 1 && file.size <= 2 * 1024 * 1024) return dataUrl;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(img.width * scale));
+  canvas.height = Math.max(1, Math.round(img.height * scale));
+  canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
 /** 消息日期分隔文案：今天 / 昨天 / M月D日 */
 function formatDay(ts: string): string {
   const d = new Date(ts);
@@ -797,6 +850,12 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [mentionPick, setMentionPick] = useState(0);
   const pickedMentions = useRef<Map<string, string>>(new Map());
   const composerRef = useRef<HTMLInputElement>(null);
+  /** 图片消息 / 表情面板 / 灯箱 */
+  const [uploading, setUploading] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [recentEmojis, setRecentEmojis] = useState<string[]>(() => loadRecentEmojis());
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const {
     friends,
     incoming: friendIncoming,
@@ -856,6 +915,37 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     pickedMentions.current.clear();
     setDraft('');
     setMentionQuery(null);
+  };
+
+  // 相对媒体路径 → 绝对 URL（乐观消息里是 /api/media/:id 相对路径）
+  const absUrl = (u: string) => (u.startsWith('http') ? u : useSettings.getState().serverUrl.replace(/\/+$/, '') + u);
+
+  const onPickImageFile = async (file: File | undefined) => {
+    if (!file || offline || !connected || !activeRoom) return;
+    setUploading(true);
+    try {
+      const { token } = useAuth.getState();
+      if (!token) return;
+      const dataUrl = await fileToCompressedDataUrl(file);
+      const { url } = await api.uploadImage(token, dataUrl);
+      sendMessage('', undefined, url);
+    } catch (e) {
+      useChat.setState({ roomError: e instanceof Error ? e.message : '图片发送失败' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const insertEmoji = (e: string) => {
+    const el = composerRef.current;
+    const pos = el?.selectionStart ?? draft.length;
+    const next = draft.slice(0, pos) + e + draft.slice(pos);
+    setDraft(next);
+    setRecentEmojis(saveRecentEmoji(e));
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(pos + e.length, pos + e.length);
+    });
   };
 
   useEffect(() => {
@@ -1309,7 +1399,18 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                       <span className="message-author">{m.username}</span>
                       <span className="message-time">{m.pending ? '发送中…' : new Date(m.createdAt).toLocaleTimeString()}</span>
                     </div>
-                    <div className="message-text">{renderMentions(m.text, m.mentions)}</div>
+                    {m.kind === 'image' && m.mediaUrl && (
+                      <img
+                        className="msg-image"
+                        src={absUrl(m.mediaUrl)}
+                        alt="图片"
+                        loading="lazy"
+                        onClick={() => {
+                          if (m.mediaUrl) setLightbox(absUrl(m.mediaUrl));
+                        }}
+                      />
+                    )}
+                    {m.text && <div className="message-text">{renderMentions(m.text, m.mentions)}</div>}
                   </div>
                 </div>
               </Fragment>
@@ -1318,6 +1419,30 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         </div>
 
         <footer className="composer">
+          {showEmoji && (
+            <div className="emoji-pop">
+              {recentEmojis.length > 0 && (
+                <>
+                  <div className="emoji-section">最近</div>
+                  <div className="emoji-grid">
+                    {recentEmojis.map((e) => (
+                      <button key={`r-${e}`} type="button" className="emoji-cell" onMouseDown={(ev) => { ev.preventDefault(); insertEmoji(e); }}>
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              <div className="emoji-section">全部</div>
+              <div className="emoji-grid">
+                {EMOJIS.map((e) => (
+                  <button key={e} type="button" className="emoji-cell" onMouseDown={(ev) => { ev.preventDefault(); insertEmoji(e); }}>
+                    {e}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {mentionQuery && mentionCandidates.length > 0 && (
             <div className="mention-pop">
               {mentionCandidates.map((m, i) => (
@@ -1338,6 +1463,47 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               ))}
             </div>
           )}
+          <button
+            className="composer-icon"
+            title={uploading ? '图片上传中…' : '发送图片'}
+            disabled={offline || !connected || !activeRoom || uploading}
+            onClick={() => imageInputRef.current?.click()}
+          >
+            {uploading ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="M21 15l-5-5L5 21" />
+              </svg>
+            )}
+          </button>
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              void onPickImageFile(e.target.files?.[0]);
+              e.target.value = '';
+            }}
+          />
+          <button
+            className="composer-icon"
+            title="表情"
+            disabled={offline || !connected || !activeRoom}
+            onClick={() => setShowEmoji((v) => !v)}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+              <line x1="9" y1="9" x2="9.01" y2="9" />
+              <line x1="15" y1="9" x2="15.01" y2="9" />
+            </svg>
+          </button>
           <input
             ref={composerRef}
             className="composer-input"
@@ -1527,11 +1693,16 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         />
       )}
 
+      {lightbox && (
+        <div className="modal-mask lightbox" onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="图片预览" />
+        </div>
+      )}
+
       {showRoomModal && (
         <div className="modal-mask" onClick={() => setShowRoomModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>创建 / 加入房间</h3>
-            <label className="field">
+            <h3>创建 / 加入房间</h3>            <label className="field">
               <span>创建房间（输入名称）</span>
               <input
                 value={roomName}
