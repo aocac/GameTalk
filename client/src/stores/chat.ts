@@ -8,7 +8,7 @@ import { useNotifications } from './notifications';
 import { wsUrlOf } from '../app/settings';
 import * as api from '../app/api';
 import { pushOverlayMessage } from '../app/gameMode';
-import type { ChatMessage, RoomMember, UserBrief, WsStatus } from '../app/types';
+import type { ChatMessage, DmMessage, RoomMember, UserBrief, WsStatus } from '../app/types';
 
 /** 发送消息的可选项：提及、图片附件、引用回复 */
 export interface SendOptions {
@@ -16,6 +16,28 @@ export interface SendOptions {
   mediaUrl?: string;
   replyTo?: string;
   reply?: ChatMessage['reply'];
+}
+
+/** DM 消息 → 房间消息渲染形状（from 映射为 userId，渲染组件完全复用） */
+function dmToRoomMessage(m: DmMessage): api.RoomMessage {
+  return {
+    id: m.id,
+    roomId: '',
+    userId: m.from,
+    username: m.username,
+    avatarUrl: m.avatarUrl ?? null,
+    text: m.text,
+    createdAt: m.createdAt,
+    kind: m.kind,
+    mediaUrl: m.mediaUrl ?? null,
+    reply: m.reply,
+    recalled: m.recalled,
+  };
+}
+
+/** DM 会话键（乐观发送队列用，与房间 UUID 不冲突） */
+function dmKey(peerId: string): string {
+  return `dm:${peerId}`;
 }
 
 interface ChatState {
@@ -44,6 +66,19 @@ interface ChatState {
   roomError: string | null;
   /** 连接失败提示（server 不可达时展示） */
   connectionError: string | null;
+  // ============ 好友私聊（DM） ============
+  /** 每个好友（peer）的 DM 消息（含自己的，userId=from） */
+  dmMessages: Record<string, api.RoomMessage[]>;
+  /** DM 历史是否已加载过 */
+  dmHistoryLoaded: Record<string, boolean>;
+  /** 每个会话是否还有更早历史 */
+  dmHasMore: Record<string, boolean>;
+  /** 每个会话未读数（非活跃时收到新 DM 累加，打开清零） */
+  dmUnread: Record<string, number>;
+  /** 每个会话最后一条消息摘要（侧栏私聊列表） */
+  dmPreviews: Record<string, { id: string; userId: string; username: string; text: string; createdAt: string }>;
+  /** 当前打开的 DM 会话（好友 userId）；与 activeRoomId 互斥表达「活跃会话」 */
+  activeDmPeerId: string | null;
   connect: () => void;
   disconnect: () => void;
   /** 换账号（登出/注册新号）时清空上一账号的房间/消息/选中态，防止越权请求与界面残留 */
@@ -62,6 +97,11 @@ interface ChatState {
   recallMessage: (roomId: string, messageId: string) => void;
   sendMessage: (text: string, opts?: SendOptions) => void;
   clearRoomError: () => void;
+  openDm: (peerId: string) => Promise<void>;
+  loadDmConversations: () => Promise<void>;
+  loadOlderDmMessages: (peerId: string) => Promise<void>;
+  sendDm: (text: string, opts?: SendOptions) => void;
+  recallDm: (messageId: string) => void;
 }
 
 let socket: ChatSocket | null = null;
@@ -206,6 +246,35 @@ function doSend(roomId: string, text: string, opts?: SendOptions): void {
   if (ok) playSendSound(useSettings.getState().soundEnabled);
 }
 
+/** DM 乐观上屏：结构与房间乐观消息一致（userId=自己），服务器确认后按 tempId 校正 */
+function appendPendingDm(peerId: string, text: string, opts?: SendOptions): void {
+  const me = useChat.getState().me;
+  if (!me) return;
+  const tempId = `tmp-${Date.now()}-${++pendingSeq}`;
+  appendPending(dmKey(peerId), tempId);
+  useChat.setState((s) => ({
+    dmMessages: {
+      ...s.dmMessages,
+      [peerId]: [
+        ...(s.dmMessages[peerId] ?? []),
+        {
+          id: tempId,
+          roomId: '',
+          userId: me.id,
+          username: me.username,
+          avatarUrl: me.avatarUrl ?? null,
+          text,
+          createdAt: new Date().toISOString(),
+          kind: opts?.mediaUrl ? 'image' : 'text',
+          mediaUrl: opts?.mediaUrl ?? null,
+          reply: opts?.reply,
+          pending: true,
+        },
+      ],
+    },
+  }));
+}
+
 export const useChat = create<ChatState>()((set, get) => ({
   status: 'idle',
   me: null,
@@ -223,6 +292,12 @@ export const useChat = create<ChatState>()((set, get) => ({
   loadingRooms: false,
   roomError: null,
   connectionError: null,
+  dmMessages: {},
+  dmHistoryLoaded: {},
+  dmHasMore: {},
+  dmUnread: {},
+  dmPreviews: {},
+  activeDmPeerId: null,
 
   connect: () => {
     // 幂等：已在连接/已连接则不重复建连（React StrictMode 双挂载安全）
@@ -285,7 +360,7 @@ export const useChat = create<ChatState>()((set, get) => ({
           // 登录后加载房间列表，并订阅全部房间（refreshRooms 失败也要重订阅）
           void get()
             .refreshRooms()
-            .then(() => void get().loadRoomPreviews())
+            .then(() => void Promise.all([get().loadRoomPreviews(), get().loadDmConversations()]))
             .catch(() => undefined)
             .then(() => {
               subscribeAllRooms();
@@ -295,6 +370,9 @@ export const useChat = create<ChatState>()((set, get) => ({
                 // 把断开期间已入库的消息补回来，避免本地永久丢消息
                 void get().selectRoom(active, true);
               }
+              // 活跃 DM 会话同理：全量重拉历史补回断开期间的消息
+              const dmActive = get().activeDmPeerId;
+              if (dmActive) void loadDmHistory(dmActive);
             });
           break;
         }
@@ -461,6 +539,71 @@ export const useChat = create<ChatState>()((set, get) => ({
             return { ...messages, ...previewPatch };
           });
           break;
+        case 'dm:new': {
+          // 私聊新消息：自己的先校正乐观占位，双方消息统一按会话（对方 id）归档
+          const dm = msg.payload.message;
+          const mine = state.me;
+          if (!mine) break;
+          const peerId = dm.from === mine.id ? dm.to : dm.from;
+          const isMine = dm.from === mine.id;
+          set((s) => {
+            const list = s.dmMessages[peerId] ?? [];
+            let nextList = list;
+            if (isMine) {
+              const tempId = shiftPending(dmKey(peerId));
+              if (tempId) nextList = list.filter((m) => m.id !== tempId);
+            }
+            if (nextList.some((m) => m.id === dm.id)) return s;
+            return { dmMessages: { ...s.dmMessages, [peerId]: [...nextList, dmToRoomMessage(dm)] } };
+          });
+          if (!isMine) {
+            // 非活跃会话累加未读；提示音只对别人的消息生效
+            if (get().activeDmPeerId !== peerId) {
+              set((s) => ({ dmUnread: { ...s.dmUnread, [peerId]: (s.dmUnread[peerId] ?? 0) + 1 } }));
+            }
+            playMessageSound(useSettings.getState().soundEnabled);
+          }
+          // 侧栏私聊预览实时更新
+          set((s) => ({
+            dmPreviews: {
+              ...s.dmPreviews,
+              [peerId]: {
+                id: dm.id,
+                userId: dm.from,
+                username: dm.username,
+                text: previewTextOf(dm),
+                createdAt: dm.createdAt,
+              },
+            },
+          }));
+          // Overlay：来源名用好友昵称（自己发送的也显示，游戏内确认已发出）
+          const friendName = useFriends.getState().friends.find((f) => f.id === peerId)?.username ?? '好友私聊';
+          void pushOverlayMessage(dmToRoomMessage(dm), friendName, isMine);
+          break;
+        }
+        case 'dm:recalled': {
+          const peerId = state.me && msg.payload.from === state.me.id ? msg.payload.to : msg.payload.from;
+          set((s) => {
+            const list = s.dmMessages[peerId];
+            const messages = list
+              ? {
+                  dmMessages: {
+                    ...s.dmMessages,
+                    [peerId]: list.map((m) =>
+                      m.id === msg.payload.messageId ? { ...m, recalled: true, text: '', mediaUrl: null } : m,
+                    ),
+                  },
+                }
+              : {};
+            const preview = s.dmPreviews[peerId];
+            const previewPatch =
+              preview?.id === msg.payload.messageId
+                ? { dmPreviews: { ...s.dmPreviews, [peerId]: { ...preview, text: '撤回了一条消息' } } }
+                : {};
+            return { ...messages, ...previewPatch };
+          });
+          break;
+        }
         case 'friend:request':
         case 'friend:accepted':
         case 'friend:declined':
@@ -542,6 +685,12 @@ export const useChat = create<ChatState>()((set, get) => ({
       hasMoreByRoom: {},
       previewByRoom: {},
       loadingOlderRooms: {},
+      dmMessages: {},
+      dmHistoryLoaded: {},
+      dmHasMore: {},
+      dmUnread: {},
+      dmPreviews: {},
+      activeDmPeerId: null,
       roomError: null,
       connectionError: null,
     });
@@ -603,9 +752,11 @@ export const useChat = create<ChatState>()((set, get) => ({
   selectRoom: async (roomId, forceReload = false) => {
     const { token } = useAuth.getState();
     if (!token) return;
-    // 选中即清零未读（普通 + @我）；room:join 幂等（已订阅时服务端也会回执），看门狗兜底
+    // 选中即清零未读（普通 + @我）；room:join 幂等（已订阅时服务端也会回执），看门狗兜底；
+    // 切到房间 = 离开 DM 会话（两者互斥表达「活跃会话」）
     set((s) => ({
       activeRoomId: roomId,
+      activeDmPeerId: null,
       unreadByRoom: { ...s.unreadByRoom, [roomId]: 0 },
       mentionByRoom: { ...s.mentionByRoom, [roomId]: 0 },
     }));
@@ -771,4 +922,100 @@ export const useChat = create<ChatState>()((set, get) => ({
   },
 
   clearRoomError: () => set({ roomError: null }),
+
+  openDm: async (peerId) => {
+    // 打开会话即清零未读；历史只在首次打开时拉取（重连重载由 hello:ok 强制触发）
+    set((s) => ({ activeDmPeerId: peerId, dmUnread: { ...s.dmUnread, [peerId]: 0 } }));
+    if (!get().dmHistoryLoaded[peerId]) await loadDmHistory(peerId);
+  },
+
+  // 一次性拉取所有私聊会话的最后一条消息（进入应用时补齐侧栏预览，之后由 dm:new 实时更新）
+  loadDmConversations: async () => {
+    const { token } = useAuth.getState();
+    if (!token) return;
+    try {
+      const { conversations } = await api.listDmConversations(token);
+      useChat.setState((s) => {
+        const previews = { ...s.dmPreviews };
+        for (const c of conversations) {
+          previews[c.peerId] = {
+            id: c.last.id,
+            userId: c.last.from,
+            username: c.last.username,
+            text: previewTextOf(c.last),
+            createdAt: c.last.createdAt,
+          };
+        }
+        return { dmPreviews: previews };
+      });
+    } catch {
+      // 预览加载失败不打断主流程（列表为空即可，服务端过旧时同样降级）
+    }
+  },
+
+  loadOlderDmMessages: async (peerId) => {
+    const { token } = useAuth.getState();
+    if (!token) return;
+    if (!get().dmHasMore[peerId]) return;
+    const oldest = (get().dmMessages[peerId] ?? []).find((m) => !m.pending);
+    if (!oldest) return;
+    try {
+      const { messages, hasMore } = await api.dmMessages(token, peerId, { before: oldest.id, limit: 50 });
+      set((s) => {
+        const existing = new Set((s.dmMessages[peerId] ?? []).map((m) => m.id));
+        const fresh = messages.map(dmToRoomMessage).filter((m) => !existing.has(m.id));
+        return {
+          dmMessages: { ...s.dmMessages, [peerId]: [...fresh, ...(s.dmMessages[peerId] ?? [])] },
+          dmHasMore: { ...s.dmHasMore, [peerId]: hasMore },
+          dmHistoryLoaded: { ...s.dmHistoryLoaded, [peerId]: true },
+        };
+      });
+    } catch (e) {
+      set({ roomError: e instanceof Error ? e.message : '加载更早消息失败' });
+    }
+  },
+
+  sendDm: (text, opts) => {
+    const trimmed = text.trim();
+    if (!trimmed && !opts?.mediaUrl) return;
+    const peerId = get().activeDmPeerId;
+    if (!peerId) return;
+    if (get().status !== 'open' || !socket) {
+      set({ roomError: '连接未就绪，无法发送私聊消息' });
+      return;
+    }
+    const ok = socket.send({ type: 'dm:send', payload: { to: peerId, text: trimmed, mediaUrl: opts?.mediaUrl, replyTo: opts?.replyTo } });
+    if (ok) {
+      playSendSound(useSettings.getState().soundEnabled);
+      appendPendingDm(peerId, trimmed, opts);
+    }
+  },
+
+  recallDm: (messageId) => {
+    if (get().status !== 'open' || !socket) {
+      set({ roomError: '连接未就绪，无法操作' });
+      return;
+    }
+    // 服务端校验仅发送者可撤，成功后广播 dm:recalled（双端清空内容）
+    socket.send({ type: 'dm:recall', payload: { messageId } });
+  },
 }));
+
+/** 拉取指定会话的完整历史（首次打开 / 重连重载共用；全量覆盖本地列表） */
+async function loadDmHistory(peerId: string): Promise<void> {
+  const { token } = useAuth.getState();
+  if (!token) return;
+  try {
+    const { messages, hasMore } = await api.dmMessages(token, peerId, { limit: 50 });
+    useChat.setState((s) => ({
+      dmMessages: { ...s.dmMessages, [peerId]: messages.map(dmToRoomMessage) },
+      dmHistoryLoaded: { ...s.dmHistoryLoaded, [peerId]: true },
+      dmHasMore: { ...s.dmHasMore, [peerId]: hasMore },
+    }));
+  } catch (e) {
+    useChat.setState((s) => ({
+      dmHistoryLoaded: { ...s.dmHistoryLoaded, [peerId]: true },
+      roomError: e instanceof Error ? e.message : '加载私聊历史失败',
+    }));
+  }
+}

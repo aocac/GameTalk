@@ -69,6 +69,9 @@ gametalk/
 {"type":"member:mute","payload":{"roomId":"...","userId":"...","minutes":10}}
 {"type":"member:unmute","payload":{"roomId":"...","userId":"..."}}
 {"type":"message:send","payload":{"roomId":"...","text":"hi","mentions":["<userId>"],"mediaUrl":"/api/media/<uuid>"}}
+{"type":"message:recall","payload":{"roomId":"...","messageId":"..."}}
+{"type":"dm:send","payload":{"to":"<userId>","text":"hi","mediaUrl":"/api/media/<uuid>","replyTo":"..."}}
+{"type":"dm:recall","payload":{"messageId":"..."}}
 {"type":"ping"}
 ```
 
@@ -82,6 +85,9 @@ gametalk/
 {"type":"member:muted","payload":{"roomId":"...","userId":"...","mutedUntil":"..."}}
 {"type":"member:unmuted","payload":{"roomId":"...","userId":"..."}}
 {"type":"message:new","payload":{"roomId":"...","message":{...,"mentions":[{"id":"...","username":"..."}],"kind":"text|image","mediaUrl":"..."}}}
+{"type":"message:recalled","payload":{"roomId":"...","messageId":"..."}}
+{"type":"dm:new","payload":{"message":{"id":"...","from":"...","to":"...","username":"...","text":"...","kind":"text|image","mediaUrl":null,"recalled":false}}}
+{"type":"dm:recalled","payload":{"messageId":"...","from":"...","to":"..."}}
 {"type":"room:deleted","payload":{"roomId":"..."}}
 {"type":"friend:request","payload":{"requestId":"...","from":{...}}}
 {"type":"friend:accepted","payload":{"user":{...}}}
@@ -102,7 +108,9 @@ gametalk/
 
 **图片消息**：客户端先 `POST /api/media`（data URL，≤5MB，魔数校验）取得 `/api/media/<uuid>`，再随 `message:send(kind=image)` 发送；服务端校验该媒体必须存在且属于发送者。读取端点免认证（`<img>` 带不了 Authorization 头），与头像同策略：UUID 不可枚举 + immutable 缓存。
 
-**好友**：`friendships`（pending/accepted，双向唯一）；支持 userId / 用户名 / `#8 位短 ID` 查找；反向申请等价于互加。实时事件（`friend:request/accepted/declined/removed`）经 WS 推送在线方。好友与房间完全分离管理（DM 私聊在路线图）。
+**好友**：`friendships`（pending/accepted，双向唯一）；支持 userId / 用户名 / `#8 位短 ID` 查找；反向申请等价于互加。实时事件（`friend:request/accepted/declined/removed`）经 WS 推送在线方。好友与房间完全分离管理。
+
+**好友私聊（DM）**：仅 accepted 好友可互发（`dm:send` 服务端校验，非好友回 `not_friends`）。独立 `dm_messages` 表（与房间消息分离，无提及/禁言语义），消息含 `from/to/username 快照/kind/media_url/reply_to/recalled`；持久化后向**双方所有连接**广播 `dm:new`（发送者自己也收到，多端一致）。撤回 `dm:recall` 仅发送者本人（无房主概念，他人撤回回 `only_sender`），广播 `dm:recalled`，内容清空。REST：`GET /api/dm/conversations`（DISTINCT ON 聚合每会话最后一条，侧栏预览一次拉齐）、`GET /api/dm/:peerId/messages`（游标分页，非好友 403）。删除好友不删历史（重新加好友后消息仍在，UI 隐藏会话）。客户端：乐观发送 + 按序校正，`activeDmPeerId` 与 `activeRoomId` 互斥表达活跃会话。
 
 **用户资料**：`users` 含个性签名 `bio`（≤100 字，PATCH /api/auth/me 维护）；成员卡片经
 `GET /api/users/:id`（登录态、UUID 不可枚举）读取公开资料。
@@ -126,6 +134,9 @@ gametalk/
 - `005_mentions`：`messages.mentions`（提及快照 JSONB + GIN 索引）
 - `006_media`：`media`（图片字节存储）+ `messages.kind/media_url`
 - `007_mutes`：`room_mutes`（限时禁言，到期惰性失效）
+- `008_recalled`：`messages.recalled`（撤回）
+- `009_replies`：`messages.reply_to`（引用回复）
+- `010_dm_messages`：`dm_messages`（好友私聊，双向索引）
 
 ## 6. 游戏 Overlay（透明置顶窗口方案）
 

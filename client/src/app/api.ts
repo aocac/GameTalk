@@ -223,3 +223,53 @@ export function declineFriendRequest(token: string, id: string): Promise<{ ok: b
 export function removeFriend(token: string, userId: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/friends/${userId}/remove`, { method: 'POST', token });
 }
+
+// ============ 好友私聊（DM） ============
+
+/** DM 会话列表项：peerId + 该会话最后一条消息 */
+export interface DmConversation {
+  peerId: string;
+  last: {
+    id: string;
+    from: string;
+    to: string;
+    username: string;
+    text: string;
+    createdAt: string;
+    kind?: 'text' | 'image';
+    recalled?: boolean;
+  };
+}
+
+export function listDmConversations(token: string): Promise<{ conversations: DmConversation[] }> {
+  return request<{ conversations: DmConversation[] }>('/api/dm/conversations', { token });
+}
+
+/** 服务端 DM 消息形状（from/to 表达方向；store 层转换为渲染消息） */
+export interface DmApiMessage {
+  id: string;
+  from: string;
+  to: string;
+  username: string;
+  avatarUrl?: string | null;
+  text: string;
+  createdAt: string;
+  kind?: 'text' | 'image';
+  mediaUrl?: string | null;
+  reply?: { id: string; username: string; text: string; kind: 'text' | 'image' };
+  recalled?: boolean;
+}
+
+export function dmMessages(
+  token: string,
+  peerId: string,
+  opts: { before?: string; limit?: number } = {},
+): Promise<{ messages: DmApiMessage[]; hasMore: boolean }> {
+  const params = new URLSearchParams();
+  if (opts.before) params.set('before', opts.before);
+  if (opts.limit) params.set('limit', String(opts.limit));
+  const qs = params.toString();
+  return request<{ messages: DmApiMessage[]; hasMore: boolean }>(`/api/dm/${peerId}/messages${qs ? `?${qs}` : ''}`, {
+    token,
+  });
+}

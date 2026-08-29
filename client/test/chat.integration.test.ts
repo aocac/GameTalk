@@ -95,6 +95,43 @@ describe('GameTalk room chat (integration)', () => {
     b.close();
   });
 
+  it('friends dm over client socket: both sides receive dm:new, history via REST', async () => {
+    const a = await register('dm_cli_a');
+    const b = await register('dm_cli_b');
+    // 互加为好友（反向申请 = 直接成为好友）
+    for (const [from, to] of [[a, b], [b, a]] as const) {
+      await fetch(`${TEST_HTTP_URL}/api/friends/requests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${from.token}` },
+        body: JSON.stringify({ userId: to.userId }),
+      });
+    }
+
+    const sa = await connectAuthed(a.token);
+    const sb = await connectAuthed(b.token);
+    const bGets = nextMsg(sb, (m) => m.type === 'dm:new');
+    const aGets = nextMsg(sa, (m) => m.type === 'dm:new');
+    sa.send({ type: 'dm:send', payload: { to: b.userId, text: '私聊测试' } });
+
+    const gotB = await bGets;
+    const msg = (gotB.payload as { message: { id: string; from: string; to: string; text: string; kind: string } }).message;
+    expect(msg).toMatchObject({ from: a.userId, to: b.userId, text: '私聊测试', kind: 'text' });
+    // 发送者自己也会收到回显（多端一致）
+    const gotA = await aGets;
+    expect((gotA.payload as { message: { id: string } }).message.id).toBe(msg.id);
+
+    // 历史持久化
+    const hist = await fetch(`${TEST_HTTP_URL}/api/dm/${b.userId}/messages`, {
+      headers: { Authorization: `Bearer ${a.token}` },
+    });
+    expect(hist.status).toBe(200);
+    const body = (await hist.json()) as { messages: Array<{ from: string; text: string }> };
+    expect(body.messages[body.messages.length - 1]?.text).toBe('私聊测试');
+
+    sa.close();
+    sb.close();
+  });
+
   it('non-member cannot join room via WS (not_in_room)', async () => {
     const owner = await register('guard_owner');
     const outsider = await register('guard_outside');

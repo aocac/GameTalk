@@ -52,6 +52,21 @@ export interface ChatMessage {
   pending?: boolean;
 }
 
+/** 好友私聊消息（from/to 表达会话方向；渲染字段与房间消息对齐） */
+export interface DmMessage {
+  id: string;
+  from: string;
+  to: string;
+  username: string;
+  avatarUrl?: string | null;
+  text: string;
+  createdAt: string;
+  kind?: 'text' | 'image';
+  mediaUrl?: string | null;
+  reply?: ReplyRef;
+  recalled?: boolean;
+}
+
 // 客户端 -> 服务端
 export type ClientWsMessage =
   | { type: 'hello'; payload: { token: string } }
@@ -63,6 +78,8 @@ export type ClientWsMessage =
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string; replyTo?: string } }
   | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
+  | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: string; replyTo?: string } }
+  | { type: 'dm:recall'; payload: { messageId: string } }
   | { type: 'ping' };
 
 // 服务端 -> 客户端
@@ -78,6 +95,8 @@ export type ServerWsMessage =
   | { type: 'message:recalled'; payload: { roomId: string; messageId: string } }
   | { type: 'room:deleted'; payload: { roomId: string } }
   | { type: 'friend:request'; payload: { requestId: string; from: FriendProfile } }
+  | { type: 'dm:new'; payload: { message: DmMessage } }
+  | { type: 'dm:recalled'; payload: { messageId: string; from: string; to: string } }
   | { type: 'friend:accepted'; payload: { user: FriendProfile } }
   | { type: 'friend:declined'; payload: { userId: string } }
   | { type: 'friend:removed'; payload: { userId: string } }

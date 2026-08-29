@@ -427,6 +427,7 @@ function MemberCardModal({
   friendStatus,
   onAddFriend,
   onRemoveFriend,
+  onMessage,
   onClose,
 }: {
   member: UserBrief;
@@ -436,6 +437,7 @@ function MemberCardModal({
   friendStatus?: 'self' | 'friends' | 'pending' | 'none';
   onAddFriend?: () => void;
   onRemoveFriend?: () => void;
+  onMessage?: () => void;
   onClose: () => void;
 }) {
   const { token } = useAuth();
@@ -530,6 +532,11 @@ function MemberCardModal({
         {friendStatus === 'pending' && (
           <button className="btn ghost block" disabled>
             好友申请处理中
+          </button>
+        )}
+        {friendStatus === 'friends' && onMessage && (
+          <button className="btn primary block" onClick={onMessage}>
+            发消息
           </button>
         )}
         {friendStatus === 'friends' && onRemoveFriend && (
@@ -707,6 +714,16 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     recallMessage,
     sendMessage,
     clearRoomError,
+    dmMessages,
+    dmHistoryLoaded,
+    dmHasMore,
+    dmUnread,
+    dmPreviews,
+    activeDmPeerId,
+    openDm,
+    loadOlderDmMessages,
+    sendDm,
+    recallDm,
   } = useChat();
   const { user, logout } = useAuth();
   const { gameModeEnabled, hotkey, soundEnabled } = useSettings();
@@ -778,7 +795,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const anchorRef = useRef<number | null>(null);
   const connected = status === 'open';
   const activeRoom = rooms.find((r) => r.id === activeRoomId) ?? null;
-  const messages = activeRoomId ? (messagesByRoom[activeRoomId] ?? []) : [];
+  // 活跃会话二选一：DM（好友私聊）优先于房间；DM 时消息/顶栏/成员面板均切换
+  const activeDm = activeDmPeerId ? (friends.find((f) => f.id === activeDmPeerId) ?? null) : null;
+  const dmMessagesList = activeDmPeerId ? (dmMessages[activeDmPeerId] ?? []) : [];
+  const messages = activeDm ? dmMessagesList : activeRoomId ? (messagesByRoom[activeRoomId] ?? []) : [];
   const members = activeRoomId ? (membersByRoom[activeRoomId] ?? []) : [];
   // 花名册排序：自己 → 房主 → 在线 → 离线（QQ 式）；同级按昵称稳定排序
   const memberRank = (id: string, online: boolean) => (id === me?.id ? 0 : id === activeRoom?.ownerId ? 1 : online ? 2 : 3);
@@ -787,6 +807,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   );
   const onlineCount = members.filter((m) => m.online).length;
   const activeSubscribed = !!activeRoomId && subscribedRoomIds.includes(activeRoomId);
+  // 侧栏私聊会话：仅好友（删好友即隐藏会话）；有预览或正在会话才显示，按最后消息时间倒序
+  const dmSidebar = friends
+    .filter((f) => dmPreviews[f.id] || f.id === activeDmPeerId)
+    .map((f) => ({ friend: f, preview: dmPreviews[f.id] }))
+    .sort((a, b) => (b.preview?.createdAt ?? '').localeCompare(a.preview?.createdAt ?? ''));
   // @自动补全候选：当前房间花名册（自己除外），按昵称前缀过滤
   const mentionCandidates: RoomMember[] = mentionQuery
     ? roster
@@ -810,6 +835,26 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   };
 
   const sendDraft = () => {
+    // DM 会话：无提及语义，图片/引用照常
+    if (activeDm) {
+      if (!draft.trim() && !pendingImage) return;
+      sendDm(draft.trim(), {
+        mediaUrl: pendingImage ?? undefined,
+        replyTo: replyTo?.id,
+        reply: replyTo
+          ? {
+              id: replyTo.id,
+              username: replyTo.username,
+              text: replyTo.kind === 'image' ? '[图片]' : replyTo.recalled ? '消息已撤回' : replyTo.text.slice(0, 80),
+              kind: replyTo.kind === 'image' ? 'image' : 'text',
+            }
+          : undefined,
+      });
+      setDraft('');
+      setPendingImage(null);
+      setReplyTo(null);
+      return;
+    }
     if (!activeRoom) return;
     if (!draft.trim() && !pendingImage) return;
     // 只保留文本中确实还带着 @昵称 的提及（用户可能删掉了部分）
@@ -840,7 +885,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const absUrl = (u: string) => (u.startsWith('http') ? u : useSettings.getState().serverUrl.replace(/\/+$/, '') + u);
 
   const onPickImageFile = async (file: File | undefined) => {
-    if (!file || offline || !connected || !activeRoom) return;
+    if (!file || offline || !connected || (!activeRoom && !activeDm)) return;
     setUploading(true);
     try {
       const { token } = useAuth.getState();
@@ -912,9 +957,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
 
   // 发送表情包：作为图片消息直接发出（GIF 原样保留动画）
   const sendSticker = (url: string) => {
-    if (offline || !connected || !activeRoom) return;
+    if (offline || !connected || (!activeRoom && !activeDm)) return;
     setShowEmoji(false);
-    sendMessage('', { mediaUrl: url });
+    if (activeDm) sendDm('', { mediaUrl: url });
+    else sendMessage('', { mediaUrl: url });
   };
 
   useEffect(() => {
@@ -930,7 +976,17 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   }, [messages.length]);
 
   const handleLoadOlder = async () => {
-    if (!activeRoom || !listRef.current) return;
+    if (!listRef.current) return;
+    if (activeDm && activeDmPeerId) {
+      anchorRef.current = listRef.current.scrollHeight;
+      const before = dmMessagesList.length;
+      await loadOlderDmMessages(activeDmPeerId);
+      if ((useChat.getState().dmMessages[activeDmPeerId] ?? []).length === before) {
+        anchorRef.current = null;
+      }
+      return;
+    }
+    if (!activeRoom) return;
     anchorRef.current = listRef.current.scrollHeight;
     const before = messages.length;
     await loadOlderMessages(activeRoom.id);
@@ -1169,6 +1225,41 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         )}
         {(offline || sideTab === 'rooms') ? (
         <>
+        {!offline && dmSidebar.length > 0 && (
+          <>
+            <div className="rooms-header dm-header">
+              <span>私聊</span>
+            </div>
+            <nav className="rooms dm-rooms">
+              {dmSidebar.map(({ friend, preview }) => (
+                <div
+                  key={friend.id}
+                  className={`room-item ${friend.id === activeDmPeerId ? 'active' : ''}`}
+                  onClick={() => void openDm(friend.id)}
+                  title={friend.online ? '在线' : '离线'}
+                >
+                  <span className={`dm-avatar-wrap ${friend.online ? '' : 'off'}`}>
+                    <Avatar name={friend.username} url={friend.avatarUrl} size={34} />
+                  </span>
+                  <div className="room-main">
+                    <div className="room-line1">
+                      <span className="room-name">{friend.username}</span>
+                      {!!dmUnread[friend.id] && (
+                        <span className="room-badge">{dmUnread[friend.id] > 99 ? '99+' : dmUnread[friend.id]}</span>
+                      )}
+                      {preview && <span className="room-time">{formatRoomTime(preview.createdAt)}</span>}
+                    </div>
+                    <div className="room-preview">
+                      {preview
+                        ? `${preview.userId === me?.id ? '我' : preview.username}：${preview.text}`
+                        : '开始聊天吧'}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </nav>
+          </>
+        )}
         <div className="rooms-header">
           <span>房间</span>
           <button
@@ -1309,6 +1400,19 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   <span className="member-name">{f.username}</span>
                   <span className="friend-sub">{f.bio || (f.online ? '在线' : '离线')}</span>
                 </span>
+                <button
+                  className="friend-dm-btn"
+                  title="发消息"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSideTab('rooms');
+                    void openDm(f.id);
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
+                </button>
               </div>
             ))}
           </div>
@@ -1370,25 +1474,38 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       <main className="main">
         <header className="topbar">
           <div className="topbar-title">
-            {activeRoom && !offline ? (
-              <span
-                className="topbar-avatar"
-                aria-hidden
-                style={{ background: `hsl(${[...(activeRoom.name || '#')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7)} 32% 42%)` }}
-              >
-                {(activeRoom.name || '#').slice(0, 1)}
-              </span>
+            {activeDm && !offline ? (
+              <>
+                <span className={`topbar-dm-avatar ${activeDm.online ? '' : 'off'}`}>
+                  <Avatar name={activeDm.username} url={activeDm.avatarUrl} size={30} />
+                </span>
+                <span>{activeDm.username}</span>
+                <span className={`dm-online-tag ${activeDm.online ? 'ok' : ''}`}>{activeDm.online ? '在线' : '离线'}</span>
+              </>
+            ) : activeRoom && !offline ? (
+              <>
+                <span
+                  className="topbar-avatar"
+                  aria-hidden
+                  style={{ background: `hsl(${[...(activeRoom.name || '#')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7)} 32% 42%)` }}
+                >
+                  {(activeRoom.name || '#').slice(0, 1)}
+                </span>
+                <span>{activeRoom.name}</span>
+                <span className="me-tag">邀请码 {activeRoom.inviteCode}</span>
+              </>
             ) : (
-              <span className="hash">#</span>
+              <>
+                <span className="hash">#</span>
+                <span>{offline ? '离线模式' : '未选择会话'}</span>
+              </>
             )}
-            <span>{offline ? '离线模式' : (activeRoom?.name ?? '未选择房间')}</span>
-            {activeRoom && !offline && <span className="me-tag">邀请码 {activeRoom.inviteCode}</span>}
           </div>
           <div className="topbar-right">
             {offline && <span className="offline-tag">离线模式</span>}
             <StatusDot status={status} />
-            {/* 订阅状态只在已连接时有意义；断开/重连中由状态灯表达 */}
-            {!offline && connected && activeRoom && (
+            {/* 订阅状态只在已连接时有意义；断开/重连中由状态灯表达；DM 无订阅概念 */}
+            {!offline && connected && activeRoom && !activeDm && (
               <span
                 className={`sub-tag ${activeSubscribed ? 'ok' : 'pending'}`}
                 title={activeSubscribed ? '已订阅该房间实时消息' : '订阅未就绪（自动重试中…）'}
@@ -1437,7 +1554,16 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         )}
 
         <div className="messages" ref={listRef}>
-          {!offline && activeRoom && hasMoreByRoom[activeRoom.id] && (
+          {!offline && activeDm && activeDmPeerId && dmHasMore[activeDmPeerId] && (
+            <button
+              className="load-older"
+              disabled={!!loadingOlderRooms[activeDmPeerId]}
+              onClick={() => void handleLoadOlder()}
+            >
+              加载更早的消息
+            </button>
+          )}
+          {!offline && !activeDm && activeRoom && hasMoreByRoom[activeRoom.id] && (
             <button
               className="load-older"
               disabled={!!loadingOlderRooms[activeRoom.id]}
@@ -1454,13 +1580,25 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               </p>
             </div>
           )}
-          {!offline && !activeRoom && (
+          {!offline && !activeDm && !activeRoom && (
             <div className="empty">
-              <p className="empty-title">选择一个房间</p>
-              <p className="empty-sub">创建新房间或通过邀请码加入，开始实时沟通。</p>
+              <p className="empty-title">选择一个会话</p>
+              <p className="empty-sub">创建新房间、加入房间，或在好友列表发起私聊。</p>
               <button className="btn primary" style={{ marginTop: 14 }} onClick={() => setShowRoomModal(true)}>
                 创建 / 加入房间
               </button>
+            </div>
+          )}
+          {!offline && activeDm && dmMessagesList.length === 0 && !dmHistoryLoaded[activeDmPeerId!] && (
+            <div className="empty">
+              <p className="empty-title">加载聊天记录…</p>
+              <p className="empty-sub">正在从服务器拉取与 {activeDm.username} 的私聊记录。</p>
+            </div>
+          )}
+          {!offline && activeDm && dmMessagesList.length === 0 && !!dmHistoryLoaded[activeDmPeerId!] && (
+            <div className="empty">
+              <p className="empty-title">和 {activeDm.username} 打个招呼吧</p>
+              <p className="empty-sub">这是你们的私密对话，只有彼此可见。</p>
             </div>
           )}
           {!offline && activeRoom && messages.length === 0 && !historyLoadedRooms[activeRoom.id] && (
@@ -1505,7 +1643,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   <span
                     className="message-avatar"
                     onContextMenu={(e) => {
-                      if (offline || m.pending) return;
+                      // DM 会话只有两人，无成员菜单语义
+                      if (offline || m.pending || activeDm) return;
                       e.preventDefault();
                       e.stopPropagation();
                       const live = members.find((x) => x.id === m.userId);
@@ -1686,7 +1825,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <button
             className="composer-icon"
             title={uploading ? '图片上传中…' : '发送图片'}
-            disabled={offline || !connected || !activeRoom || uploading}
+            disabled={offline || !connected || (!activeRoom && !activeDm) || uploading}
             onClick={() => imageInputRef.current?.click()}
           >
             {uploading ? (
@@ -1714,7 +1853,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <button
             className="composer-icon"
             title="表情"
-            disabled={offline || !connected || !activeRoom}
+            disabled={offline || !connected || (!activeRoom && !activeDm)}
             onClick={() => setShowEmoji((v) => !v)}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1728,8 +1867,18 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             ref={composerRef}
             className="composer-input"
             value={draft}
-            placeholder={offline ? '离线模式：未连接服务器' : connected ? (activeRoom ? '输入消息，Enter 发送，@ 唤起提及' : '先选择或创建房间') : '未连接'}
-            disabled={offline || !connected || !activeRoom}
+            placeholder={
+              offline
+                ? '离线模式：未连接服务器'
+                : connected
+                  ? activeDm
+                    ? `与 ${activeDm.username} 私聊，Enter 发送`
+                    : activeRoom
+                      ? '输入消息，Enter 发送，@ 唤起提及'
+                      : '先选择或创建房间'
+                  : '未连接'
+            }
+            disabled={offline || !connected || (!activeRoom && !activeDm)}
             maxLength={2000}
             onPaste={(e) => {
               // 支持直接粘贴截图/图片：走附件上传流程（可配文字后发送）
@@ -1744,7 +1893,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               setDraft(v);
               const caret = e.target.selectionStart ?? v.length;
               const m = /@([\w\u4e00-\u9fa5-]{0,24})$/.exec(v.slice(0, caret));
-              if (m && !offline && connected) {
+              // DM 无提及语义，不开 @ 自动补全
+              if (m && !offline && connected && !activeDm) {
                 setMentionQuery({ start: m.index, token: m[1] ?? '', caret });
                 setMentionPick(0);
               } else {
@@ -1775,16 +1925,20 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   return;
                 }
               }
-              if (e.key === 'Enter' && !e.shiftKey && !offline && connected && activeRoom) {
+              if (e.key === 'Enter' && !e.shiftKey && !offline && connected && (activeRoom || activeDm)) {
                 e.preventDefault();
                 sendDraft();
               }
             }}
           />
-          <button className="btn primary" disabled={offline || !connected || !activeRoom || (!draft.trim() && !pendingImage)} onClick={sendDraft}>
+          <button
+            className="btn primary"
+            disabled={offline || !connected || (!activeRoom && !activeDm) || (!draft.trim() && !pendingImage)}
+            onClick={sendDraft}
+          >
             发送
           </button>
-          {activeRoom && (
+          {activeRoom && !activeDm && (
             <button className="btn ghost" title="离开房间" onClick={() => void leaveActiveRoom()}>
               离开
             </button>
@@ -1802,8 +1956,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         </footer>
       </main>
 
-      {/* 成员面板（QQ 式花名册）：离线成员置灰保留 + 房主标注 + 房主管理 */}
-      {!offline && activeRoom && (
+      {/* 成员面板（QQ 式花名册）：离线成员置灰保留 + 房主标注 + 房主管理；DM 会话不显示 */}
+      {!offline && activeRoom && !activeDm && (
         <aside className="members-panel">
           <div className="members-header">
             <span>成员</span>
@@ -1978,7 +2132,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           </CtxMenu>
         </>
       )}
-      {msgMenu && activeRoom && (
+      {msgMenu && (activeRoom || activeDm) && (
         <>
           <div className="menu-mask" onClick={() => setMsgMenu(null)} />
           <CtxMenu x={msgMenu.x} y={msgMenu.y}>
@@ -2013,16 +2167,33 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             >
               引用
             </button>
-            {(msgMenu.msg.userId === me?.id || activeRoom.ownerId === me?.id) && !msgMenu.msg.pending && (
-              <button
-                className="ctx-menu-item danger"
-                onClick={() => {
-                  recallMessage(activeRoom.id, msgMenu.msg.id);
-                  setMsgMenu(null);
-                }}
-              >
-                {msgMenu.msg.userId === me?.id ? '撤回' : '撤回（房主）'}
-              </button>
+            {activeDm ? (
+              // 私聊：仅发送者本人可撤回（无房主语义）
+              msgMenu.msg.userId === me?.id &&
+              !msgMenu.msg.pending && (
+                <button
+                  className="ctx-menu-item danger"
+                  onClick={() => {
+                    recallDm(msgMenu.msg.id);
+                    setMsgMenu(null);
+                  }}
+                >
+                  撤回
+                </button>
+              )
+            ) : (
+              (msgMenu.msg.userId === me?.id || activeRoom?.ownerId === me?.id) &&
+              !msgMenu.msg.pending && (
+                <button
+                  className="ctx-menu-item danger"
+                  onClick={() => {
+                    if (activeRoom) recallMessage(activeRoom.id, msgMenu.msg.id);
+                    setMsgMenu(null);
+                  }}
+                >
+                  {msgMenu.msg.userId === me?.id ? '撤回' : '撤回（房主）'}
+                </button>
+              )
             )}
           </CtxMenu>
         </>
@@ -2039,6 +2210,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           }}
           friendStatus={relationOf(cardMember.id)}
           onAddFriend={() => void sendRequest(cardMember.id)}
+          onMessage={() => {
+            setCardMember(null);
+            setSideTab('rooms');
+            void openDm(cardMember.id);
+          }}
           onRemoveFriend={() => {
             void removeFriendById(cardMember.id);
             setCardMember(null);
@@ -2055,6 +2231,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           onKick={() => undefined}
           friendStatus={relationOf(cardMember.id)}
           onAddFriend={() => void sendRequest(cardMember.id)}
+          onMessage={() => {
+            setCardMember(null);
+            setSideTab('rooms');
+            void openDm(cardMember.id);
+          }}
           onRemoveFriend={() => {
             void removeFriendById(cardMember.id);
             setCardMember(null);

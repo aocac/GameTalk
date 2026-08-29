@@ -61,6 +61,21 @@ interface MentionRef {
   username: string;
 }
 
+/** 好友私聊消息（与房间消息分离：无 roomId/提及/禁言语义，from/to 表达会话方向） */
+interface DmMessage {
+  id: string;
+  from: string;
+  to: string;
+  username: string;
+  avatarUrl: string | null;
+  text: string;
+  createdAt: string;
+  kind: 'text' | 'image';
+  mediaUrl: string | null;
+  reply?: ReplyRef;
+  recalled?: boolean;
+}
+
 /** 引用回复快照：随消息入库/广播，渲染不依赖原消息仍在客户端历史窗口内 */
 interface ReplyRef {
   id: string;
@@ -89,6 +104,8 @@ type ClientMessage =
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown; replyTo?: unknown } }
   | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
+  | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: unknown; replyTo?: unknown } }
+  | { type: 'dm:recall'; payload: { messageId: string } }
   | { type: 'ping' };
 
 interface UserRow extends QueryResultRow {
@@ -672,6 +689,129 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       );
       if (updated.rows.length > 0) {
         broadcastToRoom(roomId, { type: 'message:recalled', payload: { roomId, messageId } });
+      }
+      break;
+    }
+    case 'dm:send': {
+      // 好友私聊：仅 accepted 好友可互发；持久化后向双方所有连接广播
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const to = String(msg.payload.to ?? '');
+      const text = safeText(msg.payload.text);
+      const mediaUrl = typeof msg.payload.mediaUrl === 'string' ? msg.payload.mediaUrl : null;
+      if (!text && !mediaUrl) {
+        send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'message is empty' } });
+        return;
+      }
+      if (!to || to === conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid dm target' } });
+        return;
+      }
+      const friend = await db.query(
+        `SELECT 1 FROM friendships
+         WHERE status = 'accepted'
+           AND ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))`,
+        [conn.userId, to],
+      );
+      if (friend.rows.length === 0) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_friends', message: '仅好友之间可以私聊' } });
+        return;
+      }
+      // 图片消息：mediaUrl 必须是本服务媒体端点且属于发送者（与房间消息同策略）
+      let kind: 'text' | 'image' = 'text';
+      let storedMediaUrl: string | null = null;
+      if (mediaUrl) {
+        const m = /^\/api\/media\/([0-9a-f-]{36})$/.exec(mediaUrl);
+        if (!m) {
+          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid media url' } });
+          return;
+        }
+        const owned = await db.query('SELECT 1 FROM media WHERE id = $1 AND owner_id = $2', [m[1], conn.userId]);
+        if (owned.rows.length === 0) {
+          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'media not found' } });
+          return;
+        }
+        kind = 'image';
+        storedMediaUrl = mediaUrl;
+      }
+      // 引用回复：原消息必须属于本会话（双向对）；快照随消息入库与广播
+      let replyTo: string | null = null;
+      let reply: ReplyRef | undefined;
+      const rawReply = typeof msg.payload.replyTo === 'string' ? msg.payload.replyTo : '';
+      if (rawReply) {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawReply)) {
+          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid reply id' } });
+          return;
+        }
+        const r = await db.query<{ id: string; username: string; text: string; kind: string; recalled: boolean }>(
+          `SELECT id, username, text, kind, recalled FROM dm_messages
+           WHERE id = $1 AND ((sender_id = $2 AND recipient_id = $3) OR (sender_id = $3 AND recipient_id = $2))`,
+          [rawReply, conn.userId, to],
+        );
+        const row = r.rows[0];
+        if (!row) {
+          send(conn.socket, { type: 'error', payload: { code: 'message_not_found', message: 'reply target not found' } });
+          return;
+        }
+        replyTo = rawReply;
+        reply = {
+          id: row.id,
+          username: row.username,
+          text: row.recalled ? '消息已撤回' : row.text.slice(0, 80),
+          kind: (row.kind === 'image' ? 'image' : 'text') as 'image' | 'text',
+        };
+      }
+      const inserted = await db.query<{ id: string; created_at: string }>(
+        'INSERT INTO dm_messages (sender_id, recipient_id, username, text, kind, media_url, reply_to) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at',
+        [conn.userId, to, conn.username, text, kind, storedMediaUrl, replyTo],
+      );
+      const row = inserted.rows[0];
+      const message: DmMessage = {
+        id: row.id,
+        from: conn.userId,
+        to,
+        username: conn.username,
+        avatarUrl: conn.avatarUrl,
+        text,
+        createdAt: row.created_at,
+        kind,
+        mediaUrl: storedMediaUrl ? `${conn.httpBase}${storedMediaUrl}` : null,
+        recalled: false,
+        reply,
+      };
+      sendToUser(conn.userId, { type: 'dm:new', payload: { message } });
+      sendToUser(to, { type: 'dm:new', payload: { message } });
+      break;
+    }
+    case 'dm:recall': {
+      // 私聊撤回：仅发送者本人可撤（无房主概念）；撤回后内容清空并通知双方
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const messageId = sanitizeRoomId(msg.payload.messageId);
+      const found = await db.query<{ sender_id: string; recipient_id: string }>(
+        'SELECT sender_id, recipient_id FROM dm_messages WHERE id = $1 AND recalled = false',
+        [messageId],
+      );
+      const target = found.rows[0];
+      if (!target) {
+        send(conn.socket, { type: 'error', payload: { code: 'message_not_found', message: 'message not found' } });
+        return;
+      }
+      if (target.sender_id !== conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'only_sender', message: '只有发送者可以撤回私聊消息' } });
+        return;
+      }
+      const updated = await db.query<{ id: string }>(
+        "UPDATE dm_messages SET recalled = true, text = '', media_url = NULL WHERE id = $1 RETURNING id",
+        [messageId],
+      );
+      if (updated.rows.length > 0) {
+        sendToUser(target.sender_id, { type: 'dm:recalled', payload: { messageId, from: target.sender_id, to: target.recipient_id } });
+        sendToUser(target.recipient_id, { type: 'dm:recalled', payload: { messageId, from: target.sender_id, to: target.recipient_id } });
       }
       break;
     }

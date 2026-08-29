@@ -2593,3 +2593,77 @@ body {
 .about-hint.err {
   color: var(--danger);
 }
+
+/* ===== 好友私聊（DM）：侧栏会话区 / 顶栏好友态 / 好友发消息按钮 ===== */
+.rooms-header.dm-header {
+  margin-top: 10px;
+}
+
+.dm-rooms {
+  flex: 0 0 auto;
+  max-height: 32%;
+  overflow-y: auto;
+  padding: 0 2px;
+}
+
+.dm-avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.dm-avatar-wrap.off .avatar-img,
+.dm-avatar-wrap.off .avatar {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+
+.topbar-dm-avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.topbar-dm-avatar.off .avatar-img,
+.topbar-dm-avatar.off .avatar {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+.dm-online-tag {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-2);
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+
+.dm-online-tag.ok {
+  color: #1a7f37;
+  background: #e8f5ee;
+}
+
+.friend-dm-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--side-text);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.friend-item:hover .friend-dm-btn {
+  opacity: 1;
+}
+
+.friend-dm-btn:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
