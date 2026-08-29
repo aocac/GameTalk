@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { emit } from '@tauri-apps/api/event';
+import { useEffect, useState } from 'react';
+import { emit, listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
 import HotkeyRecorder from './components/HotkeyRecorder';
@@ -28,7 +28,18 @@ const RELEASES_URL = `${REPO_URL}/releases/latest`;
 
 /** 变更：写自身 store + 通知主窗口 */
 function change(
-  key: 'serverUrl' | 'soundEnabled' | 'gameModeEnabled' | 'hotkey' | 'overlayPosition' | 'overlayScale' | 'overlayDurationSec' | 'useProxy' | 'proxyAddress' | 'overlayReset',
+  key:
+    | 'serverUrl'
+    | 'soundEnabled'
+    | 'gameModeEnabled'
+    | 'hotkey'
+    | 'overlayPosition'
+    | 'overlayScale'
+    | 'overlayDurationSec'
+    | 'useProxy'
+    | 'proxyAddress'
+    | 'overlayEnabled'
+    | 'overlayReset',
   value: unknown,
 ): void {
   const s = useSettings.getState() as unknown as Record<string, unknown>;
@@ -38,8 +49,16 @@ function change(
 
 type Section = 'general' | 'game' | 'overlay' | 'about';
 
+/** 初始分类：主窗口打开时可用 ?section= 指定 */
+const VALID_SECTIONS: Section[] = ['general', 'game', 'overlay', 'about'];
+
+function initialSection(): Section {
+  const q = new URLSearchParams(window.location.search).get('section');
+  return VALID_SECTIONS.includes(q as Section) ? (q as Section) : 'general';
+}
+
 export default function SettingsWindow() {
-  const [section, setSection] = useState<Section>('general');
+  const [section, setSection] = useState<Section>(initialSection);
   const settings = useSettings();
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'latest' | 'newer' | 'dev-newer'>('idle');
   const [updateError, setUpdateError] = useState(false);
@@ -79,9 +98,17 @@ export default function SettingsWindow() {
   const navItems: Array<{ key: Section; label: string }> = [
     { key: 'general', label: '通用' },
     { key: 'game', label: '游戏模式' },
-    { key: 'overlay', label: '消息悬浮层' },
+    { key: 'overlay', label: '屏幕覆盖' },
     { key: 'about', label: '关于 GameTalk' },
   ];
+
+  // 主窗口对已打开的设置窗口发起分类跳转（如点状态栏「提示音」时窗口已存在）
+  useEffect(() => {
+    void listen<{ section?: Section }>('settings:navigate', (e) => {
+      const s = e.payload?.section;
+      if (s && VALID_SECTIONS.includes(s)) setSection(s);
+    }).catch(() => undefined);
+  }, []);
 
   return (
     <div className="settings-app">
@@ -170,7 +197,14 @@ export default function SettingsWindow() {
 
         {section === 'overlay' && (
           <>
-            <h3>消息悬浮层</h3>
+            <h3>屏幕覆盖</h3>
+            <label className="field">
+              <span>启用屏幕覆盖（游戏中实时叠加显示新消息）</span>
+              <div className="switch-row">
+                <input type="checkbox" checked={settings.overlayEnabled} onChange={(e) => change('overlayEnabled', e.target.checked)} />
+                {settings.overlayEnabled ? '已开启' : '已关闭'}
+              </div>
+            </label>
             <div className="field">
               <span>显示位置（点击即应用并预览 5 秒）</span>
               <div className="position-chips">
@@ -196,17 +230,7 @@ export default function SettingsWindow() {
               <span className="position-current">当前位置：{POSITION_LABELS[settings.overlayPosition]}</span>
             </div>
             {settings.overlayPosition === 'custom' && (
-              <div className="row-between">
-                <button className="btn ghost small" onClick={() => void emit('settings:adjust-overlay', { active: true })}>
-                  重新拖拽调整
-                </button>
-                <button className="btn ghost small" onClick={() => void emit('settings:adjust-overlay', { active: false })}>
-                  结束调整
-                </button>
-                <button className="btn ghost small" onClick={() => change('overlayReset', true)}>
-                  复位到左上角
-                </button>
-              </div>
+              <span className="field-hint">已进入自定义模式：直接拖动屏幕上的悬浮层调整位置，收到新消息或超时后自动保存退出。</span>
             )}
             <label className="field">
               <span>缩放比例：{Math.round(settings.overlayScale * 100)}%</span>
@@ -260,11 +284,20 @@ export default function SettingsWindow() {
                 <span>检查更新</span>
                 <div className="about-update">
                   {updateState === 'idle' && (
-                    <button className="btn primary small" onClick={() => void checkUpdate()}>
-                      {updateError ? '重试' : '检查更新'}
-                    </button>
+                    <>
+                      <button className="btn primary small" onClick={() => void checkUpdate()}>
+                        {updateError ? '重试' : '检查更新'}
+                      </button>
+                      {updateError && (
+                        <>
+                          <span className="about-hint err">检查失败（GitHub 访问可能受限）</span>
+                          <button className="about-link" onClick={() => open(RELEASES_URL)}>
+                            打开发布页手动查看
+                          </button>
+                        </>
+                      )}
+                    </>
                   )}
-                  {updateError && <span className="about-hint err">检查失败，请确认网络</span>}
                   {updateState === 'checking' && <span className="about-hint">检查中…</span>}
                   {updateState === 'latest' && <span className="about-hint">已是最新版本 ✓</span>}
                   {updateState === 'dev-newer' && (

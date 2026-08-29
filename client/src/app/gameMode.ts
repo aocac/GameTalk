@@ -163,6 +163,12 @@ export async function applyOverlayConfig(
   positionOverride?: OverlayPosition,
   opts?: { move?: boolean },
 ): Promise<void> {
+  // 屏幕覆盖关闭：跳过窗口尺寸/位置操作（不创建窗口），仅仍派发配置事件
+  if (!useSettings.getState().overlayEnabled) {
+    const { overlayScale, overlayDurationSec } = useSettings.getState();
+    await emit('overlay:config', { scale: overlayScale, durationSec: overlayDurationSec });
+    return;
+  }
   const { overlayPosition: storedPosition, overlayScale, overlayCustomPosition, overlayDurationSec } =
     useSettings.getState();
   const overlayPosition = positionOverride ?? storedPosition;
@@ -203,12 +209,15 @@ export async function applyOverlayConfig(
  *  注意：show 由 overlay 窗口自身的 preview 监听执行（与 adjust 退出的 hide
  *  同源同序），这里只发事件——跨 webview 直接 show 会与 hide 竞态导致窗口被隐藏 */
 export async function previewOverlay(): Promise<void> {
+  // 屏幕覆盖关闭：不显示
+  if (!useSettings.getState().overlayEnabled) return;
   await ensureOverlayWindow();
   await emit('overlay:preview');
 }
 
 /** 进入 Overlay 调整模式：可拖拽移动 + 滚轮缩放（overlay 窗口内操作） */
 export async function startOverlayAdjust(): Promise<void> {
+  if (!useSettings.getState().overlayEnabled) return;
   await emit('overlay:adjust', { active: true });
 }
 
@@ -290,6 +299,8 @@ async function unregisterEsc(): Promise<void> {
 
 /** 新消息到达时推给 Overlay 显示（由 chat store 调用）；roomName 标注来源房间，isSelf 标记自己发送 */
 export async function pushOverlayMessage(message: ChatMessage, roomName?: string, isSelf?: boolean): Promise<void> {
+  // 屏幕覆盖关闭：不显示、不创建窗口
+  if (!useSettings.getState().overlayEnabled) return;
   if (!started) {
     return;
   }

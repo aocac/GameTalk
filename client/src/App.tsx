@@ -239,12 +239,15 @@ async function copyImageToClipboard(url: string): Promise<void> {
   }
 }
 
-/** 打开独立设置窗口（Tauri 运行时创建；浏览器调试回退为普通标签页） */
-async function openSettingsWindow(): Promise<void> {
+/** 打开独立设置窗口（Tauri 运行时创建；浏览器调试回退为普通标签页）。
+ *  section：可选初始分类；窗口已存在时发导航事件而不是重建 */
+async function openSettingsWindow(section?: 'general' | 'game' | 'overlay' | 'about'): Promise<void> {
+  const { emit } = await import('@tauri-apps/api/event');
   const existing = await import('@tauri-apps/api/webviewWindow')
     .then(({ WebviewWindow }) => WebviewWindow.getByLabel('settings'))
     .catch(() => null);
   if (existing) {
+    if (section) void emit('settings:navigate', { section }).catch(() => undefined);
     void existing.show();
     void existing.setFocus();
     return;
@@ -253,7 +256,7 @@ async function openSettingsWindow(): Promise<void> {
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
     new WebviewWindow('settings', {
       title: 'GameTalk 设置',
-      url: 'settings.html',
+      url: section ? `settings.html?section=${section}` : 'settings.html',
       width: 820,
       height: 600,
       minWidth: 720,
@@ -262,7 +265,7 @@ async function openSettingsWindow(): Promise<void> {
       resizable: true,
     });
   } catch {
-    window.open('settings.html', '_blank');
+    window.open(section ? `settings.html?section=${section}` : 'settings.html', '_blank');
   }
 }
 
@@ -972,6 +975,9 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         case 'hotkey':
           s.setHotkey(String(value));
           if (s.gameModeEnabled) void gameMode.reapplyHotkey();
+          break;
+        case 'overlayEnabled':
+          s.setOverlayEnabled(!!value);
           break;
         case 'overlayPosition':
           s.setOverlayPosition(value as OverlayPosition);
@@ -1787,10 +1793,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         </footer>
 
         <footer className="status-bar">
-          <button className="status-item" title="在设置中管理" onClick={() => void openSettingsWindow()}>
+          <button className="status-item" title="在设置中管理" onClick={() => void openSettingsWindow('game')}>
             游戏模式 {offline ? '未登录' : gameModeEnabled ? `已开启 · ${hotkey}` : '已关闭'}
           </button>
-          <button className="status-item" title="在设置中管理" onClick={() => void openSettingsWindow()}>
+          <button className="status-item" title="在设置中管理" onClick={() => void openSettingsWindow('general')}>
             提示音 {soundEnabled ? '已开启' : '已关闭'}
           </button>
         </footer>

@@ -27,6 +27,8 @@ export interface AppSettings {
   hotkey: string;
   /** 消息 Overlay 位置预设（custom = 使用拖拽自定义位置） */
   overlayPosition: OverlayPosition;
+  /** 启用屏幕覆盖（游戏中实时叠加显示新消息；默认开启） */
+  overlayEnabled: boolean;
   /** 拖拽自定义位置（overlayPosition='custom' 时生效，物理像素） */
   overlayCustomPosition: OverlayPositionState | null;
   /** 消息 Overlay 缩放比例（0.5 ~ 2.0） */
@@ -42,6 +44,7 @@ export interface AppSettings {
   setGameModeEnabled: (v: boolean) => void;
   setHotkey: (v: string) => void;
   setOverlayPosition: (v: OverlayPosition) => void;
+  setOverlayEnabled: (v: boolean) => void;
   setOverlayCustomPosition: (v: OverlayPositionState | null) => void;
   setOverlayScale: (v: number) => void;
   setOverlayDurationSec: (v: number) => void;
@@ -90,6 +93,7 @@ export const useSettings = create<AppSettings>()(
       gameModeEnabled: true,
       hotkey: DEFAULT_HOTKEY,
       overlayPosition: 'top-left',
+      overlayEnabled: true,
       overlayCustomPosition: null,
       overlayScale: 1,
       overlayDurationSec: 6,
@@ -100,6 +104,7 @@ export const useSettings = create<AppSettings>()(
       setGameModeEnabled: (gameModeEnabled) => set({ gameModeEnabled }),
       setHotkey: (hotkey) => set({ hotkey: hotkey.trim() || DEFAULT_HOTKEY }),
       setOverlayPosition: (overlayPosition) => set({ overlayPosition }),
+      setOverlayEnabled: (overlayEnabled) => set({ overlayEnabled }),
       setOverlayCustomPosition: (overlayCustomPosition) => set({ overlayCustomPosition }),
       setOverlayScale: (overlayScale) => set({ overlayScale: Math.min(2, Math.max(0.5, overlayScale)) }),
       setOverlayDurationSec: (overlayDurationSec) => set({ overlayDurationSec: Math.min(30, Math.max(2, overlayDurationSec)) }),
