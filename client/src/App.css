@@ -2279,3 +2279,17 @@ body {
 .messages::-webkit-scrollbar-thumb:hover {
   background: var(--text-3);
 }
+
+/* ===== v0.4.3 反馈：分组消息隐藏头像不响应指针 / 版本号 ===== */
+
+/* 连发分组时头像占位不可见也不可交互（防右键空白处误弹成员菜单） */
+.message.grouped .message-avatar {
+  pointer-events: none;
+}
+
+.settings-version {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+  padding-top: 2px;
+}

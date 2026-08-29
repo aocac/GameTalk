@@ -123,6 +123,17 @@ describe('gameMode manager', () => {
     expect(pos.y).toBe(1080 - 64 - 48);
   });
 
+  it('hotkey press again hides the input window (toggle, Esc unaffected)', async () => {
+    await gameMode.startGameMode();
+    // 归一化到隐藏态（前序用例可能已把模块级 visible 标记置真）
+    await gameMode.hideInputWindow();
+    vi.clearAllMocks();
+    fireHotkey('Ctrl+Shift+Space');
+    await vi.waitFor(() => expect(mockWindow.show).toHaveBeenCalled());
+    fireHotkey('Ctrl+Shift+Space');
+    await vi.waitFor(() => expect(mockWindow.hide).toHaveBeenCalled());
+  });
+
   it('game-input-send calls onSend and hides input window', async () => {
     const sent: string[] = [];
     gameMode.setOnSend((t) => sent.push(t));

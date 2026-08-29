@@ -219,7 +219,6 @@ export async function stopOverlayAdjust(): Promise<void> {
 
 /** 呼出输入框（全局快捷键触发）：定位底部居中 + 显示 + 聚焦 */
 export async function showInputWindow(): Promise<void> {
-  // 先注册全局 ESC（确保用户紧接着按 ESC 时已就绪，避免注册未完成的时序窗口）
   await registerEsc();
   await ensureInputWindow();
   const win = await getInputWindow();
@@ -232,6 +231,7 @@ export async function showInputWindow(): Promise<void> {
   const y = mon.position.y + mon.size.height - INPUT_HEIGHT * dpr - INPUT_BOTTOM_MARGIN * dpr;
   await win.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
   await win.show();
+  inputVisible = true;
   // Windows 上 show 后需要一点时间才能聚焦
   setTimeout(() => void win.setFocus(), 60);
 }
@@ -239,9 +239,13 @@ export async function showInputWindow(): Promise<void> {
 export async function hideInputWindow(): Promise<void> {
   const win = await getInputWindow();
   await unregisterEsc();
+  inputVisible = false;
   if (!win) return;
   await win.hide();
 }
+
+/** 输入框当前是否显示（呼出快捷键反呼出判定用；所有显隐都经过上面两个函数，状态不会漂移） */
+let inputVisible = false;
 
 // ===== 全局 ESC（输入框显示期间生效，隐藏后立即注销，不干扰游戏内 ESC）=====
 // 注册/注销必须串行执行，否则快速连续呼出时 register/unregister 竞态
@@ -318,7 +322,10 @@ async function registerHotkey(): Promise<void> {
     }
     if (await isRegistered(hotkey)) await unregister(hotkey);
     await register(hotkey, (event) => {
-      if (event.state === 'Pressed') void showInputWindow();
+      if (event.state === 'Pressed') {
+        // 再按一次呼出键 = 关闭输入框（与 ESC 关闭不冲突）
+        void (inputVisible ? hideInputWindow() : showInputWindow());
+      }
     });
     registeredHotkey = hotkey;
   } catch (e) {

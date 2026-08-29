@@ -50,7 +50,10 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SERVER_URL = 'http://127.0.0.1:8787';
-export const DEFAULT_HOTKEY = 'Ctrl+Shift+Space';
+/** v0.4.2 起默认快捷键：Alt+G（原 Ctrl+Shift+Space 过长且 Space 在游戏内常用） */
+export const DEFAULT_HOTKEY = 'Alt+G';
+/** 旧默认快捷键：持久化了该值的用户在迁移时升级到新默认（自定义键不受影响） */
+export const LEGACY_DEFAULT_HOTKEY = 'Ctrl+Shift+Space';
 export const OVERLAY_BASE_WIDTH = 380;
 export const OVERLAY_BASE_HEIGHT = 180;
 
@@ -105,6 +108,13 @@ export const useSettings = create<AppSettings>()(
     }),
     {
       name: 'gametalk-settings',
+      version: 1,
+      migrate: (persisted) => {
+        const p = persisted as Partial<AppSettings>;
+        // 仍为旧默认键的用户自动切到新默认（自定义过快捷键的不动）
+        if (p.hotkey === LEGACY_DEFAULT_HOTKEY) p.hotkey = DEFAULT_HOTKEY;
+        return p as AppSettings;
+      },
       storage: typeof window !== 'undefined' ? createJSONStorage(() => localStorage) : createJSONStorage(() => memoryStorage),
     },
   ),

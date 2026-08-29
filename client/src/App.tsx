@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactElement } from 'react';
+import { Fragment, useLayoutEffect, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -13,6 +13,7 @@ import { useSettings, applyProxySetting, type OverlayPosition } from './app/sett
 import * as gameMode from './app/gameMode';
 import HotkeyRecorder from './components/HotkeyRecorder';
 import appIcon from './assets/app-icon.png';
+import pkg from '../package.json';
 
 function Avatar({ name, url, size = 28 }: { name: string; url?: string | null; size?: number }) {
   if (url) {
@@ -54,6 +55,26 @@ function StatusDot({ status }: { status: string }) {
       <span className={`dot ${s.cls}`} />
       {s.label}
     </span>
+  );
+}
+
+/** 右键菜单容器：渲染后按实际尺寸夹紧视口边界（防菜单底部/右侧被窗口裁切） */
+function CtxMenu({ x, y, children }: { x: number; y: number; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: x, top: y });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPos({
+      left: Math.max(8, Math.min(x, window.innerWidth - r.width - 8)),
+      top: Math.max(8, Math.min(y, window.innerHeight - r.height - 8)),
+    });
+  }, [x, y]);
+  return (
+    <div ref={ref} className="ctx-menu" style={{ left: pos.left, top: pos.top }}>
+      {children}
+    </div>
   );
 }
 
@@ -681,6 +702,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         <button className="btn primary block" onClick={closeModal}>
           完成
         </button>
+        <div className="settings-version">GameTalk v{pkg.version}</div>
       </div>
     </div>
   );
@@ -1816,7 +1838,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       {roomMenu && (
         <>
           <div className="menu-mask" onClick={() => setRoomMenu(null)} />
-          <div className="ctx-menu" style={{ left: roomMenu.x, top: roomMenu.y }}>
+          <CtxMenu x={roomMenu.x} y={roomMenu.y}>
             <button
               className="ctx-menu-item"
               onClick={async () => {
@@ -1841,13 +1863,13 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                 {confirmDeleteInMenu ? '确认删除？' : '删除房间'}
               </button>
             )}
-          </div>
+          </CtxMenu>
         </>
       )}
       {memberMenu && activeRoom && (
         <>
           <div className="menu-mask" onClick={() => setMemberMenu(null)} />
-          <div className="ctx-menu" style={{ left: memberMenu.x, top: memberMenu.y }}>
+          <CtxMenu x={memberMenu.x} y={memberMenu.y}>
             <div className="ctx-menu-title">{memberMenu.member.username}</div>
             {memberMenu.member.id !== me?.id && (
               <button
@@ -1933,13 +1955,13 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   {memberMenu.confirmKick ? '确认移出？' : '移出房间'}
                 </button>
               )}
-          </div>
+          </CtxMenu>
         </>
       )}
       {msgMenu && activeRoom && (
         <>
           <div className="menu-mask" onClick={() => setMsgMenu(null)} />
-          <div className="ctx-menu" style={{ left: msgMenu.x, top: msgMenu.y }}>
+          <CtxMenu x={msgMenu.x} y={msgMenu.y}>
             {!!msgMenu.msg.text && (
               <button
                 className="ctx-menu-item"
@@ -1982,7 +2004,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                 {msgMenu.msg.userId === me?.id ? '撤回' : '撤回（房主）'}
               </button>
             )}
-          </div>
+          </CtxMenu>
         </>
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
@@ -2046,6 +2068,9 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <img
             src={lightbox}
             alt="图片预览"
+            draggable={false}
+            // 阻止原生图片拖拽：浏览器接管后 move 事件停发（指针变禁止、松手才更新位置）
+            onDragStart={(e) => e.preventDefault()}
             style={{ transform: `translate(${lightboxOffset.x}px, ${lightboxOffset.y}px) scale(${lightboxZoom})`, cursor: lightboxZoom > 1 ? 'grab' : 'zoom-out' }}
             onClick={(e) => e.stopPropagation()}
           />

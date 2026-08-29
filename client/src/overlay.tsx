@@ -352,7 +352,8 @@ function OverlayApp() {
               <MiniAvatar name={m.username} url={m.avatarUrl} />
               <span className="overlay-name">{m.isSelf ? '我' : m.username}</span>
               {m.roomName && <span className="overlay-room">#{m.roomName}</span>}
-              <span className="overlay-text">{m.kind === 'image' ? '[图片]' : m.text}</span>
+              {/* 图文消息显示文字（图是附件）；纯图显示占位 */}
+              <span className="overlay-text">{m.text || (m.kind === 'image' ? '[图片]' : '')}</span>
             </div>
           ))}
         </>
