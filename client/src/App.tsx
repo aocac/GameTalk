@@ -55,12 +55,14 @@ function StatusDot({ status }: { status: string }) {
   );
 }
 
-/** 撤回行文案：操作者 = 我 →「你撤回了…」；操作者 = 作者 →「XX撤回了一条消息」；房主代撤 →「房主撤回了 XX 的消息」 */
+/** 撤回行文案：代撤（操作者≠作者）一律带出被撤人——自己代撤「你撤回了 XX 的消息」，房主代撤「房主撤回了 XX 的消息」；作者自己撤「你/XX撤回了一条消息」 */
 function recallLineOf(m: { userId: string; username: string; recalledBy?: { id: string; username: string } }, meId?: string): string {
   const op = m.recalledBy ?? { id: m.userId, username: m.username };
+  if (op.id !== m.userId) {
+    return op.id === meId ? `你撤回了 ${m.username} 的消息` : `${op.username}撤回了 ${m.username} 的消息`;
+  }
   if (meId && op.id === meId) return '你撤回了一条消息';
-  if (op.id === m.userId) return `${op.username}撤回了一条消息`;
-  return `${op.username}撤回了 ${m.username} 的消息`;
+  return `${op.username}撤回了一条消息`;
 }
 
 /** 右键菜单容器：渲染后按实际尺寸夹紧视口边界（防菜单底部/右侧被窗口裁切） */
@@ -1110,39 +1112,35 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       if (st.activeDmPeerId) st.sendDm(text);
       else st.sendMessage(text);
     });
-    // 快捷输入框的发送目标：当前会话（私聊 → @好友，房间 → #房间名）
-    gameMode.setInputTargetProvider(() => {
-      const st = useChat.getState();
-      if (st.activeDmPeerId) {
-        const f = useFriends.getState().friends.find((x) => x.id === st.activeDmPeerId);
-        return { name: f?.username ?? '私聊', prefix: '@' };
-      }
-      const room = st.rooms.find((r) => r.id === st.activeRoomId) ?? st.rooms[0];
-      return { name: room?.name ?? '未选择房间', prefix: '#' };
-    });
-    // 快捷输入框里左右箭头切换发送目标（房间 ∪ 好友私聊，循环）；随本 effect 卸载解除
-    let offCycle: (() => void) | undefined;
-    let disposed = false;
-    void listen<{ dir?: number }>('game-input-cycle', (e) => {
+    // 快捷输入框的发送目标：全部房间 ∪ 全部好友私聊，当前会话高亮；呼出时下发、点选后回发
+    const buildGameTargets = (): gameMode.InputTargetContext => {
       const st = useChat.getState();
       const friends = useFriends.getState().friends;
-      const targets: Array<{ kind: 'room' | 'dm'; id: string; name: string }> = [
+      const targets: gameMode.InputTarget[] = [
         ...st.rooms.map((r) => ({ kind: 'room' as const, id: r.id, name: r.name })),
         ...friends.map((f) => ({ kind: 'dm' as const, id: f.id, name: f.username })),
       ];
-      if (targets.length === 0) return;
-      const curIdx = st.activeDmPeerId
-        ? targets.findIndex((t) => t.kind === 'dm' && t.id === st.activeDmPeerId)
-        : targets.findIndex((t) => t.kind === 'room' && t.id === st.activeRoomId);
-      const dir = e.payload?.dir === -1 ? -1 : 1;
-      const next = targets[((curIdx < 0 ? 0 : curIdx) + dir + targets.length) % targets.length];
-      if (next.kind === 'dm') void st.openDm(next.id);
-      else void st.selectRoom(next.id);
-      // 会话切换是异步的，直接用目标信息立即回发上下文（input 窗口即时刷新）
-      void gameMode.emitInputTarget({ name: next.name, prefix: next.kind === 'dm' ? '@' : '#' });
+      const curId = st.activeDmPeerId ?? st.activeRoomId ?? st.rooms[0]?.id ?? null;
+      const curKind = st.activeDmPeerId ? 'dm' : 'room';
+      const current = targets.find((t) => t.kind === curKind && t.id === curId) ?? null;
+      return { current, targets };
+    };
+    gameMode.setInputTargetProvider(buildGameTargets);
+    // input 窗口点选目标 → 切换会话并立即回发上下文（会话切换是异步的，不等它）
+    let offSelect: (() => void) | undefined;
+    let disposed = false;
+    void listen<{ kind?: 'room' | 'dm'; id?: string }>('game-input-select', (e) => {
+      const kind = e.payload?.kind;
+      const id = e.payload?.id;
+      if ((kind !== 'room' && kind !== 'dm') || !id) return;
+      const st = useChat.getState();
+      if (kind === 'dm') void st.openDm(id);
+      else void st.selectRoom(id);
+      const picked = buildGameTargets().targets.find((t) => t.kind === kind && t.id === id);
+      if (picked) void gameMode.emitInputTarget({ current: picked, targets: buildGameTargets().targets });
     }).then((off) => {
       if (disposed) off();
-      else offCycle = off;
+      else offSelect = off;
     });
     if (gameModeEnabled) {
       void gameMode.startGameMode();
@@ -1151,7 +1149,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     }
     return () => {
       disposed = true;
-      offCycle?.();
+      offSelect?.();
       if (gameModeEnabled) void gameMode.stopGameMode();
     };
   }, [gameModeEnabled]);
@@ -1368,9 +1366,9 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   </div>
                   {previewByRoom[r.id] && (
                     <div className="room-preview">
-                      {/* 撤回预览 QQ 式：无冒号（「XX撤回了一条消息」） */}
-                      {previewByRoom[r.id].text === '撤回了一条消息'
-                        ? `${previewByRoom[r.id].username}撤回了一条消息`
+                      {/* 撤回预览 QQ 式：无冒号；代撤文案由 store 生成（「撤回了 XX 的消息」），此处拼操作者名 */}
+                      {previewByRoom[r.id].text.startsWith('撤回了')
+                        ? `${previewByRoom[r.id].userId === me?.id ? '你' : previewByRoom[r.id].username}${previewByRoom[r.id].text}`
                         : `${previewByRoom[r.id].username}：${previewByRoom[r.id].text}`}
                     </div>
                   )}

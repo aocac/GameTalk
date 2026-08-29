@@ -29,12 +29,21 @@ const OVERLAY_MARGIN = 20;
 
 
 type SendHandler = (text: string) => void;
-/** 快捷输入框当前发送目标（房间/私聊名），主窗口提供、呼出时下发给 input 窗口展示 */
-type TargetProvider = () => { name: string; prefix: string };
+/** 快捷输入框目标上下文：current=当前目标，targets=全部可切换目标（房间 ∪ 好友私聊） */
+export interface InputTarget {
+  kind: 'room' | 'dm';
+  id: string;
+  name: string;
+}
+export interface InputTargetContext {
+  current: InputTarget | null;
+  targets: InputTarget[];
+}
+type TargetProvider = () => InputTargetContext;
 
 let started = false;
 let onSend: SendHandler = () => undefined;
-let targetProvider: TargetProvider = () => ({ name: '未选择', prefix: '#' });
+let targetProvider: TargetProvider = () => ({ current: null, targets: [] });
 const unlisteners: UnlistenFn[] = [];
 
 export function setOnSend(handler: SendHandler): void {
@@ -45,15 +54,14 @@ export function setInputTargetProvider(provider: TargetProvider): void {
   targetProvider = provider;
 }
 
-/** 把当前发送目标下发给 input 窗口（呼出时调用，读 provider） */
+/** 把目标上下文下发给 input 窗口（呼出时读 provider；切换后由主窗口直接回发） */
 export async function pushInputTargetContext(): Promise<void> {
-  const { name, prefix } = targetProvider();
-  await emit('game-input-context', { name, prefix });
+  await emit('game-input-context', targetProvider());
 }
 
-/** 直接下发指定目标（切换目标后立即回发，不等异步的会话切换完成） */
-export async function emitInputTarget(target: { name: string; prefix: string }): Promise<void> {
-  await emit('game-input-context', target);
+/** 直接下发目标上下文（切换后立即回发，不等异步的会话切换完成） */
+export async function emitInputTarget(context: InputTargetContext): Promise<void> {
+  await emit('game-input-context', context);
 }
 
 function getInputWindow(): Promise<WebviewWindow | null> {

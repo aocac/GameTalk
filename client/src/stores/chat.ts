@@ -553,7 +553,7 @@ export const useChat = create<ChatState>()((set, get) => ({
                 }
               : {};
             const preview = s.previewByRoom[msg.payload.roomId];
-            // 被撤回的正是侧栏预览那条 → 预览作者换成操作者、文案撤回（渲染层拼「XX撤回了一条消息」）
+            // 被撤回的正是侧栏预览那条 → 预览作者换成操作者；代撤时文案带出被撤人（渲染层拼「操作者 + 撤回了 作者 的消息」）
             const previewPatch =
               preview?.id === msg.payload.messageId
                 ? {
@@ -563,7 +563,10 @@ export const useChat = create<ChatState>()((set, get) => ({
                         ...preview,
                         userId: operator?.id ?? preview.userId,
                         username: operator?.username ?? preview.username,
-                        text: '撤回了一条消息',
+                        text:
+                          operator && operator.id !== preview.userId
+                            ? `撤回了 ${preview.username} 的消息`
+                            : '撤回了一条消息',
                       },
                     },
                   }
@@ -899,10 +902,13 @@ export const useChat = create<ChatState>()((set, get) => ({
               ...s.previewByRoom,
               [r.id]: {
                 id: last.id,
-                // 撤回消息的预览作者 = 撤回操作者（房主代撤），而非消息作者
+                // 撤回消息的预览作者 = 撤回操作者（房主代撤），而非消息作者；代撤文案带出被撤人
                 username: last.recalledBy?.username ?? last.username,
                 userId: last.recalledBy?.id ?? last.userId,
-                text: previewTextOf(last),
+                text:
+                  last.recalled && last.recalledBy && last.recalledBy.id !== last.userId
+                    ? `撤回了 ${last.username} 的消息`
+                    : previewTextOf(last),
                 createdAt: last.createdAt,
               },
             },

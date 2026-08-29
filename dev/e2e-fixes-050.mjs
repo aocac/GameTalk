@@ -75,14 +75,20 @@ const run = async () => {
   });
   await sleep(900);
 
-  // B 端撤回行文案：「v50_a_xxx撤回了 v50_b_xxx 的消息」
+  // B 端撤回行文案：「v50_a_xxx撤回了 v50_b_xxx 的消息」；A（房主）端「你撤回了 v50_b_xxx 的消息」
   const bRecallLine = await B.evaluate(() => document.querySelector('.recall-line')?.textContent ?? 'NO_LINE');
+  const aRecallLine = await A.evaluate(() => document.querySelector('.recall-line')?.textContent ?? 'NO_LINE');
+  const aPreviewRecall = await A.evaluate(() => {
+    const p = [...document.querySelectorAll('.rooms:not(.dm-rooms) .room-preview')][0];
+    return p?.textContent ?? 'NO_PREVIEW';
+  });
   // 房间预览（最后一条被撤）：作者应为房主 A
   const bPreview = await B.evaluate(() => {
     const p = [...document.querySelectorAll('.rooms:not(.dm-rooms) .room-preview')][0];
     return p?.textContent ?? 'NO_PREVIEW';
   });
   console.log('[B recall-line]', bRecallLine);
+  console.log('[A recall-line]', aRecallLine, '| [A preview]', aPreviewRecall);
   console.log('[B preview]', bPreview);
 
   // 编辑同步预览：A 发一条 → 预览=原文 → A 编辑 → 预览变新文本
@@ -116,8 +122,10 @@ const run = async () => {
   const bellGone = await B.evaluate(() => !document.querySelector('.bell-btn') && !document.querySelector('.notif-panel'));
 
   const asserts = [
-    ['房主代撤文案 =「房主撤回了 群员 的消息」', bRecallLine === `${UA}撤回了 ${UB} 的消息`],
-    ['撤回后房间预览作者 = 房主', bPreview === `${UA}撤回了一条消息`],
+    ['房主代撤文案(群员端) =「房主撤回了 群员 的消息」', bRecallLine === `${UA}撤回了 ${UB} 的消息`],
+    ['房主代撤文案(房主端) =「你撤回了 群员 的消息」', aRecallLine === `你撤回了 ${UB} 的消息`],
+    ['撤回预览(群员端) =「房主撤回了 群员 的消息」', bPreview === `${UA}撤回了 ${UB} 的消息`],
+    ['撤回预览(房主端) =「你撤回了 群员 的消息」', aPreviewRecall === `你撤回了 ${UB} 的消息`],
     ['编辑前预览 = 原文', aPreviewBefore === `${UA}：预览原文ABC`],
     ['A 编辑后预览同步新文本', aPreviewAfter === `${UA}：预览改后XYZ`],
     ['B 编辑后预览同步新文本', bPreviewAfter === `${UA}：预览改后XYZ`],
