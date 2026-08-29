@@ -518,6 +518,106 @@ function MemberCardModal({
   );
 }
 
+/** 好友资料页（QQ 式，主区域展示）：大头像 / 昵称 / 在线 / ID 复制 / 签名 / 注册时间 / 发消息 / 删除好友 */
+function FriendProfilePane({
+  friend,
+  onMessage,
+  onRemove,
+  onClose,
+}: {
+  friend: api.Friend;
+  onMessage: () => void;
+  onRemove: () => void;
+  onClose: () => void;
+}) {
+  const { token } = useAuth();
+  const [profile, setProfile] = useState<api.MemberProfile | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    if (token) {
+      api
+        .getUserProfile(token, friend.id)
+        .then((r) => {
+          if (!cancelled) setProfile(r.user);
+        })
+        .catch(() => {
+          if (!cancelled) setFailed(true);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [token, friend.id, reloadKey]);
+
+  const handleRemove = () => {
+    if (!confirmRemove) {
+      setConfirmRemove(true);
+      timer.current = setTimeout(() => setConfirmRemove(false), 3000);
+      return;
+    }
+    if (timer.current) clearTimeout(timer.current);
+    onRemove();
+    onClose();
+  };
+
+  return (
+    <div className="friend-profile-pane">
+      <div className="fpp-card">
+        <div className="fpp-hero">
+          <Avatar name={friend.username} url={profile?.avatarUrl ?? friend.avatarUrl} size={72} />
+          <div className="fpp-hero-main">
+            <div className="fpp-name">
+              {friend.username}
+              <span className={`dm-online-tag ${friend.online ? 'ok' : ''}`}>{friend.online ? '在线' : '离线'}</span>
+            </div>
+            <button
+              className="id-row"
+              title="点击复制 ID"
+              onClick={async () => {
+                if (await copyText(friend.id)) {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }
+              }}
+            >
+              <span className="user-id">#{friend.id.slice(0, 8)}</span>
+              <span className="id-copy">{copied ? '已复制 ✓' : '复制 ID'}</span>
+            </button>
+          </div>
+        </div>
+        <div className="card-bio">
+          {failed ? (
+            <span className="card-failed">
+              资料获取失败（服务器版本过旧或网络异常）
+              <button className="card-retry" onClick={() => setReloadKey((k) => k + 1)}>
+                重试
+              </button>
+            </span>
+          ) : (
+            profile?.bio || friend.bio || '这个人很神秘，什么都没有写'
+          )}
+        </div>
+        {profile && <div className="card-meta">注册于 {new Date(profile.createdAt).toLocaleDateString()}</div>}
+        <div className="fpp-actions">
+          <button className="btn primary" onClick={onMessage}>
+            发消息
+          </button>
+          <button className={`btn ghost danger ${confirmRemove ? 'confirming' : ''}`} onClick={handleRemove}>
+            {confirmRemove ? '确认删除好友？' : '删除好友'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LoginView({ onOffline }: { onOffline: () => void }) {
   const { login, register, busy, error, clearError } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -693,6 +793,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   } = useChat();
   const { user, logout } = useAuth();
   const { gameModeEnabled, hotkey, soundEnabled, notifyLevel } = useSettings();
+  /** 快捷输入框的独立发送目标（null = 跟随主窗口当前会话；呼出时重置） */
+  const gameTargetRef = useRef<gameMode.InputTarget | null>(null);
   // 输入草稿按会话（房间/私聊）独立保存：切换会话互不串扰，回来还在
   const [draftMap, setDraftMap] = useState<Record<string, string>>({});
   const convKey = activeDmPeerId ? `dm:${activeDmPeerId}` : `room:${activeRoomId ?? 'none'}`;
@@ -711,12 +813,17 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [cardMember, setCardMember] = useState<{ member: UserBrief; from: 'room' | 'friend' } | null>(null);
   /** 好友右键菜单：查看资料 / 删除好友（二次确认） */
   const [friendMenu, setFriendMenu] = useState<{ friend: api.Friend; x: number; y: number; confirmRemove: boolean } | null>(null);
+  /** 私聊消息头像右键菜单：查看资料 / 删除好友（二次确认） */
+  const [dmMsgMenu, setDmMsgMenu] = useState<{ member: UserBrief; x: number; y: number; confirmRemove: boolean } | null>(null);
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   /** 侧栏双 Tab（QQ 式）：消息=房间列表 / 好友=好友管理 */
   const [sideTab, setSideTab] = useState<'rooms' | 'friends'>('rooms');
   const [addFriendInput, setAddFriendInput] = useState('');
+  /** 好友 Tab：选中的好友（主区域显示 QQ 式资料页）与「添加好友」折叠态 */
+  const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null);
+  const [showAddFriend, setShowAddFriend] = useState(false);
   /** @自动补全：start=草稿中 @ 的位置，caret=当前光标 */
   const [mentionQuery, setMentionQuery] = useState<{ start: number; token: string; caret: number } | null>(null);
   const [mentionPick, setMentionPick] = useState(0);
@@ -779,6 +886,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   );
   const onlineCount = members.filter((m) => m.online).length;
   const activeSubscribed = !!activeRoomId && subscribedRoomIds.includes(activeRoomId);
+  const selectedFriend = selectedFriendId ? (friends.find((f) => f.id === selectedFriendId) ?? null) : null;
   // 侧栏私聊会话：仅好友（删好友即隐藏会话）；有预览或正在会话才显示，按最后消息时间倒序
   const dmSidebar = friends
     .filter((f) => dmPreviews[f.id] || f.id === activeDmPeerId)
@@ -1108,11 +1216,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   useEffect(() => {
     gameMode.setOnSend((text) => {
       const st = useChat.getState();
-      // 当前在私聊会话 → 发到该私聊；否则走房间（activeRoomId 优先，无房间自动选第一个）
-      if (st.activeDmPeerId) st.sendDm(text);
+      // 快捷输入框有独立目标（用户点选过）→ 按目标发送且不扰动主窗口；否则跟随主窗口当前会话
+      const t = gameTargetRef.current;
+      if (t?.kind === 'dm') st.sendDm(text, undefined, t.id);
+      else if (t?.kind === 'room') st.sendMessage(text, undefined, t.id);
+      else if (st.activeDmPeerId) st.sendDm(text);
       else st.sendMessage(text);
     });
-    // 快捷输入框的发送目标：全部房间 ∪ 全部好友私聊，当前会话高亮；呼出时下发、点选后回发
+    // 快捷输入框的发送目标：全部房间 ∪ 全部好友私聊。目标独立于主窗口会话——
+    // 点选只改 gameTarget（不影响主窗口正在看的会话）；每次呼出重置为主窗口当前会话
     const buildGameTargets = (): gameMode.InputTargetContext => {
       const st = useChat.getState();
       const friends = useFriends.getState().friends;
@@ -1122,22 +1234,22 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       ];
       const curId = st.activeDmPeerId ?? st.activeRoomId ?? st.rooms[0]?.id ?? null;
       const curKind = st.activeDmPeerId ? 'dm' : 'room';
-      const current = targets.find((t) => t.kind === curKind && t.id === curId) ?? null;
+      const current = gameTargetRef.current ?? (targets.find((t) => t.kind === curKind && t.id === curId) ?? null);
       return { current, targets };
     };
     gameMode.setInputTargetProvider(buildGameTargets);
-    // input 窗口点选目标 → 切换会话并立即回发上下文（会话切换是异步的，不等它）
+    gameMode.setOnInputShown(() => {
+      gameTargetRef.current = null;
+    });
+    // input 窗口点选目标：只更新独立目标并回发（不切主窗口会话）
     let offSelect: (() => void) | undefined;
     let disposed = false;
     void listen<{ kind?: 'room' | 'dm'; id?: string }>('game-input-select', (e) => {
       const kind = e.payload?.kind;
       const id = e.payload?.id;
       if ((kind !== 'room' && kind !== 'dm') || !id) return;
-      const st = useChat.getState();
-      if (kind === 'dm') void st.openDm(id);
-      else void st.selectRoom(id);
-      const picked = buildGameTargets().targets.find((t) => t.kind === kind && t.id === id);
-      if (picked) void gameMode.emitInputTarget({ current: picked, targets: buildGameTargets().targets });
+      gameTargetRef.current = { kind, id, name: buildGameTargets().targets.find((t) => t.kind === kind && t.id === id)?.name ?? '' };
+      void gameMode.emitInputTarget(buildGameTargets());
     }).then((off) => {
       if (disposed) off();
       else offSelect = off;
@@ -1274,7 +1386,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   onClick={() => void openDm(friend.id)}
                   title={friend.online ? '在线' : '离线'}
                 >
-                  <span className={`dm-avatar-wrap ${friend.online ? '' : 'off'}`}>
+                  <span className={`dm-avatar-wrap ${friend.online ? 'online' : 'off'}`}>
                     <Avatar name={friend.username} url={friend.avatarUrl} size={34} />
                   </span>
                   <div className="room-main">
@@ -1380,21 +1492,30 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         </>
         ) : (
         <div className="friends-panel">
-          <div className="friends-add">
-            <input
-              value={addFriendInput}
-              placeholder="输入用户名或 #ID 加好友"
-              maxLength={32}
-              onChange={(e) => setAddFriendInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                if (e.key === 'Enter' && addFriendInput.trim()) void handleAddFriend();
-              }}
-            />
-            <button className="btn primary small" disabled={!addFriendInput.trim()} onClick={() => void handleAddFriend()}>
-              加好友
-            </button>
+          <div className="friends-header">
+            <span>好友管理</span>
+            <span className="friends-count">{friends.length} 位好友</span>
           </div>
+          <button type="button" className={`friends-add-toggle ${showAddFriend ? 'open' : ''}`} onClick={() => setShowAddFriend((v) => !v)}>
+            {showAddFriend ? '收起添加框' : '＋ 添加好友'}
+          </button>
+          {showAddFriend && (
+            <div className="friends-add">
+              <input
+                value={addFriendInput}
+                placeholder="输入用户名或 #ID 加好友"
+                maxLength={32}
+                onChange={(e) => setAddFriendInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                  if (e.key === 'Enter' && addFriendInput.trim()) void handleAddFriend();
+                }}
+              />
+              <button className="btn primary small" disabled={!addFriendInput.trim()} onClick={() => void handleAddFriend()}>
+                加好友
+              </button>
+            </div>
+          )}
           {friendNotice && <div className="friends-notice ok" onClick={clearNotice}>{friendNotice}</div>}
           {friendsError && <div className="friends-notice err" onClick={clearNotice}>{friendsError}</div>}
           {friendIncoming.length > 0 && (
@@ -1430,15 +1551,16 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             {friends.map((f) => (
               <div
                 key={f.id}
-                className={`friend-item ${f.online ? 'online' : 'offline'}`}
-                title="点击私聊 · 右键更多操作"
-                onClick={() => {
-                  // QQ/微信式：单击好友直接进入私聊
+                className={`friend-item ${f.online ? 'online' : 'offline'} ${f.id === selectedFriendId ? 'selected' : ''}`}
+                title="单击查看资料 · 双击发消息 · 右键更多操作"
+                onClick={() => setSelectedFriendId(f.id)}
+                onDoubleClick={() => {
                   setSideTab('rooms');
                   void openDm(f.id);
                 }}
                 onContextMenu={(e) => {
                   e.preventDefault();
+                  setSelectedFriendId(f.id);
                   setFriendMenu({
                     friend: f,
                     x: Math.min(e.clientX, window.innerWidth - 170),
@@ -1513,6 +1635,26 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       </aside>
 
       <main className="main">
+        {!offline && sideTab === 'friends' ? (
+          selectedFriend ? (
+            <FriendProfilePane
+              key={selectedFriend.id}
+              friend={selectedFriend}
+              onMessage={() => {
+                setSideTab('rooms');
+                void openDm(selectedFriend.id);
+              }}
+              onRemove={() => void removeFriendById(selectedFriend.id)}
+              onClose={() => setSelectedFriendId(null)}
+            />
+          ) : (
+            <div className="friend-pane-empty">
+              <p className="empty-title">好友资料</p>
+              <p className="empty-sub">在左侧选择一位好友查看资料；双击好友可直接发消息。</p>
+            </div>
+          )
+        ) : (
+          <>
         <header className="topbar">
           <div className="topbar-title">
             {activeDm && !offline ? (
@@ -1687,10 +1829,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                       if (offline || m.pending) return;
                       e.preventDefault();
                       e.stopPropagation();
-                      // DM：对方头像右键直接看资料卡片（好友上下文，无房间管理项）
+                      // DM：对方头像右键 → 二级菜单（查看资料 / 删除好友）
                       if (activeDm) {
                         if (m.userId !== me?.id) {
-                          setCardMember({ member: { id: m.userId, username: m.username, avatarUrl: m.avatarUrl ?? null }, from: 'friend' });
+                          setDmMsgMenu({
+                            member: { id: m.userId, username: m.username, avatarUrl: m.avatarUrl ?? null },
+                            x: Math.min(e.clientX, window.innerWidth - 170),
+                            y: Math.min(e.clientY, window.innerHeight - 110),
+                            confirmRemove: false,
+                          });
                         }
                         return;
                       }
@@ -2026,10 +2173,12 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             通知 {soundEnabled ? '提示音开' : '提示音关'} · {notifyLevel === 'all' ? '全部通知' : notifyLevel === 'mention' ? '仅@通知' : '不通知'}
           </button>
         </footer>
+          </>
+        )}
       </main>
 
-      {/* 成员面板（QQ 式花名册）：离线成员置灰保留 + 房主标注 + 房主管理；DM 会话不显示 */}
-      {!offline && activeRoom && !activeDm && (
+      {/* 成员面板（QQ 式花名册）：离线成员置灰保留 + 房主标注 + 房主管理；DM 会话与好友 Tab 不显示 */}
+      {!offline && sideTab === 'rooms' && activeRoom && !activeDm && (
         <aside className="members-panel">
           <div className="members-header">
             <span>成员</span>
@@ -2309,6 +2458,36 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               }}
             >
               {friendMenu.confirmRemove ? '确认删除好友？' : '删除好友'}
+            </button>
+          </CtxMenu>
+        </>
+      )}
+      {dmMsgMenu && (
+        <>
+          <div className="menu-mask" onClick={() => setDmMsgMenu(null)} />
+          <CtxMenu x={dmMsgMenu.x} y={dmMsgMenu.y}>
+            <button
+              className="ctx-menu-item"
+              onClick={() => {
+                setCardMember({ member: dmMsgMenu.member, from: 'friend' });
+                setDmMsgMenu(null);
+              }}
+            >
+              查看资料
+            </button>
+            <button
+              className="ctx-menu-item danger"
+              onClick={() => {
+                if (!dmMsgMenu.confirmRemove) {
+                  setDmMsgMenu({ ...dmMsgMenu, confirmRemove: true });
+                  setTimeout(() => setDmMsgMenu((mm) => (mm?.confirmRemove ? { ...mm, confirmRemove: false } : mm)), 3000);
+                  return;
+                }
+                void removeFriendById(dmMsgMenu.member.id);
+                setDmMsgMenu(null);
+              }}
+            >
+              {dmMsgMenu.confirmRemove ? '确认删除好友？' : '删除好友'}
             </button>
           </CtxMenu>
         </>

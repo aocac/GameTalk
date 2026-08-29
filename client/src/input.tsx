@@ -17,9 +17,11 @@ interface InputTarget {
   name: string;
 }
 
-/** 输入框窗口常规/展开（选目标列表）高度；展开时底边保持不动 */
+/** 输入框窗口常规/展开高度；展开时底边保持不动（游戏画面下沿） */
 const SHORT_H = 64;
 const TALL_H = 340;
+/** 与 gameMode.showInputWindow 的定位公式一致：底边 = 屏幕底 - 48 */
+const BOTTOM_MARGIN = 48;
 
 async function resizeWindow(tall: boolean): Promise<void> {
   try {
@@ -28,10 +30,11 @@ async function resizeWindow(tall: boolean): Promise<void> {
     if (!mon) return;
     const dpr = window.devicePixelRatio || 1;
     const pos = await win.outerPosition();
-    const bottom = pos.y + SHORT_H * dpr;
+    // 关键：底边由显示器尺寸 + 固定边距推出（与呼出定位公式同源），
+    // 不能用「当前 y + SHORT_H」推——展开状态下当前 y 是高窗口的 y，会越算越高
+    const bottom = mon.position.y + mon.size.height - BOTTOM_MARGIN * dpr;
     const h = tall ? TALL_H : SHORT_H;
     await win.setSize(new PhysicalSize(Math.round(460 * dpr), Math.round(h * dpr)));
-    // 底边固定：向下展开列表而不是把输入条顶走
     await win.setPosition(new PhysicalPosition(pos.x, Math.round(bottom - h * dpr)));
   } catch {
     // 忽略窗口操作失败（列表仍可用，只是可能被裁剪）

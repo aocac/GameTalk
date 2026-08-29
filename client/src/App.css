@@ -2497,6 +2497,23 @@ body {
   display: inline-flex;
 }
 
+/* 私聊会话头像的在线状态点（与成员面板同款） */
+.dm-avatar-wrap::after {
+  content: '';
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--off);
+  border: 2px solid var(--surface);
+}
+
+.dm-avatar-wrap.online::after {
+  background: var(--ok);
+}
+
 .dm-avatar-wrap.off .avatar-img,
 .dm-avatar-wrap.off .avatar {
   filter: grayscale(1);
@@ -2538,4 +2555,118 @@ body {
 
 .edit-bar .reply-label {
   color: var(--primary);
+}
+
+/* ===== 好友管理面板（QQ 式）+ 好友资料页 ===== */
+.friends-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--side-text);
+}
+
+.friends-count {
+  opacity: 0.7;
+}
+
+.friends-add-toggle {
+  display: block;
+  width: calc(100% - 12px);
+  margin: 2px 6px 6px;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--side-text-strong);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.friends-add-toggle:hover,
+.friends-add-toggle.open {
+  background: var(--side-hover);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.friend-item.selected {
+  background: var(--side-active);
+}
+
+.friend-pane-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.friend-pane-empty .empty-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.friend-pane-empty .empty-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* 资料页（主区域居中卡片） */
+.friend-profile-pane {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px;
+  overflow-y: auto;
+}
+
+.fpp-card {
+  width: 480px;
+  max-width: 100%;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px;
+  box-shadow: 0 8px 28px rgba(31, 41, 61, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.fpp-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.fpp-hero-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.fpp-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.fpp-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.fpp-actions .btn {
+  flex: 1;
 }

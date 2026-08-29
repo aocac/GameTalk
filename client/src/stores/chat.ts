@@ -107,12 +107,12 @@ interface ChatState {
   muteMember: (roomId: string, userId: string, minutes: number) => void;
   unmuteMember: (roomId: string, userId: string) => void;
   recallMessage: (roomId: string, messageId: string) => void;
-  sendMessage: (text: string, opts?: SendOptions) => void;
+  sendMessage: (text: string, opts?: SendOptions, roomOverride?: string) => void;
   clearRoomError: () => void;
   openDm: (peerId: string) => Promise<void>;
   loadDmConversations: () => Promise<void>;
   loadOlderDmMessages: (peerId: string) => Promise<void>;
-  sendDm: (text: string, opts?: SendOptions) => void;
+  sendDm: (text: string, opts?: SendOptions, peerOverride?: string) => void;
   recallDm: (messageId: string) => void;
   editMessage: (roomId: string, messageId: string, text: string) => void;
   editDm: (messageId: string, text: string) => void;
@@ -983,10 +983,21 @@ export const useChat = create<ChatState>()((set, get) => ({
     socket.send({ type: 'message:recall', payload: { roomId, messageId } });
   },
 
-  sendMessage: (text, opts) => {
+  sendMessage: (text, opts, roomOverride) => {
     const trimmed = text.trim();
     if (!trimmed && !opts?.mediaUrl) return;
     const { activeRoomId, subscribedRoomIds, status, rooms } = get();
+    // 显式目标（快捷输入框独立目标）：直接发送，不扰动主窗口的选中会话
+    if (roomOverride) {
+      if (status !== 'open' || !subscribedRoomIds.includes(roomOverride)) {
+        appendOptimistic(roomOverride, trimmed, opts);
+        queuedSends.push({ roomId: roomOverride, text: trimmed, opts });
+        return;
+      }
+      doSend(roomOverride, trimmed, opts);
+      appendOptimistic(roomOverride, trimmed, opts);
+      return;
+    }
     let target = activeRoomId;
 
     // 未选择房间：游戏内呼出发送时自动选中第一个房间（并排队，订阅建立后发出）
@@ -1067,10 +1078,11 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
   },
 
-  sendDm: (text, opts) => {
+  sendDm: (text, opts, peerOverride) => {
     const trimmed = text.trim();
     if (!trimmed && !opts?.mediaUrl) return;
-    const peerId = get().activeDmPeerId;
+    // 显式目标（快捷输入框独立目标）优先于主窗口正在查看的会话
+    const peerId = peerOverride ?? get().activeDmPeerId;
     if (!peerId) return;
     if (get().status !== 'open' || !socket) {
       set({ roomError: '连接未就绪，无法发送私聊消息' });

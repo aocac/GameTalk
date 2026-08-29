@@ -54,6 +54,14 @@ export function setInputTargetProvider(provider: TargetProvider): void {
   targetProvider = provider;
 }
 
+/** 呼出输入框时的回调（主窗口重置独立目标为当前会话的默认值） */
+type InputShownHandler = () => void;
+let onInputShown: InputShownHandler = () => undefined;
+
+export function setOnInputShown(handler: InputShownHandler): void {
+  onInputShown = handler;
+}
+
 /** 把目标上下文下发给 input 窗口（呼出时读 provider；切换后由主窗口直接回发） */
 export async function pushInputTargetContext(): Promise<void> {
   await emit('game-input-context', targetProvider());
@@ -267,7 +275,8 @@ export async function showInputWindow(): Promise<void> {
   await win.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
   await win.show();
   inputVisible = true;
-  // 呼出即下发当前发送目标（input 窗口展示 + 可切换）
+  // 每次呼出：独立目标重置为默认（主窗口当前会话），再下发上下文
+  onInputShown();
   await pushInputTargetContext().catch(() => undefined);
   // Windows 上 show 后需要一点时间才能聚焦
   setTimeout(() => void win.setFocus(), 60);
