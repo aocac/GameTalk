@@ -1,11 +1,12 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactElement } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useChat } from './stores/chat';
 import { useFriends } from './stores/friends';
+import { useNotifications } from './stores/notifications';
 import * as api from './app/api';
-import type { UserBrief } from './app/types';
+import type { MentionRef, RoomMember, UserBrief } from './app/types';
 import type { RoomMessage } from './app/api';
 import { useAuth } from './stores/auth';
 import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
@@ -106,6 +107,77 @@ async function copyText(text: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** 把消息文本中对应提及快照的 @用户名 高亮 */
+function renderMentions(text: string, mentions?: MentionRef[]): string | ReactElement {
+  const names = (mentions ?? []).map((m) => m.username).filter(Boolean);
+  if (names.length === 0) return text;
+  const escaped = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = new RegExp(`@(${escaped.join('|')})`, 'g');
+  const parts: Array<string | ReactElement> = [];
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    const idx = m.index ?? 0;
+    if (idx > last) parts.push(text.slice(last, idx));
+    parts.push(
+      <span key={idx} className="mention">
+        @{m[1]}
+      </span>,
+    );
+    last = idx + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+/** 通知中心面板：@提及 / 好友事件聚合（会话级） */
+function NotificationPanel({
+  onGoRoom,
+  onGoFriends,
+  onClose,
+}: {
+  onGoRoom: (roomId: string) => void;
+  onGoFriends: () => void;
+  onClose: () => void;
+}) {
+  const { items, markAllRead, clear } = useNotifications();
+  return (
+    <>
+      <div className="menu-mask" onClick={onClose} />
+      <div className="notif-panel">
+        <div className="notif-head">
+          <span>通知中心</span>
+          <div className="row-gap">
+            <button className="notif-action" onClick={markAllRead}>
+              全部已读
+            </button>
+            <button className="notif-action" onClick={clear}>
+              清空
+            </button>
+          </div>
+        </div>
+        <div className="notif-list">
+          {items.length === 0 && <div className="notif-empty">暂无通知</div>}
+          {items.map((n) => (
+            <button
+              key={n.id}
+              className={`notif-item ${n.read ? '' : 'unread'}`}
+              onClick={() => {
+                if (n.kind === 'mention' && n.roomId) onGoRoom(n.roomId);
+                else if (n.kind === 'friend_request') onGoFriends();
+                onClose();
+              }}
+            >
+              <span className={`notif-dot ${n.kind}`} />
+              <span className="notif-text">{n.text}</span>
+              <span className="notif-time">{new Date(n.createdAt).toLocaleTimeString()}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
 }
 
 /** 个人资料：头像 / 昵称 / 个性签名 / ID / 注册时间（与软件设置分离） */
@@ -717,6 +789,14 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   /** 侧栏双 Tab（QQ 式）：消息=房间列表 / 好友=好友管理 */
   const [sideTab, setSideTab] = useState<'rooms' | 'friends'>('rooms');
   const [addFriendInput, setAddFriendInput] = useState('');
+  /** 通知中心 */
+  const [showNotif, setShowNotif] = useState(false);
+  const { unread: notifUnread, markAllRead } = useNotifications();
+  /** @自动补全：start=草稿中 @ 的位置，caret=当前光标 */
+  const [mentionQuery, setMentionQuery] = useState<{ start: number; token: string; caret: number } | null>(null);
+  const [mentionPick, setMentionPick] = useState(0);
+  const pickedMentions = useRef<Map<string, string>>(new Map());
+  const composerRef = useRef<HTMLInputElement>(null);
   const {
     friends,
     incoming: friendIncoming,
@@ -744,6 +824,39 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   );
   const onlineCount = members.filter((m) => m.online).length;
   const activeSubscribed = !!activeRoomId && subscribedRoomIds.includes(activeRoomId);
+  // @自动补全候选：当前房间花名册（自己除外），按昵称前缀过滤
+  const mentionCandidates: RoomMember[] = mentionQuery
+    ? roster
+        .filter((m) => m.id !== me?.id && m.username.toLowerCase().startsWith(mentionQuery.token.toLowerCase()))
+        .slice(0, 8)
+    : [];
+
+  const applyMentionPick = (m: RoomMember) => {
+    if (!mentionQuery) return;
+    const before = draft.slice(0, mentionQuery.start);
+    const after = draft.slice(mentionQuery.caret);
+    const inserted = `${before}@${m.username} ${after}`;
+    setDraft(inserted);
+    pickedMentions.current.set(m.id, m.username);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      const pos = (before + `@${m.username} `).length;
+      composerRef.current?.focus();
+      composerRef.current?.setSelectionRange(pos, pos);
+    });
+  };
+
+  const sendDraft = () => {
+    if (!draft.trim() || !activeRoom) return;
+    // 只保留文本中确实还带着 @昵称 的提及（用户可能删掉了部分）
+    const picks = [...pickedMentions.current.entries()]
+      .filter(([, name]) => draft.includes(`@${name}`))
+      .map(([id]) => id);
+    sendMessage(draft, picks);
+    pickedMentions.current.clear();
+    setDraft('');
+    setMentionQuery(null);
+  };
 
   useEffect(() => {
     const el = listRef.current;
@@ -839,6 +952,22 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         <div className="sidebar-brand">
           <img src={appIcon} alt="GameTalk" className="logo-img" draggable={false} />
           <span className="brand-name">GameTalk</span>
+          {!offline && (
+            <button
+              className="bell-btn"
+              title="通知中心"
+              onClick={() => {
+                if (!showNotif) markAllRead();
+                setShowNotif((v) => !v);
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              </svg>
+              {notifUnread > 0 && <span className="tab-badge">{notifUnread > 99 ? '99+' : notifUnread}</span>}
+            </button>
+          )}
         </div>
         {!offline && (
           <div className="side-tabs">
@@ -859,6 +988,16 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               )}
             </button>
           </div>
+        )}
+        {showNotif && !offline && (
+          <NotificationPanel
+            onGoRoom={(rid) => {
+              setSideTab('rooms');
+              void selectRoom(rid);
+            }}
+            onGoFriends={() => setSideTab('friends')}
+            onClose={() => setShowNotif(false)}
+          />
         )}
         {(offline || sideTab === 'rooms') ? (
         <>
@@ -1170,7 +1309,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                       <span className="message-author">{m.username}</span>
                       <span className="message-time">{m.pending ? '发送中…' : new Date(m.createdAt).toLocaleTimeString()}</span>
                     </div>
-                    <div className="message-text">{m.text}</div>
+                    <div className="message-text">{renderMentions(m.text, m.mentions)}</div>
                   </div>
                 </div>
               </Fragment>
@@ -1179,33 +1318,76 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         </div>
 
         <footer className="composer">
+          {mentionQuery && mentionCandidates.length > 0 && (
+            <div className="mention-pop">
+              {mentionCandidates.map((m, i) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`mention-item ${i === mentionPick ? 'active' : ''}`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    applyMentionPick(m);
+                  }}
+                  onMouseEnter={() => setMentionPick(i)}
+                >
+                  <Avatar name={m.username} url={m.avatarUrl} size={20} />
+                  <span>{m.username}</span>
+                  {!m.online && <span className="mention-off">离线</span>}
+                </button>
+              ))}
+            </div>
+          )}
           <input
+            ref={composerRef}
             className="composer-input"
             value={draft}
-            placeholder={offline ? '离线模式：未连接服务器' : connected ? (activeRoom ? '输入消息，Enter 发送' : '先选择或创建房间') : '未连接'}
+            placeholder={offline ? '离线模式：未连接服务器' : connected ? (activeRoom ? '输入消息，Enter 发送，@ 唤起提及' : '先选择或创建房间') : '未连接'}
             disabled={offline || !connected || !activeRoom}
             maxLength={2000}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setDraft(v);
+              const caret = e.target.selectionStart ?? v.length;
+              const m = /@([\w\u4e00-\u9fa5-]{0,24})$/.exec(v.slice(0, caret));
+              if (m && !offline && connected) {
+                setMentionQuery({ start: m.index, token: m[1] ?? '', caret });
+                setMentionPick(0);
+              } else {
+                setMentionQuery(null);
+              }
+            }}
             onKeyDown={(e) => {
               // 中文输入法组词期间的 Enter 是确认候选词，不是发送（keyCode 229 为组词键事件兜底）
               if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+              if (mentionQuery && mentionCandidates.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setMentionPick((p) => (p + 1) % mentionCandidates.length);
+                  return;
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setMentionPick((p) => (p - 1 + mentionCandidates.length) % mentionCandidates.length);
+                  return;
+                }
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  applyMentionPick(mentionCandidates[mentionPick]);
+                  return;
+                }
+                if (e.key === 'Escape') {
+                  setMentionQuery(null);
+                  return;
+                }
+              }
               if (e.key === 'Enter' && !e.shiftKey && !offline && connected && activeRoom) {
                 e.preventDefault();
-                if (draft.trim()) {
-                  sendMessage(draft);
-                  setDraft('');
-                }
+                sendDraft();
               }
             }}
           />
-          <button
-            className="btn primary"
-            disabled={offline || !connected || !activeRoom || !draft.trim()}
-            onClick={() => {
-              sendMessage(draft);
-              setDraft('');
-            }}
-          >
+          <button className="btn primary" disabled={offline || !connected || !activeRoom || !draft.trim()} onClick={sendDraft}>
             发送
           </button>
           {activeRoom && (

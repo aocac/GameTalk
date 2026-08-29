@@ -4,6 +4,7 @@ import { playMessageSound, playSendSound } from '../app/audio';
 import { useSettings } from '../app/settings';
 import { useAuth } from './auth';
 import { useFriends } from './friends';
+import { useNotifications } from './notifications';
 import { wsUrlOf } from '../app/settings';
 import * as api from '../app/api';
 import { pushOverlayMessage } from '../app/gameMode';
@@ -18,6 +19,8 @@ interface ChatState {
   subscribedRoomIds: string[];
   /** 每房间未读消息数（非活跃房间收到新消息时累加，选中时清零） */
   unreadByRoom: Record<string, number>;
+  /** 每房间未读 @我 数（橙色角标，独立于普通未读） */
+  mentionByRoom: Record<string, number>;
   messagesByRoom: Record<string, api.RoomMessage[]>;
   /** 房间花名册（DB 全体成员 + 在线标记；member:left = 离线而非移除，QQ 式） */
   membersByRoom: Record<string, RoomMember[]>;
@@ -44,7 +47,7 @@ interface ChatState {
   deleteRoom: (roomId: string) => void;
   leaveActiveRoom: () => Promise<void>;
   kickMember: (roomId: string, userId: string) => void;
-  sendMessage: (text: string) => void;
+  sendMessage: (text: string, mentions?: string[]) => void;
   clearRoomError: () => void;
 }
 
@@ -102,10 +105,12 @@ function removeRoomLocal(roomId: string): void {
     const messagesByRoom = { ...s.messagesByRoom };
     const membersByRoom = { ...s.membersByRoom };
     const unreadByRoom = { ...s.unreadByRoom };
+    const mentionByRoom = { ...s.mentionByRoom };
     const previewByRoom = { ...s.previewByRoom };
     delete messagesByRoom[roomId];
     delete membersByRoom[roomId];
     delete unreadByRoom[roomId];
+    delete mentionByRoom[roomId];
     delete previewByRoom[roomId];
     const wasActive = s.activeRoomId === roomId;
     return {
@@ -113,6 +118,7 @@ function removeRoomLocal(roomId: string): void {
       messagesByRoom,
       membersByRoom,
       unreadByRoom,
+      mentionByRoom,
       previewByRoom,
       activeRoomId: wasActive ? (rooms[0]?.id ?? null) : s.activeRoomId,
       subscribedRoomIds: s.subscribedRoomIds.filter((r) => r !== roomId),
@@ -141,14 +147,16 @@ function clearPending(): void {
 }
 
 /** 待发送队列：订阅未就绪时先排队（可多条），room:joined 后按序自动发出（游戏内呼出发送场景） */
-let queuedSends: { roomId: string; text: string }[] = [];
+let queuedSends: { roomId: string; text: string; mentions?: string[] }[] = [];
 
 /** 乐观上屏：把用户刚发的消息立即显示（pending 标记），服务器确认后校正 */
-function appendOptimistic(roomId: string, text: string): void {
+function appendOptimistic(roomId: string, text: string, mentions?: string[]): void {
   const me = useChat.getState().me;
   if (!me) return;
   const tempId = `tmp-${Date.now()}-${++pendingSeq}`;
   appendPending(roomId, tempId);
+  // 提及快照仅带 id：高亮在确认消息上由服务器快照完成，乐观期先不做用户名匹配
+  const mentionRefs = (mentions ?? []).filter((id) => id !== me.id).map((id) => ({ id, username: '' }));
   useChat.setState((s) => ({
     messagesByRoom: {
       ...s.messagesByRoom,
@@ -162,6 +170,7 @@ function appendOptimistic(roomId: string, text: string): void {
           avatarUrl: me.avatarUrl ?? null,
           text,
           createdAt: new Date().toISOString(),
+          mentions: mentionRefs,
           pending: true,
         },
       ],
@@ -170,8 +179,8 @@ function appendOptimistic(roomId: string, text: string): void {
 }
 
 /** 真正发送（不负责乐观上屏，由调用方决定） */
-function doSend(roomId: string, text: string): void {
-  const ok = socket?.send({ type: 'message:send', payload: { roomId, text } });
+function doSend(roomId: string, text: string, mentions?: string[]): void {
+  const ok = socket?.send({ type: 'message:send', payload: { roomId, text, mentions } });
   if (ok) playSendSound(useSettings.getState().soundEnabled);
 }
 
@@ -182,6 +191,7 @@ export const useChat = create<ChatState>()((set, get) => ({
   activeRoomId: null,
   subscribedRoomIds: [],
   unreadByRoom: {},
+  mentionByRoom: {},
   messagesByRoom: {},
   membersByRoom: {},
   historyLoadedRooms: {},
@@ -265,7 +275,7 @@ export const useChat = create<ChatState>()((set, get) => ({
             const ready = queuedSends.filter((q) => q.roomId === msg.payload.roomId);
             if (ready.length > 0) {
               queuedSends = queuedSends.filter((q) => q.roomId !== msg.payload.roomId);
-              for (const q of ready) doSend(q.roomId, q.text);
+              for (const q of ready) doSend(q.roomId, q.text, q.mentions);
             }
           }
           break;
@@ -330,6 +340,24 @@ export const useChat = create<ChatState>()((set, get) => ({
           });
           const isMine = msg.payload.message.userId === state.me?.id;
           const active = get().activeRoomId;
+          // @我：非自己消息且提及含我 → 通知中心 + 非活跃房间累计 @未读
+          const mentionedMe = !isMine && (msg.payload.message.mentions ?? []).some((m) => m.id === state.me?.id);
+          if (mentionedMe) {
+            const roomName = get().rooms.find((r) => r.id === msg.payload.roomId)?.name ?? '房间';
+            useNotifications.getState().push({
+              kind: 'mention',
+              text: `${msg.payload.message.username} 在 #${roomName} 里提到了你`,
+              roomId: msg.payload.roomId,
+            });
+            if (active !== msg.payload.roomId) {
+              set((s) => ({
+                mentionByRoom: {
+                  ...s.mentionByRoom,
+                  [msg.payload.roomId]: (s.mentionByRoom[msg.payload.roomId] ?? 0) + 1,
+                },
+              }));
+            }
+          }
           if (!isMine) {
             // 非活跃房间累加未读数；提示音只对别人的消息生效
             if (active !== msg.payload.roomId) {
@@ -471,10 +499,11 @@ export const useChat = create<ChatState>()((set, get) => ({
   selectRoom: async (roomId, forceReload = false) => {
     const { token } = useAuth.getState();
     if (!token) return;
-    // 选中即清零未读；room:join 幂等（已订阅时服务端也会回执），看门狗兜底
+    // 选中即清零未读（普通 + @我）；room:join 幂等（已订阅时服务端也会回执），看门狗兜底
     set((s) => ({
       activeRoomId: roomId,
       unreadByRoom: { ...s.unreadByRoom, [roomId]: 0 },
+      mentionByRoom: { ...s.mentionByRoom, [roomId]: 0 },
     }));
     subscribeRoom(roomId);
     // 加载历史（首次或 forceReload——重连后强制重拉，补齐断开期间的消息）
@@ -578,7 +607,7 @@ export const useChat = create<ChatState>()((set, get) => ({
     socket.send({ type: 'member:kick', payload: { roomId, userId } });
   },
 
-  sendMessage: (text) => {
+  sendMessage: (text, mentions) => {
     const trimmed = text.trim();
     if (!trimmed) return;
     const { activeRoomId, subscribedRoomIds, status, rooms } = get();
@@ -598,14 +627,14 @@ export const useChat = create<ChatState>()((set, get) => ({
 
     // 订阅/连接未就绪：乐观上屏 + 排队，就绪（room:joined）后自动发送
     if (status !== 'open' || !subscribedRoomIds.includes(target)) {
-      appendOptimistic(target, trimmed);
-      queuedSends.push({ roomId: target, text: trimmed });
+      appendOptimistic(target, trimmed, mentions);
+      queuedSends.push({ roomId: target, text: trimmed, mentions });
       set({ roomError: null });
       return;
     }
 
-    doSend(target, trimmed);
-    appendOptimistic(target, trimmed);
+    doSend(target, trimmed, mentions);
+    appendOptimistic(target, trimmed, mentions);
   },
 
   clearRoomError: () => set({ roomError: null }),

@@ -131,6 +131,8 @@ export interface RoomMessage {
   avatarUrl?: string | null;
   text: string;
   createdAt: string;
+  /** 提及快照（服务端解析后的 {id, username}） */
+  mentions?: Array<{ id: string; username: string }>;
   /** 客户端本地字段：乐观发送未确认时标记（服务器返回的消息无此字段） */
   pending?: boolean;
 }

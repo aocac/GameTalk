@@ -34,6 +34,7 @@ interface MessageRow extends QueryResultRow {
   avatar_url: string | null;
   text: string;
   created_at: string;
+  mentions: Array<{ id: string; username: string }> | null;
 }
 
 export interface PublicRoom {
@@ -185,7 +186,7 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
 
     const res = await db.query<MessageRow>(
       `SELECT * FROM (
-         SELECT m.id, m.room_id, m.user_id, m.username, u.avatar_url, m.text, m.created_at
+         SELECT m.id, m.room_id, m.user_id, m.username, u.avatar_url, m.text, m.mentions, m.created_at
          FROM messages m
          LEFT JOIN users u ON u.id = m.user_id
          WHERE m.room_id = $1
@@ -208,6 +209,7 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
       avatarUrl: avatarHttpUrlOf(base, m.user_id, m.avatar_url),
       text: m.text,
       createdAt: m.created_at,
+      mentions: m.mentions ?? [],
     }));
     await reply.send({ messages, hasMore });
   });

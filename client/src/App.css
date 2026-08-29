@@ -1680,3 +1680,184 @@ body {
   min-height: 0;
   overflow-y: auto;
 }
+
+/* ===== 通知中心（铃铛 + 面板）===== */
+.bell-btn {
+  position: relative;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--side-text);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.bell-btn:hover {
+  background: var(--side-hover);
+  color: var(--side-text-strong);
+}
+
+.bell-btn .tab-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+}
+
+.notif-panel {
+  position: absolute;
+  top: 54px;
+  left: 10px;
+  right: 10px;
+  z-index: 60;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  animation: modal-in 0.14s ease;
+}
+
+.notif-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.row-gap {
+  display: flex;
+  gap: 8px;
+}
+
+.notif-action {
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.notif-action:hover {
+  color: var(--accent);
+}
+
+.notif-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.notif-empty {
+  padding: 22px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.notif-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notif-item:hover {
+  background: var(--surface-2);
+}
+
+.notif-item.unread {
+  background: var(--accent-soft);
+}
+
+.notif-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--unread);
+  flex-shrink: 0;
+}
+
+.notif-dot.friend_request,
+.notif-dot.friend_accepted {
+  background: var(--ok);
+}
+
+.notif-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notif-time {
+  font-size: 11px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+/* ===== @提及：消息高亮 + 输入补全 ===== */
+.message-text .mention {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 0 3px;
+  font-weight: 500;
+}
+
+.composer {
+  position: relative;
+}
+
+.mention-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 16px;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  z-index: 50;
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.mention-item.active {
+  background: var(--accent-soft);
+}
+
+.mention-off {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-3);
+}

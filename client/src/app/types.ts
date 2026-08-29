@@ -16,6 +16,12 @@ export interface FriendProfile extends UserBrief {
   bio?: string | null;
 }
 
+/** 消息内的提及快照 */
+export interface MentionRef {
+  id: string;
+  username: string;
+}
+
 export interface ChatMessage {
   id: string;
   roomId: string;
@@ -24,6 +30,7 @@ export interface ChatMessage {
   avatarUrl?: string | null;
   text: string;
   createdAt: string;
+  mentions?: MentionRef[];
   /** 客户端本地字段：乐观发送未确认时标记（真实服务器消息无此字段） */
   pending?: boolean;
 }
@@ -35,7 +42,7 @@ export type ClientWsMessage =
   | { type: 'room:leave'; payload: { roomId: string } }
   | { type: 'room:delete'; payload: { roomId: string } }
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
-  | { type: 'message:send'; payload: { roomId: string; text: string } }
+  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[] } }
   | { type: 'ping' };
 
 // 服务端 -> 客户端

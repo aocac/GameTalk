@@ -326,4 +326,47 @@ describe('realtime + persistence', () => {
     expect(goneOffline.online).toBe(false);
     ws.close();
   });
+
+  it('parses and stores @mentions (explicit picks + text scan, members only)', async () => {
+    const owner = await registerUser('mention_owner');
+    const { room } = (
+      await app.inject({ method: 'POST', url: '/api/rooms', headers: auth(owner.token), payload: { name: 'Mentions' } })
+    ).json();
+    const member = await registerUser('mention_member');
+    await app.inject({
+      method: 'POST',
+      url: '/api/rooms/join',
+      headers: auth(member.token),
+      payload: { inviteCode: room.inviteCode },
+    });
+    // 非成员：验证提及他不会生效
+    await registerUser('mention_outside');
+
+    const ws = await connectWs(owner.token);
+    ws.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    await nextMessage(ws, (m) => m.type === 'room:joined');
+
+    // 文本解析 + 显式 picks（重复去重）；提及自己应被剔除
+    const got = nextMessage(ws, (m) => m.type === 'message:new');
+    ws.send(
+      JSON.stringify({
+        type: 'message:send',
+        payload: { roomId: room.id, text: '今晚 @mention_member 和 @mention_owner 一起上号', mentions: [member.userId, owner.userId] },
+      }),
+    );
+    const msg = await got;
+    expect(msg.payload.message.mentions).toEqual([{ id: member.userId, username: 'mention_member' }]);
+
+    // 非房间成员不算提及
+    const got2 = nextMessage(ws, (m) => m.type === 'message:new');
+    ws.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '找不到 @mention_outside' } }));
+    expect((await got2).payload.message.mentions).toEqual([]);
+    ws.close();
+
+    // 历史接口带出 mentions
+    const hist = await app.inject({ method: 'GET', url: `/api/rooms/${room.id}/messages`, headers: auth(owner.token) });
+    const { messages } = hist.json();
+    expect(messages[0].mentions).toEqual([{ id: member.userId, username: 'mention_member' }]);
+    expect(messages[1].mentions).toEqual([]);
+  });
 });

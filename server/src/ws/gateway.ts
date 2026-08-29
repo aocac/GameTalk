@@ -45,6 +45,13 @@ interface ChatMessage {
   avatarUrl: string | null;
   text: string;
   createdAt: string;
+  /** 被提及的用户快照（历史渲染不依赖成员表） */
+  mentions?: MentionRef[];
+}
+
+interface MentionRef {
+  id: string;
+  username: string;
 }
 
 /** 房间花名册成员 = 全体 DB 成员 + 当前在线标记（QQ 式：离线成员也展示，灰头像） */
@@ -61,7 +68,7 @@ type ClientMessage =
   | { type: 'room:leave'; payload: { roomId: string } }
   | { type: 'room:delete'; payload: { roomId: string } }
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
-  | { type: 'message:send'; payload: { roomId: string; text: string } }
+  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown } }
   | { type: 'ping' };
 
 interface UserRow extends QueryResultRow {
@@ -98,6 +105,35 @@ function sanitizeRoomId(id: string): string {
 
 function safeText(text: string): string {
   return text.trim().slice(0, MAX_TEXT_LENGTH);
+}
+
+/**
+ * 解析消息提及：客户端显式选择的 ids ∪ 文本中 @用户名 的兜底解析，均须为房间成员；
+ * 提及自己无意义，自动剔除。用户名唯一，按名精确匹配可靠。
+ */
+async function resolveMentions(db: Db, roomId: string, senderId: string, text: string, picked: unknown): Promise<MentionRef[]> {
+  const res = await db.query<{ user_id: string; username: string }>(
+    `SELECT rm.user_id, u.username
+     FROM room_members rm JOIN users u ON u.id = rm.user_id
+     WHERE rm.room_id = $1`,
+    [roomId],
+  );
+  const rows = res.rows;
+  const byId = new Map(rows.map((r) => [r.user_id, r.username] as const));
+  const byName = new Map(rows.map((r) => [r.username.toLowerCase(), r.user_id] as const));
+  const mentioned = new Map<string, string>();
+  if (Array.isArray(picked)) {
+    for (const p of picked) {
+      const id = typeof p === 'string' ? p : '';
+      if (id && byId.has(id)) mentioned.set(id, byId.get(id)!);
+    }
+  }
+  for (const m of text.matchAll(/@([\w\u4e00-\u9fa5-]{3,24})/gu)) {
+    const id = byName.get((m[1] ?? '').toLowerCase());
+    if (id) mentioned.set(id, byId.get(id)!);
+  }
+  mentioned.delete(senderId);
+  return [...mentioned].map(([id, username]) => ({ id, username }));
 }
 
 function send(socket: WebSocket, msg: unknown): void {
@@ -435,10 +471,11 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
         return;
       }
-      // 持久化后再广播（Phase 4：消息历史）
-      const inserted = await db.query<{ id: string; created_at: string }>(
-        'INSERT INTO messages (room_id, user_id, username, text) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
-        [roomId, conn.userId, conn.username, text],
+      // 持久化后再广播（Phase 4：消息历史；v0.4.0：提及解析入库）
+      const mentions = await resolveMentions(db, roomId, conn.userId, text, msg.payload.mentions);
+      const inserted = await db.query<{ id: string; created_at: string; mentions: MentionRef[] }>(
+        'INSERT INTO messages (room_id, user_id, username, text, mentions) VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id, created_at, mentions',
+        [roomId, conn.userId, conn.username, text, JSON.stringify(mentions)],
       );
       const row = inserted.rows[0];
       const message: ChatMessage = {
@@ -449,6 +486,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         avatarUrl: conn.avatarUrl,
         text,
         createdAt: row.created_at,
+        mentions: row.mentions ?? [],
       };
       broadcastToRoom(roomId, { type: 'message:new', payload: { roomId, message } });
       break;
