@@ -71,9 +71,14 @@ gametalk/
 {"type":"message:send","payload":{"roomId":"...","text":"hi","mentions":["<userId>"],"mediaUrl":"/api/media/<uuid>"}}
 {"type":"message:recall","payload":{"roomId":"...","messageId":"..."}}
 {"type":"message:edit","payload":{"roomId":"...","messageId":"...","text":"改后内容"}}
+{"type":"message:forward","payload":{"source":"room|dm","messageId":"...","targetRoomId":"..."}}
+{"type":"message:forward","payload":{"source":"room|dm","messageId":"...","targetUserId":"..."}}
 {"type":"dm:send","payload":{"to":"<userId>","text":"hi","mediaUrl":"/api/media/<uuid>","replyTo":"..."}}
 {"type":"dm:recall","payload":{"messageId":"..."}}
 {"type":"dm:edit","payload":{"messageId":"...","text":"改后内容"}}
+{"type":"screen:start","payload":{"roomId":"..."}}
+{"type":"screen:stop","payload":{"roomId":"..."}}
+{"type":"screen:signal","payload":{"roomId":"...","to":"<userId>","data":{...WebRTC SDP/ICE...}}}
 {"type":"ping"}
 ```
 
@@ -86,12 +91,15 @@ gametalk/
 {"type":"member:kicked","payload":{"roomId":"...","userId":"...","username":"..."}}
 {"type":"member:muted","payload":{"roomId":"...","userId":"...","mutedUntil":"..."}}
 {"type":"member:unmuted","payload":{"roomId":"...","userId":"..."}}
-{"type":"message:new","payload":{"roomId":"...","message":{...,"mentions":[{"id":"...","username":"..."}],"kind":"text|image","mediaUrl":"..."}}}
+{"type":"message:new","payload":{"roomId":"...","message":{...,"mentions":[{"id":"...","username":"..."}],"kind":"text|image","mediaUrl":"...","forwardedFromLabel":"来自 群A · 张三"}}}
 {"type":"message:recalled","payload":{"roomId":"...","messageId":"...","operatorId":"...","operatorUsername":"..."}}
 {"type":"message:edited","payload":{"roomId":"...","messageId":"...","text":"...","editedAt":"..."}}
 {"type":"dm:new","payload":{"message":{"id":"...","from":"...","to":"...","username":"...","text":"...","kind":"text|image","mediaUrl":null,"recalled":false}}}
 {"type":"dm:recalled","payload":{"messageId":"...","from":"...","to":"..."}}
 {"type":"dm:edited","payload":{"messageId":"...","from":"...","to":"...","text":"...","editedAt":"..."}}
+{"type":"screen:started","payload":{"roomId":"...","userId":"...","username":"..."}}
+{"type":"screen:stopped","payload":{"roomId":"..."}}
+{"type":"screen:signal","payload":{"from":"<userId>","data":{...WebRTC SDP/ICE...}}}
 {"type":"room:deleted","payload":{"roomId":"..."}}
 {"type":"friend:request","payload":{"requestId":"...","from":{...}}}
 {"type":"friend:accepted","payload":{"user":{...}}}
@@ -124,6 +132,12 @@ gametalk/
 
 **消息编辑**：`message:edit` / `dm:edit`（仅发送者本人、未撤回、文本非空；他人编辑回 `only_sender`，撤回后不可编辑回 `message_not_found`）。编辑只更新 `text` 并记 `edited_at`（原版本不保留，微信/QQ 式），广播 `message:edited` / `dm:edited` 携带新文本与时间；REST 历史与广播均带 `editedAt` 供客户端展示「已编辑」小标。房间与私聊语义一致。
 
+**邀请链接**：区别于 8 位房间邀请码（房间语境内部使用），邀请链接是 16 位长码（熵更高，防脱离房间语境公开传播后被猜测），存 `invite_links`（`expires_at` NULL = 永久、`max_uses` 0 = 不限、`used_count` 计数）。REST：`POST /api/rooms/:id/invites`（成员即可创建，有效期 0–720 小时、次数 0–500）、`GET /api/rooms/:id/invites`（房主看全部、成员看自己）、`DELETE /api/invites/:code`（创建者或房主吊销）、`GET /api/invites/:code`（加入前预览房间名/邀请人/剩余资格）、`POST /api/invites/:code/redeem`（过期/次数耗尽回 410；已是成员则幂等入房且不计数）。客户端注册 `gametalk://` 深链协议（tauri-plugin-deep-link + capabilities）：运行中点击链接走单实例回调 → Rust emit `deep-link-url` → 前端解析 code 弹确认入房；未登录时代码暂存 localStorage，登录后补处理。
+
+**消息转发**：`message:forward` 由服务端校验源消息可见性后**代为复制**到新会话，客户端拿不到也不伪造内容——房间消息须为源房间成员、私聊须为对话双方（不可见回 `not_in_room`；撤回消息不可转发）。目标为房间（`targetRoomId`）或好友（`targetUserId`），二者恰好其一（否则 `invalid_input`）；转发进房间复用成员资格 + 禁言校验（等价一条新 `message:send`），转发给好友复用 `dm:send` 的好友校验。文本 / 图片原样带走，**引用与提及不带走**；服务端写 `forwarded_from_label` 展示快照（房间「来自 群A · 张三」/ 私聊「来自 张三 的私聊」），随 `message:new` / `dm:new` 与历史接口透传，客户端渲染「转发」角标。媒体归属：服务端复制 `media_url` 天然绕过发送归属校验（入库时已校验过）。
+
+**屏幕共享**：房间内 1 对 N 的 WebRTC P2P 共享，**媒体流不经服务器**，服务端只做信令透传。WS：`screen:start`（仅房间成员发起，向全房间广播 `screen:started{userId,username}`）、`screen:stop`（广播 `screen:stopped`）、`screen:signal`（按 `to` 定向转发 `screen:signal{from,data}`，服务端校验收发双方均为同房间成员——防止把媒体信令发给陌生人，且**不解析 SDP**）。客户端 `ScreenShareManager` 建 mesh：共享者 `getDisplayMedia` 取流后对每个成员发起 offer、观看者收到 `screen:started` 后建 RTCPeerConnection 等待 offer 并回 answer，ICE 候选双向透传。STUN 默认国内可达公共节点；**无 TURN 兜底**（对称 NAT 连不通为已知限制，生产可自建 coturn 中继）。WebView2 采集要求窗口高度 ≥600px，主窗口正常、input/overlay 小窗口不可用于发起。真机物理验收项（`getDisplayMedia` 系统选择器、跨网络连通）见测试文档。
+
 **用户资料**：`users` 含个性签名 `bio`（≤100 字，PATCH /api/auth/me 维护）；成员卡片经
 `GET /api/users/:id`（登录态、UUID 不可枚举）读取公开资料。
 
@@ -152,6 +166,8 @@ gametalk/
 - `011_edited`：`messages.edited_at` / `dm_messages.edited_at`（消息编辑）
 - `012_recalled_by`：`messages.recalled_by`（撤回操作者，房主代撤文案用）
 - `013_stickers`：`user_stickers`（个人云表情，跨设备同步）/ `room_stickers`（房间共享表情库，成员贡献）
+- `014_invite_links`：`invite_links`（16 位长码，可过期 `expires_at` / 可限次数 `max_uses` / `used_count` 计数，随房间级联删除）
+- `015_forwarded_label`：`messages.forwarded_from_label` / `dm_messages.forwarded_from_label`（转发来源展示快照，纯展示不参与权限判断）
 
 ## 6. 游戏 Overlay（透明置顶窗口方案）
 
