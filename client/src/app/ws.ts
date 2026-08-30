@@ -147,7 +147,13 @@ export class ChatSocket {
     return false;
   }
 
+  /** close() 后置位：底层 socket 迟到的 close 事件不得再把状态推向订阅者
+   *  （否则旧连接的 closed 会覆盖新连接的 open，UI 卡在「已断开」） */
+  private disposed = false;
+
   close(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.closedByUser = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
@@ -160,6 +166,7 @@ export class ChatSocket {
   }
 
   private emitStatus(s: WsStatus): void {
+    if (this.disposed) return;
     for (const fn of [...this.statusListeners]) fn(s);
   }
 }

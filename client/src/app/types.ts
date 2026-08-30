@@ -111,7 +111,7 @@ export type ServerWsMessage =
   | { type: 'friend:declined'; payload: { userId: string } }
   | { type: 'friend:removed'; payload: { userId: string } }
   | { type: 'presence:friend'; payload: { userId: string; online: boolean } }
-  | { type: 'error'; payload: { code: string; message: string; roomId?: string; mutedUntil?: string } }
+  | { type: 'error'; payload: { code: string; message: string; roomId?: string; mutedUntil?: string; to?: string; from?: string } }
   | { type: 'pong' };
 
 export type WsStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed';

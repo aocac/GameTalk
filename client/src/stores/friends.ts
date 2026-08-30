@@ -3,6 +3,7 @@ import { playMessageSound } from '../app/audio';
 import { useSettings } from '../app/settings';
 import { useAuth } from './auth';
 import * as api from '../app/api';
+import { useChat } from './chat';
 import type { Friend, FriendRequestItem } from '../app/api';
 import type { ServerWsMessage } from '../app/types';
 
@@ -105,7 +106,9 @@ export const useFriends = create<FriendsState>()((set, get) => ({
     const { token } = useAuth.getState();
     if (!token) return;
     try {
-      await api.removeFriend(token, userId);
+        await api.removeFriend(token, userId);
+      // 正在查看与该好友的私聊 → 退出该会话（否则主区悄悄回落到上个房间、草稿悬在死会话上）
+      useChat.getState().clearActiveDmIf(userId);
       set((s) => ({ friends: s.friends.filter((f) => f.id !== userId) }));
     } catch (e) {
       set({ error: e instanceof Error ? e.message : '删除好友失败' });
@@ -155,6 +158,7 @@ export const useFriends = create<FriendsState>()((set, get) => ({
         break;
       }
       case 'friend:removed': {
+        useChat.getState().clearActiveDmIf(msg.payload.userId);
         set((s) => ({ friends: s.friends.filter((f) => f.id !== msg.payload.userId) }));
         break;
       }

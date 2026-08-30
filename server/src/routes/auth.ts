@@ -216,6 +216,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     }
 
     // 动态构建 SET：undefined = 不修改；null/字符串 = 显式设置（可用于清空头像/签名）
+    // 注：username 改名的并发竞态由下方 try/catch 兜底（users.username 唯一索引 23505 → 409）
     const sets: string[] = [];
     const params: unknown[] = [];
     if (username !== undefined) {
@@ -242,10 +243,20 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     }
     params.push(req.userId);
     sets.push('updated_at = now()');
-    const updated = await db.query<UserRow>(
-      `UPDATE users SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
-      params,
-    );
+    let updated;
+    try {
+      updated = await db.query<UserRow>(
+        `UPDATE users SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+        params,
+      );
+    } catch (err) {
+      // 并发改名撞 users.username 唯一索引：返回 409 而不是裸 500
+      if ((err as { code?: string }).code === '23505') {
+        await reply.code(409).send({ error: { code: 'username_taken', message: '用户名已被占用' } });
+        return;
+      }
+      throw err;
+    }
     const user = updated.rows[0];
     if (!user) {
       await reply.code(404).send({ error: { code: 'user_not_found', message: '用户不存在' } });

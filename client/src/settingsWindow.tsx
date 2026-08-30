@@ -73,7 +73,15 @@ export default function SettingsWindow() {
     setUpdateState('checking');
     setUpdateError(false);
     try {
-      const res = await fetch('https://api.github.com/repos/aocac/GameTalk/releases/latest');
+      // GitHub 访问受限/挂起时不能让「检查中…」永远挂着
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      let res: Response;
+      try {
+        res = await fetch('https://api.github.com/repos/aocac/GameTalk/releases/latest', { signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
       const data = (await res.json()) as { tag_name?: string };
       const latest = String(data.tag_name ?? '').replace(/^v/, '');
       if (!latest) throw new Error('no release');

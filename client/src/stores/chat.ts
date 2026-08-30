@@ -110,6 +110,8 @@ interface ChatState {
   sendMessage: (text: string, opts?: SendOptions, roomOverride?: string) => void;
   clearRoomError: () => void;
   openDm: (peerId: string) => Promise<void>;
+  /** 删除好友时调用：若正查看与该好友的私聊，退出该会话并清理未读 */
+  clearActiveDmIf: (peerId: string) => void;
   loadDmConversations: () => Promise<void>;
   loadOlderDmMessages: (peerId: string) => Promise<void>;
   sendDm: (text: string, opts?: SendOptions, peerOverride?: string) => void;
@@ -167,6 +169,12 @@ function subscribeAllRooms(): void {
 /** 从本地移除房间（离开/被删/失效）：清理缓存并退订 WS */
 function removeRoomLocal(roomId: string): void {
   unsubscribeRoom(roomId);
+  // 该房间的在途发送与排队一并清理：残留会让看门狗误判半开连接强制重连，
+  // 重新加入同一房间时还会把几分钟前的排队消息突然发出去
+  for (let i = pendingSends.length - 1; i >= 0; i--) {
+    if (pendingSends[i].roomId === roomId) pendingSends.splice(i, 1);
+  }
+  queuedSends = queuedSends.filter((q) => q.roomId !== roomId);
   useChat.setState((s) => {
     const rooms = s.rooms.filter((r) => r.id !== roomId);
     const messagesByRoom = { ...s.messagesByRoom };
@@ -341,9 +349,14 @@ export const useChat = create<ChatState>()((set, get) => ({
           messagesByRoom: Object.fromEntries(
             Object.entries(s.messagesByRoom).map(([rid, msgs]) => [rid, msgs.filter((m) => !m.pending)]),
           ),
-          // 重置历史标记：重连后 selectRoom 会重新拉取历史，
+          // DM 乐观占位同步清理（否则失败/超时的私聊消息永久挂在界面上）
+          dmMessages: Object.fromEntries(
+            Object.entries(s.dmMessages).map(([pid, msgs]) => [pid, msgs.filter((m) => !m.pending)]),
+          ),
+          // 重置历史标记：重连后 selectRoom/openDm 会重新拉取历史，
           // 把断开期间已入库的消息补回来（否则本地会永久丢消息）
           historyLoadedRooms: {},
+          dmHistoryLoaded: {},
         }));
         set({
           connectionError: `无法连接服务器${socket?.lastError ? `（${socket.lastError}）` : ''}。请确认服务器地址正确且服务器已运行`,
@@ -699,14 +712,49 @@ export const useChat = create<ChatState>()((set, get) => ({
           useFriends.getState().handleWs(msg);
           break;
         case 'error':
-          // 服务器返回错误：清掉未确认的乐观占位与排队消息，避免"幽灵消息"卡在界面上
-          clearPending();
-          queuedSends = [];
-          set((s) => ({
-            messagesByRoom: Object.fromEntries(
-              Object.entries(s.messagesByRoom).map(([rid, msgs]) => [rid, msgs.filter((m) => !m.pending)]),
-            ),
-          }));
+          // 服务器返回错误：清掉未确认的乐观占位与排队消息，避免"幽灵消息"卡在界面上。
+          // 定向清理：房间错误只清该房间、私聊错误只清该会话（payload.to），避免殃及无关会话的在途消息
+          const errRoomId: string | undefined = msg.payload.roomId;
+          if (errRoomId) {
+            const list = get().messagesByRoom[errRoomId];
+            if (list?.some((m) => m.pending)) {
+              shiftPending(errRoomId);
+              set((s) => ({
+                messagesByRoom: {
+                  ...s.messagesByRoom,
+                  [errRoomId]: (s.messagesByRoom[errRoomId] ?? []).filter((m) => !m.pending),
+                },
+              }));
+            }
+            queuedSends = queuedSends.filter((q) => q.roomId !== errRoomId);
+          } else if (state.me && msg.payload.to) {
+            // 服务端 dm:send 失败时 payload 带 to/from（会话双方），定位到对应会话清理
+            const meId: string = state.me.id;
+            const dmPeer = msg.payload.to === meId ? (msg.payload.from ?? '') : msg.payload.to;
+            if (!dmPeer) break;
+            shiftPending(dmKey(dmPeer));
+            set((s) => ({
+              dmMessages: {
+                ...s.dmMessages,
+                [dmPeer]: (s.dmMessages[dmPeer] ?? []).filter((m) => !m.pending),
+              },
+            }));
+          } else {
+            clearPending();
+            queuedSends = [];
+            set((s) => ({
+              messagesByRoom: Object.fromEntries(
+                Object.entries(s.messagesByRoom).map(([rid, msgs]) => [rid, msgs.filter((m) => !m.pending)]),
+              ),
+              dmMessages: Object.fromEntries(
+                Object.entries(s.dmMessages).map(([pid, msgs]) => [pid, msgs.filter((m) => !m.pending)]),
+              ),
+            }));
+          }
+          // 未细分的错误码也给出可见反馈（服务端 message 为人类可读文案）
+          if (!['unauthorized', 'not_in_room', 'only_owner', 'rate_limited', 'muted', 'room_not_found'].includes(msg.payload.code)) {
+            set({ roomError: msg.payload.message || `发送失败（${msg.payload.code}）` });
+          }
           if (msg.payload.code === 'unauthorized') {
             useAuth.getState().logout();
           } else if (msg.payload.code === 'not_in_room') {
@@ -753,6 +801,10 @@ export const useChat = create<ChatState>()((set, get) => ({
 
   resetAccountState: () => {
     stopSubWatchdog();
+    // 关闭连接：登出后迟到的 WS 事件（message:new 等）会以 me === null 撞进各 handler，
+    // 重建已清空的房间/未读状态、误发通知——断开是一劳永逸的闸门
+    socket?.close();
+    socket = null;
     clearPending();
     queuedSends = [];
     // 快捷键/表情等个性化随账号走：换账号时快捷键还原默认（表情按用户读取在 App 层处理）
@@ -789,7 +841,9 @@ export const useChat = create<ChatState>()((set, get) => ({
     set({ loadingRooms: true });
     try {
       const { rooms } = await api.listRooms(token);
-      set({ rooms });
+      // 离线期间被删除的房间：清掉失效的选中态，让自动选择逻辑接管
+      const stale = get().activeRoomId && !rooms.some((r) => r.id === get().activeRoomId);
+      set({ rooms, ...(stale ? { activeRoomId: null } : {}) });
       // 默认选中第一个房间
       if (!get().activeRoomId && rooms.length > 0) {
         await get().selectRoom(rooms[0].id);
@@ -847,8 +901,9 @@ export const useChat = create<ChatState>()((set, get) => ({
       mentionByRoom: { ...s.mentionByRoom, [roomId]: 0 },
     }));
     subscribeRoom(roomId);
-    // 加载历史（首次或 forceReload——重连后强制重拉，补齐断开期间的消息）
-    if (forceReload || (!(get().messagesByRoom[roomId]?.length) && !get().historyLoadedRooms[roomId])) {
+    // 加载历史（首次或 forceReload——重连后强制重拉，补齐断开期间的消息）。
+    // 不能用「列表非空」短路：游戏输入框的定向发送会先注入乐观消息，导致历史永远不加载
+    if (forceReload || !get().historyLoadedRooms[roomId]) {
       try {
         const { messages, hasMore } = await api.roomMessages(token, roomId, { limit: 50 });
         set((s) => ({
@@ -901,7 +956,11 @@ export const useChat = create<ChatState>()((set, get) => ({
           const { messages } = await api.roomMessages(token, r.id, { limit: 1 });
           const last = messages[messages.length - 1];
           if (!last) return;
-          set((s) => ({
+          set((s) => {
+            // REST 补齐不覆盖更新的实时预览（message:new 可能先到）
+            const existing = s.previewByRoom[r.id];
+            if (existing && existing.createdAt > last.createdAt) return s;
+            return {
             previewByRoom: {
               ...s.previewByRoom,
               [r.id]: {
@@ -916,7 +975,8 @@ export const useChat = create<ChatState>()((set, get) => ({
                 createdAt: last.createdAt,
               },
             },
-          }));
+            };
+          });
         } catch {
           // 单个房间失败不影响其他
         }
@@ -1029,6 +1089,15 @@ export const useChat = create<ChatState>()((set, get) => ({
   },
 
   clearRoomError: () => set({ roomError: null }),
+
+  clearActiveDmIf: (peerId) => {
+    if (get().activeDmPeerId !== peerId) return;
+    set((s) => {
+      const dmUnread = { ...s.dmUnread };
+      delete dmUnread[peerId];
+      return { activeDmPeerId: null, dmUnread };
+    });
+  },
 
   openDm: async (peerId) => {
     // 打开会话即清零未读；历史只在首次打开时拉取（重连重载由 hello:ok 强制触发）

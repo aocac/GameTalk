@@ -12,12 +12,24 @@ import { useSettings, applyProxySetting, type OverlayPosition } from './app/sett
 import * as gameMode from './app/gameMode';
 import appIcon from './assets/app-icon.png';
 
+/**
+ * 广播里的资源绝对 URL 由服务器按请求 Host 推导——恶意客户端可伪造 Host 把
+ * 头像/图片地址指到自己的域（受害者加载时泄漏 IP、可注入图片内容）。
+ * 这里统一重写为本端配置的 serverUrl：只要 path 是本服务端点，域名一律不信。
+ */
+function normalizeResourceUrl(u: string | null | undefined): string {
+  if (!u) return '';
+  const m = /^https?:\/\/[^/]+(\/api\/.+)$/.exec(u);
+  if (m) return useSettings.getState().serverUrl.replace(/\/+$/, '') + m[1];
+  return u;
+}
+
 function Avatar({ name, url, size = 28 }: { name: string; url?: string | null; size?: number }) {
   if (url) {
     return (
       <img
         className="avatar-img"
-        src={url}
+        src={normalizeResourceUrl(url)}
         alt={name}
         style={{ width: size, height: size }}
         onError={(e) => {
@@ -207,6 +219,8 @@ async function copyText(text: string): Promise<boolean> {
 function renderMentions(text: string, mentions?: MentionRef[]): string | ReactElement {
   const names = (mentions ?? []).map((m) => m.username).filter(Boolean);
   if (names.length === 0) return text;
+  // 长名优先匹配：否则 @Alice2 会被短名 @Alice 截断成「@Alice + 2」
+  names.sort((a, b) => b.length - a.length);
   const escaped = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const re = new RegExp(`@(${escaped.join('|')})`, 'g');
   const parts: Array<string | ReactElement> = [];
@@ -413,6 +427,13 @@ function MemberCardModal({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const kickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const removeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (kickTimer.current) clearTimeout(kickTimer.current);
+      if (removeTimer.current) clearTimeout(removeTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -872,6 +893,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const listRef = useRef<HTMLDivElement>(null);
   /** 向上翻页 prepend 后的滚动锚定基准（翻页期间的 messages.length 变化不滚到底部） */
   const anchorRef = useRef<number | null>(null);
+  /** 滚动 effect 的会话键基准：切换会话时区分「内容替换」与「新消息追加」 */
+  const convKeyRef = useRef<string | null>(null);
   const connected = status === 'open';
   const activeRoom = rooms.find((r) => r.id === activeRoomId) ?? null;
   // 活跃会话二选一：DM（好友私聊）优先于房间；DM 时消息/顶栏/成员面板均切换
@@ -919,11 +942,24 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     if (activeDm) editDm(editingMsg.id, draft);
     else if (activeRoom) editMessage(activeRoom.id, editingMsg.id, draft);
     setEditingMsg(null);
+    setPendingImage(null);
     setDraft('');
   };
 
+  const cancelEdit = () => {
+    setEditingMsg(null);
+    // 恢复进入编辑前的草稿（编辑前打了一半的消息不该被吞掉）
+    setDraft(editStashRef.current ?? '');
+    editStashRef.current = null;
+  };
+
+  /** 进入编辑前暂存的用户草稿（取消编辑时恢复，避免打了一半的消息被吞） */
+  const editStashRef = useRef<string | null>(null);
+
   const startEdit = (m: RoomMessage) => {
     setReplyTo(null);
+    setPendingImage(null);
+    editStashRef.current = draftMap[convKey] ?? '';
     setEditingMsg(m);
     setDraft(m.text);
     requestAnimationFrame(() => {
@@ -986,8 +1022,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     setReplyTo(null);
   };
 
-  // 相对媒体路径 → 绝对 URL（乐观消息里是 /api/media/:id 相对路径）
-  const absUrl = (u: string) => (u.startsWith('http') ? u : useSettings.getState().serverUrl.replace(/\/+$/, '') + u);
+  // 媒体 URL：相对路径拼 serverUrl；广播来的绝对 URL 一律重写到本端配置的服务器（防伪造 Host）
+  const absUrl = (u: string) => {
+    const n = normalizeResourceUrl(u);
+    return n.startsWith('http') ? n : useSettings.getState().serverUrl.replace(/\/+$/, '') + n;
+  };
 
   const onPickImageFile = async (file: File | undefined) => {
     if (!file || offline || !connected || (!activeRoom && !activeDm)) return;
@@ -1098,8 +1137,18 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       anchorRef.current = null;
       return;
     }
-    el.scrollTo({ top: el.scrollHeight });
-  }, [messages.length]);
+    // 会话切换后列表内容整体替换：无条件滚到底
+    if (convKeyRef.current !== convKey) {
+      convKeyRef.current = convKey;
+      el.scrollTo({ top: el.scrollHeight });
+      return;
+    }
+    // 新消息到达：仅当本来就在底部附近（或最后一条是自己发的）才跟随滚动，读历史时不打扰
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    const lastMine = messages[messages.length - 1]?.userId === me?.id;
+    if (nearBottom || lastMine) el.scrollTo({ top: el.scrollHeight });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRoomId, activeDmPeerId, messages.length]);
 
   const handleLoadOlder = async () => {
     if (!listRef.current) return;
@@ -1296,11 +1345,16 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       setLightboxOffset({ x: d.ox + (d.lx - d.sx), y: d.oy + (d.ly - d.sy) });
       lightboxDrag.current = null;
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightbox(null);
+    };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('keydown', onKey);
     };
   }, [lightbox, lightboxZoom]);
 
@@ -1326,10 +1380,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     return () => clearTimeout(t);
   }, [friendNotice, clearNotice]);
 
-  // 切换会话（房间/私聊）时取消未完成的编辑与回复，避免把文本带进另一个会话
+  // 切换会话（房间/私聊）时取消未完成的编辑/回复/@提及/待发图片与滚动锚定，
+  // 避免旧会话的交互状态泄漏进新会话（@ 补全残留会让 Enter 被劫持为插入手打文本）
   useEffect(() => {
     setEditingMsg(null);
     setReplyTo(null);
+    setMentionQuery(null);
+    pickedMentions.current.clear();
+    setPendingImage(null);
+    anchorRef.current = null;
   }, [activeRoomId, activeDmPeerId]);
 
   const submitRoomModal = async (kind: 'create' | 'join') => {
@@ -1765,10 +1824,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           {!offline && activeDm && activeDmPeerId && dmHasMore[activeDmPeerId] && (
             <button
               className="load-older"
-              disabled={!!loadingOlderRooms[activeDmPeerId]}
+              disabled={!!loadingOlderRooms[`dm:${activeDmPeerId}`]}
               onClick={() => void handleLoadOlder()}
             >
-              加载更早的消息
+              {loadingOlderRooms[`dm:${activeDmPeerId}`] ? '加载中…' : '加载更早的消息'}
             </button>
           )}
           {!offline && !activeDm && activeRoom && hasMoreByRoom[activeRoom.id] && (
@@ -2045,14 +2104,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             <div className="reply-bar edit-bar">
               <span className="reply-label">正在编辑</span>
               <span className="reply-snippet">{editingMsg.kind === 'image' && !editingMsg.text ? '[图片]' : editingMsg.text}</span>
-              <button
-                className="attachment-remove"
-                title="取消编辑"
-                onClick={() => {
-                  setEditingMsg(null);
-                  setDraft('');
-                }}
-              >
+              <button className="attachment-remove" title="取消编辑" onClick={cancelEdit}>
                 ×
               </button>
             </div>
@@ -2165,8 +2217,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               }
               if (e.key === 'Escape' && editingMsg) {
                 e.preventDefault();
-                setEditingMsg(null);
-                setDraft('');
+                cancelEdit();
                 return;
               }
               if (e.key === 'Enter' && !e.shiftKey && !offline && connected && (activeRoom || activeDm)) {
@@ -2414,7 +2465,9 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             >
               引用
             </button>
-            {msgMenu.msg.userId === me?.id && !msgMenu.msg.pending && !msgMenu.msg.recalled && (
+            {msgMenu.msg.userId === me?.id && !msgMenu.msg.pending && !msgMenu.msg.recalled &&
+              !(msgMenu.msg.kind === 'image' && !msgMenu.msg.text) && (
+              /* 纯图消息无文字可改，不提供编辑入口 */
               <button
                 className="ctx-menu-item"
                 onClick={() => {

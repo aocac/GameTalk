@@ -311,4 +311,25 @@ describe('auth', () => {
       await rlApp.close();
     }
   });
+  it('rename to a taken username returns 409 (unique index race handled)', async () => {
+    const ra = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'rn_a', password: 'password123' },
+    });
+    const rb = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'rn_b', password: 'password123' },
+    });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/auth/me',
+      headers: { authorization: `Bearer ${ra.json().token}` },
+      payload: { username: 'rn_b' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('username_taken');
+    void rb;
+  });
 });

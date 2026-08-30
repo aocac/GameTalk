@@ -38,53 +38,57 @@ async function request<T>(
 ): Promise<T> {
   // 防御：历史持久化的地址可能带尾斜杠，拼接前统一去掉，避免 //api/... 双斜杠 404
   const base = useSettings.getState().serverUrl.replace(/\/+$/, '');
-  let res: Response;
+  const controller = new AbortController();
+  // 请求超时（默认 10s）：覆盖 fetch 与 body 读取全程——只包 fetch 的话，挂起的响应体仍会让 UI 永远转圈
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10000);
   try {
-    // 请求超时（默认 10s）：防止服务器/网络挂起时 UI 永远卡在"加载中…"
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10000);
-    try {
-      res = await fetch(`${base}${path}`, {
-        method: options.method ?? 'GET',
-        headers: {
-          // 仅在有 body 时携带 JSON Content-Type：Fastify 5 对「声明 JSON 但 body 为空」会 400
-          ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-          ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-        },
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
+    const res = await fetch(`${base}${path}`, {
+      method: options.method ?? 'GET',
+      headers: {
+        // 仅在有 body 时携带 JSON Content-Type：Fastify 5 对「声明 JSON 但 body 为空」会 400
+        ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let data: ({ error?: { code: string; message: string } } & T) | undefined;
+    if (text) {
+      try {
+        data = JSON.parse(text) as { error?: { code: string; message: string } } & T;
+      } catch {
+        // 非 JSON 响应（反向代理 502 页面、网关 HTML 错误页等）：不能让 SyntaxError 裸抛
+        throw new ApiError(res.status, 'bad_response', `服务器返回异常内容（HTTP ${res.status}），请稍后重试`);
+      }
     }
-  } catch {
-    // 网络不可达（server 未启动 / 地址错误 / 超时）
+
+    if (!res.ok) {
+      const err = data?.error;
+      if (res.status === 429) {
+        throw new ApiError(429, 'rate_limited', err?.message ?? '请求过于频繁，请稍后再试');
+      }
+      throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`);
+    }
+    // 2xx 但空 body：调用方要解构响应字段，undefined 会变成下游 TypeError
+    if (data === undefined) {
+      throw new ApiError(res.status, 'bad_response', `服务器响应缺少数据（HTTP ${res.status}）`);
+    }
+    return data;
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    // AbortError = 超时（服务器可达但响应太慢）；其余为网络不可达
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new ApiError(0, 'timeout', `服务器响应超时（${base}）`);
+    }
     throw new ApiError(
       0,
       'network_error',
       `无法连接服务器（${base}）。请确认服务器地址正确且服务器已运行；自建服务器请参阅部署文档。`,
     );
+  } finally {
+    clearTimeout(timer);
   }
-
-  const text = await res.text();
-  let data: ({ error?: { code: string; message: string } } & T) | undefined;
-  if (text) {
-    try {
-      data = JSON.parse(text) as { error?: { code: string; message: string } } & T;
-    } catch {
-      // 非 JSON 响应（反向代理 502 页面、网关 HTML 错误页等）：不能让 SyntaxError 裸抛
-      throw new ApiError(res.status, 'bad_response', `服务器返回异常内容（HTTP ${res.status}），请稍后重试`);
-    }
-  }
-
-  if (!res.ok) {
-    const err = data?.error;
-    if (res.status === 429) {
-      throw new ApiError(429, 'rate_limited', err?.message ?? '请求过于频繁，请稍后再试');
-    }
-    throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`);
-  }
-  return data as T;
 }
 
 export function register(username: string, password: string): Promise<AuthResponse> {

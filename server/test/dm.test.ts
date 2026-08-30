@@ -88,7 +88,10 @@ describe('dm', () => {
     const wsA = await connectWs(a.token);
     const err = nextMessage(wsA, (m) => m.type === 'error');
     dmSend(wsA, b.userId, '你好');
-    expect((await err).payload.code).toBe('not_friends');
+    const errBody = await err;
+    expect(errBody.payload.code).toBe('not_friends');
+    // 错误携带会话定向字段：客户端据此只清理对应会话的乐观消息
+    expect(errBody.payload).toMatchObject({ to: b.userId, from: a.userId });
 
     // 成为好友后空文本仍拒绝
     const wsB = await connectWs(b.token);

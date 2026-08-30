@@ -399,32 +399,48 @@ export async function reapplyHotkey(): Promise<void> {
   await registerHotkey();
 }
 
+let startGen = 0;
+
 export async function startGameMode(): Promise<void> {
   if (started) return;
   started = true;
+  // 世代令牌：StrictMode 双挂载/快速开关时，上一次 start 的 await 间隙里 stop 可能已清空
+  // unlisteners——晚到的 listen 句柄必须自检世代，否则孤儿监听会让消息发送两次
+  const gen = ++startGen;
   await registerHotkey();
-  unlisteners.push(
-    await listen('game-input-send', (e) => {
-      const text = String(e.payload ?? '').trim();
-      if (text) onSend(text);
-      void hideInputWindow();
-    }),
-  );
-  unlisteners.push(
-    await listen('game-input-cancel', () => {
-      void hideInputWindow();
-    }),
-  );
+  if (gen !== startGen || !started) return;
+  const off1 = await listen('game-input-send', (e) => {
+    const text = String(e.payload ?? '').trim();
+    if (text) onSend(text);
+    void hideInputWindow();
+  });
+  if (gen !== startGen || !started) {
+    off1();
+    return;
+  }
+  unlisteners.push(off1);
+  const off2 = await listen('game-input-cancel', () => {
+    void hideInputWindow();
+  });
+  if (gen !== startGen || !started) {
+    off1();
+    off2();
+    return;
+  }
+  unlisteners.push(off2);
   // Overlay 调整完成：保存自定义位置/缩放并应用
-  unlisteners.push(
-    await listen('overlay:adjust-done', (e) => {
-      const p = (e.payload ?? {}) as { position?: { x: number; y: number }; scale?: number };
-      if (p.position) useSettings.getState().setOverlayCustomPosition(p.position);
-      if (typeof p.scale === 'number') useSettings.getState().setOverlayScale(p.scale);
-      useSettings.getState().setOverlayPosition('custom');
-      void applyOverlayConfig();
-    }),
-  );
+  const off3 = await listen('overlay:adjust-done', (e) => {
+    const p = (e.payload ?? {}) as { position?: { x: number; y: number }; scale?: number };
+    if (p.position) useSettings.getState().setOverlayCustomPosition(p.position);
+    if (typeof p.scale === 'number') useSettings.getState().setOverlayScale(p.scale);
+    useSettings.getState().setOverlayPosition('custom');
+    void applyOverlayConfig();
+  });
+  if (gen !== startGen || !started) {
+    off3();
+    return;
+  }
+  unlisteners.push(off3);
   await applyOverlayConfig();
 }
 

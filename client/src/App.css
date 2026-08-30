@@ -3182,7 +3182,7 @@ body {
   flex: none;
 }
 
-.listbar-body > .rooms {
+.listbar-body > nav.rooms:not(.dm-rooms) {
   flex: 1;
   overflow-y: auto;
 }
@@ -3203,6 +3203,23 @@ body {
 .listbar .friends-header {
   padding-left: 14px;
   padding-right: 14px;
+}
+
+/* 列表列为浅色底：深侧栏配色（--side-*）在此不可读，重定义 */
+.listbar .rooms-header {
+  color: var(--text-2);
+}
+
+.listbar .rooms-header .icon-btn {
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.listbar .rooms-header .icon-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--surface);
 }
 
 .listbar .rooms {

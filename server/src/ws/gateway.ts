@@ -712,11 +712,11 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       const text = safeText(msg.payload.text);
       const mediaUrl = typeof msg.payload.mediaUrl === 'string' ? msg.payload.mediaUrl : null;
       if (!text && !mediaUrl) {
-        send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'message is empty' } });
+        send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'message is empty', to, from: conn.userId } });
         return;
       }
       if (!to || to === conn.userId) {
-        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid dm target' } });
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid dm target', to, from: conn.userId } });
         return;
       }
       const friend = await db.query(
@@ -726,7 +726,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         [conn.userId, to],
       );
       if (friend.rows.length === 0) {
-        send(conn.socket, { type: 'error', payload: { code: 'not_friends', message: '仅好友之间可以私聊' } });
+        send(conn.socket, { type: 'error', payload: { code: 'not_friends', message: '仅好友之间可以私聊', to, from: conn.userId } });
         return;
       }
       // 图片消息：mediaUrl 必须是本服务媒体端点且属于发送者（与房间消息同策略）
@@ -735,12 +735,12 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       if (mediaUrl) {
         const m = /^\/api\/media\/([0-9a-f-]{36})$/.exec(mediaUrl);
         if (!m) {
-          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid media url' } });
+          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid media url', to, from: conn.userId } });
           return;
         }
         const owned = await db.query('SELECT 1 FROM media WHERE id = $1 AND owner_id = $2', [m[1], conn.userId]);
         if (owned.rows.length === 0) {
-          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'media not found' } });
+          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'media not found', to, from: conn.userId } });
           return;
         }
         kind = 'image';
@@ -752,7 +752,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       const rawReply = typeof msg.payload.replyTo === 'string' ? msg.payload.replyTo : '';
       if (rawReply) {
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawReply)) {
-          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid reply id' } });
+          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid reply id', to, from: conn.userId } });
           return;
         }
         const r = await db.query<{ id: string; username: string; text: string; kind: string; recalled: boolean }>(
@@ -762,7 +762,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         );
         const row = r.rows[0];
         if (!row) {
-          send(conn.socket, { type: 'error', payload: { code: 'message_not_found', message: 'reply target not found' } });
+          send(conn.socket, { type: 'error', payload: { code: 'message_not_found', message: 'reply target not found', to, from: conn.userId } });
           return;
         }
         replyTo = rawReply;
