@@ -711,7 +711,7 @@ export const useChat = create<ChatState>()((set, get) => ({
           // 好友域事件由 friends store 处理（chat socket 是唯一的 WS 通道）
           useFriends.getState().handleWs(msg);
           break;
-        case 'error':
+        case 'error': {
           // 服务器返回错误：清掉未确认的乐观占位与排队消息，避免"幽灵消息"卡在界面上。
           // 定向清理：房间错误只清该房间、私聊错误只清该会话（payload.to），避免殃及无关会话的在途消息
           const errRoomId: string | undefined = msg.payload.roomId;
@@ -780,6 +780,7 @@ export const useChat = create<ChatState>()((set, get) => ({
             set({ roomError: '房间不存在或已被删除' });
           }
           break;
+        }
         default:
           break;
       }
