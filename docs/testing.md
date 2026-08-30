@@ -45,6 +45,7 @@ cd client/src-tauri && cargo check
 | 21 | 房主代撤（广播/历史带 recalledBy，撤回行三态文案，预览作者同步） | ✅ | ✅ 双账号浏览器（docs/ui-fix-050.png） |
 | 22 | Windows 系统通知（三档设置/仅@与私聊/活跃会话不弹） | 档位逻辑随 store | 真机安装包验收（需 Windows 通知权限） |
 | 23 | 云表情包（个人 CRUD/归属/上限 24/幂等）+ 群共享（成员 403/贡献者删除/房主删除/幂等）+ 共享媒体发送 | ✅（3 例） | ✅ 双账号浏览器全流程（上传/同步/跨账号可见/点选发送/房主删除，dev/e2e-stickers.mjs，docs/ui-stickers.png） |
+| 24 | 通知点击跳转会话（聚焦消费 pendingNotifyTarget，输入中不打断） | 逻辑随 store | 真机安装包验收（点通知 → 聚焦并切到对应会话） |
 
 当前实测：server 55 测试 + client 17 测试（5 集成 + 12 单测）全绿（含云表情包 3 例）；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
 

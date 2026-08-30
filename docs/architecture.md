@@ -112,6 +112,8 @@ gametalk/
 
 **图片消息**：客户端先 `POST /api/media`（data URL，≤5MB，魔数校验）取得 `/api/media/<uuid>`，再随 `message:send(kind=image)` 发送；服务端校验该媒体必须存在且属于发送者，**或已登记为共享表情**（本房间群表情 / DM 双方任一收藏，支撑「成员贡献、全群使用」的群表情场景；其余引用仍严格拒绝）。读取端点免认证（`<img>` 带不了 Authorization 头），与头像同策略：UUID 不可枚举 + immutable 缓存。
 
+**通知与跳转**：Windows 系统通知按用户档位触发；桌面端通知无点击回调（插件 onAction 仅移动端），等价方案为「通知到达时记录会话定位（pendingNotifyTarget）→ 应用窗口获得焦点时消费并切换会话」，用户输入中不打断。
+
 **表情包**：`POST/GET/DELETE /api/stickers`（个人云表情，媒体归属校验 + 24 上限 + 幂等）、`POST/GET/DELETE /api/rooms/:id/stickers`（房间共享，成员资格校验，删除 = 添加者或房主）。客户端表情面板三页签：表情 / 我的表情包（云同步，本地旧数据自动迁移）/ 群表情（按房间隔离）。
 
 **好友**：`friendships`（pending/accepted，双向唯一）；支持 userId / 用户名 / `#8 位短 ID` 查找；反向申请等价于互加。实时事件（`friend:request/accepted/declined/removed`）经 WS 推送在线方。好友与房间完全分离管理。
