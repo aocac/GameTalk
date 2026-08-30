@@ -120,6 +120,9 @@ type ClientMessage =
       type: 'message:forward';
       payload: { source: unknown; messageId: unknown; targetRoomId?: unknown; targetUserId?: unknown };
     }
+  | { type: 'screen:start'; payload: { roomId: string } }
+  | { type: 'screen:stop'; payload: { roomId: string } }
+  | { type: 'screen:signal'; payload: { roomId: string; to: string; data: unknown } }
   | { type: 'ping' };
 
 interface UserRow extends QueryResultRow {
@@ -1076,6 +1079,63 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       }
       break;
     }
+    case 'screen:start': {
+      // 屏幕共享开始：仅房间成员可发起；通知房间内所有人（含自己作为确认）
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const roomId = sanitizeRoomId(msg.payload.roomId);
+      const member = await db.query('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, conn.userId]);
+      if (member.rows.length === 0 || !conn.rooms.has(roomId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
+        return;
+      }
+      broadcastToRoom(roomId, {
+        type: 'screen:started',
+        payload: { roomId, userId: conn.userId, username: conn.username },
+      });
+      break;
+    }
+
+    case 'screen:stop': {
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const roomId = sanitizeRoomId(msg.payload.roomId);
+      if (!conn.rooms.has(roomId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
+        return;
+      }
+      broadcastToRoom(roomId, { type: 'screen:stopped', payload: { roomId } });
+      break;
+    }
+
+    case 'screen:signal': {
+      // WebRTC 信令透传：仅转发给同房间指定成员；服务端不解析 SDP
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const roomId = sanitizeRoomId(msg.payload.roomId);
+      const targetId = String(msg.payload.to ?? '');
+      if (!conn.rooms.has(roomId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
+        return;
+      }
+      const both = await db.query(
+        `SELECT 1 FROM room_members WHERE room_id = $1 AND user_id IN ($2, $3) LIMIT 2`,
+        [roomId, conn.userId, targetId],
+      );
+      if (Number(both.rows.length) !== 2) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'target not in room', roomId } });
+        return;
+      }
+      sendToUser(targetId, { type: 'screen:signal', payload: { from: conn.userId, data: msg.payload.data } });
+      break;
+    }
+
     case 'ping': {
       send(conn.socket, { type: 'pong' });
       break;

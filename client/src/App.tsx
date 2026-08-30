@@ -803,6 +803,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     recallDm,
     editMessage,
     editDm,
+    screenShare,
+    startScreenShare,
+    stopScreenShare,
+    watchScreenShare,
   } = useChat();
   const { user, logout } = useAuth();
   const { gameModeEnabled, hotkey, soundEnabled, notifyLevel } = useSettings();
@@ -924,6 +928,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const lightboxImgRef = useRef<HTMLImageElement | null>(null);
   const lightboxDrag = useRef<{ id: number; sx: number; sy: number; ox: number; oy: number; lx: number; ly: number } | null>(null);
   const lightboxMoved = useRef(false);
+  const screenVideoRef = useRef<HTMLVideoElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   /** 待发送图片附件：上传完成后先挂起，可配文字，手动发送 */
   const [pendingImage, setPendingImage] = useState<string | null>(null);
@@ -951,7 +956,20 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const convKeyRef = useRef<string | null>(null);
   const connected = status === 'open';
 
-  /** 深链邀请：登录进入聊天页时读取中转的邀请码；运行期新链接经根组件派发自定义事件后再读 */
+  /** 屏幕共享：远端视频流赋给 video 元素 */
+  useEffect(() => {
+    if (screenVideoRef.current && screenShare.remoteStream) {
+      screenVideoRef.current.srcObject = screenShare.remoteStream;
+    }
+  }, [screenShare.remoteStream]);
+
+  /** 切换活跃会话时：若有人共享且不是自己，自动建立 watch（进房晚于共享开始也能看） */
+  useEffect(() => {
+    if (activeRoomId && screenShare.sharerId && screenShare.sharerId !== me?.id && !screenShare.remoteStream) {
+      watchScreenShare(screenShare.sharerId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRoomId, screenShare.sharerId]);
   useEffect(() => {
     const consume = () => {
       try {
@@ -1896,6 +1914,32 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                 {activeSubscribed ? '订阅 ✓' : '订阅中…'}
               </span>
             )}
+            {activeRoom && !activeDm && !offline && (
+              <button
+                className="btn ghost small"
+                disabled={screenShare.sharerId !== null && screenShare.sharerId !== me?.id}
+                title={
+                  screenShare.sharing
+                    ? '停止共享屏幕'
+                    : screenShare.sharerId
+                      ? `${membersByRoom[activeRoom.id]?.find((m) => m.id === screenShare.sharerId)?.username ?? '某人'} 正在共享屏幕`
+                      : '开始共享屏幕（P2P，不经过服务器）'
+                }
+                onClick={() => {
+                  if (screenShare.sharing) {
+                    stopScreenShare();
+                  } else {
+                    void startScreenShare();
+                  }
+                }}
+              >
+                {screenShare.sharing
+                  ? '停止共享'
+                  : screenShare.sharerId
+                    ? '共享中…'
+                    : '屏幕共享'}
+              </button>
+            )}
             {!offline && (
               <button className="btn ghost small" onClick={connected ? disconnect : connect}>
                 {connected ? '断开' : '连接'}
@@ -1933,6 +1977,20 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             <button className="btn ghost small" onClick={clearRoomError}>
               关闭
             </button>
+          </div>
+        )}
+
+        {screenShare.sharing && (
+          <div className="screen-banner">
+            你正在共享屏幕
+            <button className="btn ghost small" onClick={stopScreenShare}>
+              停止共享
+            </button>
+          </div>
+        )}
+        {!screenShare.sharing && screenShare.remoteStream && (
+          <div className="screen-viewer">
+            <video ref={screenVideoRef} autoPlay playsInline muted className="screen-video" />
           </div>
         )}
 

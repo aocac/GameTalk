@@ -3449,3 +3449,30 @@ body {
   color: var(--danger, #c0392b);
   line-height: 1.6;
 }
+
+/* ============ 屏幕共享 ============ */
+.screen-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 16px 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 13px;
+}
+.screen-viewer {
+  display: flex;
+  justify-content: center;
+  padding: 10px 16px 0;
+}
+.screen-video {
+  width: 100%;
+  max-height: 45vh;
+  border-radius: 12px;
+  background: #1c1f26;
+  box-shadow: 0 6px 24px rgba(31, 41, 61, 0.18);
+  object-fit: contain;
+}

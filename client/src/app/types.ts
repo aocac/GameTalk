@@ -96,6 +96,9 @@ export type ClientWsMessage =
       type: 'message:forward';
       payload: { source: 'room' | 'dm'; messageId: string; targetRoomId?: string; targetUserId?: string };
     }
+  | { type: 'screen:start'; payload: { roomId: string } }
+  | { type: 'screen:stop'; payload: { roomId: string } }
+  | { type: 'screen:signal'; payload: { roomId: string; to: string; data: unknown } }
   | { type: 'ping' };
 
 // 服务端 -> 客户端
@@ -119,6 +122,9 @@ export type ServerWsMessage =
   | { type: 'friend:declined'; payload: { userId: string } }
   | { type: 'friend:removed'; payload: { userId: string } }
   | { type: 'presence:friend'; payload: { userId: string; online: boolean } }
+  | { type: 'screen:started'; payload: { roomId: string; userId: string; username: string } }
+  | { type: 'screen:stopped'; payload: { roomId: string } }
+  | { type: 'screen:signal'; payload: { from: string; data: unknown } }
   | { type: 'error'; payload: { code: string; message: string; roomId?: string; mutedUntil?: string; to?: string; from?: string } }
   | { type: 'pong' };
 
