@@ -8,6 +8,7 @@ import type { JwtService } from './lib/jwt.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerRoomsRoutes } from './routes/rooms.js';
+import { registerInvitesRoutes } from './routes/invites.js';
 import { registerFriendsRoutes } from './routes/friends.js';
 import { registerDmRoutes } from './routes/dm.js';
 import { registerStickersRoutes } from './routes/stickers.js';
@@ -65,6 +66,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerHealthRoutes(app, { db });
   registerAuthRoutes(app, { config, db, jwt });
   registerRoomsRoutes(app, { db, jwt });
+  registerInvitesRoutes(app, { db, jwt });
   registerFriendsRoutes(app, { db, jwt });
   registerDmRoutes(app, { db, jwt });
   registerStickersRoutes(app, { db, jwt });

@@ -73,7 +73,7 @@ export async function isMember(db: Db, roomId: string, userId: string): Promise<
   return res.rows.length > 0;
 }
 
-async function fetchRoomWithCount(db: Db, roomId: string): Promise<RoomRow | null> {
+export async function fetchRoomWithCount(db: Db, roomId: string): Promise<RoomRow | null> {
   const res = await db.query<RoomRow>(
     `SELECT r.*, COUNT(rm.user_id)::int AS member_count
      FROM rooms r

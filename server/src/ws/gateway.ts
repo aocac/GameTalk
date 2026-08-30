@@ -56,6 +56,8 @@ interface ChatMessage {
   recalled?: boolean;
   /** 编辑时间（ISO；仅编辑过的消息携带） */
   editedAt?: string;
+  /** 转发来源快照（纯展示，如「来自 群A · 张三」） */
+  forwardedFromLabel?: string | null;
 }
 
 interface MentionRef {
@@ -78,6 +80,8 @@ interface DmMessage {
   recalled?: boolean;
   /** 编辑时间（ISO；仅编辑过的消息携带） */
   editedAt?: string;
+  /** 转发来源快照（纯展示，如「来自 群A · 张三」） */
+  forwardedFromLabel?: string | null;
 }
 
 /** 引用回复快照：随消息入库/广播，渲染不依赖原消息仍在客户端历史窗口内 */
@@ -112,6 +116,10 @@ type ClientMessage =
   | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: unknown; replyTo?: unknown } }
   | { type: 'dm:recall'; payload: { messageId: string } }
   | { type: 'dm:edit'; payload: { messageId: string; text: string } }
+  | {
+      type: 'message:forward';
+      payload: { source: unknown; messageId: unknown; targetRoomId?: unknown; targetUserId?: unknown };
+    }
   | { type: 'ping' };
 
 interface UserRow extends QueryResultRow {
@@ -919,6 +927,152 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         };
         sendToUser(target.sender_id, notice);
         sendToUser(target.recipient_id, notice);
+      }
+      break;
+    }
+    case 'message:forward': {
+      // 转发：把房间/私聊里可见的一条消息复制到目标会话（文本/图片原样，引用与提及不带走）。
+      // 服务端代为复制 media_url，天然绕过媒体归属校验（原校验已保证入库合法），杜绝伪造引用。
+      if (!conn.userId) {
+        send(conn.socket, { type: 'error', payload: { code: 'not_authenticated', message: 'hello first' } });
+        return;
+      }
+      const source = msg.payload.source === 'dm' ? 'dm' : 'room';
+      const messageId = sanitizeRoomId(String(msg.payload.messageId ?? ''));
+      const targetRoomId = typeof msg.payload.targetRoomId === 'string' ? sanitizeRoomId(msg.payload.targetRoomId) : '';
+      const targetUserId = typeof msg.payload.targetUserId === 'string' ? String(msg.payload.targetUserId) : '';
+      if (!messageId || (!targetRoomId && !targetUserId) || (targetRoomId && targetUserId)) {
+        send(conn.socket, {
+          type: 'error',
+          payload: { code: 'invalid_input', message: 'forward requires exactly one target' },
+        });
+        return;
+      }
+
+      // 源消息可见性：房间消息须为源房间成员；私聊须为对话双方
+      let srcText: string;
+      let srcKind: 'text' | 'image';
+      let srcMediaUrl: string | null;
+      let label: string;
+      if (source === 'room') {
+        const found = await db.query<{ username: string; text: string; kind: string; media_url: string | null; room_name: string }>(
+          `SELECT m.username, m.text, m.kind, m.media_url, r.name AS room_name
+           FROM messages m JOIN rooms r ON r.id = m.room_id
+           WHERE m.id = $1 AND m.recalled = false`,
+          [messageId],
+        );
+        const row = found.rows[0];
+        if (!row) {
+          send(conn.socket, { type: 'error', payload: { code: 'message_not_found', message: 'message not found' } });
+          return;
+        }
+        const member = await db.query('SELECT 1 FROM room_members WHERE room_id = (SELECT room_id FROM messages WHERE id = $1) AND user_id = $2', [
+          messageId,
+          conn.userId,
+        ]);
+        if (member.rows.length === 0) {
+          send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'you cannot see this message' } });
+          return;
+        }
+        srcText = row.text;
+        srcKind = row.kind === 'image' ? 'image' : 'text';
+        srcMediaUrl = row.media_url;
+        label = `来自 ${row.room_name} · ${row.username}`;
+      } else {
+        const found = await db.query<{ username: string; text: string; kind: string; media_url: string | null; sender_id: string; recipient_id: string }>(
+          'SELECT username, text, kind, media_url, sender_id, recipient_id FROM dm_messages WHERE id = $1 AND recalled = false',
+          [messageId],
+        );
+        const row = found.rows[0];
+        if (!row) {
+          send(conn.socket, { type: 'error', payload: { code: 'message_not_found', message: 'message not found' } });
+          return;
+        }
+        if (row.sender_id !== conn.userId && row.recipient_id !== conn.userId) {
+          send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'you cannot see this message' } });
+          return;
+        }
+        srcText = row.text;
+        srcKind = row.kind === 'image' ? 'image' : 'text';
+        srcMediaUrl = row.media_url;
+        label = `来自 ${row.username} 的私聊`;
+      }
+      if (!srcText && !srcMediaUrl) {
+        send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'nothing to forward' } });
+        return;
+      }
+
+      if (targetRoomId) {
+        // 转发进房间 = 在该房间发一条新消息：成员资格 + 禁言约束一致
+        const member = await db.query('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [
+          targetRoomId,
+          conn.userId,
+        ]);
+        if (member.rows.length === 0) {
+          send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId: targetRoomId } });
+          return;
+        }
+        const muted = await db.query('SELECT 1 FROM room_mutes WHERE room_id = $1 AND user_id = $2 AND muted_until > now()', [
+          targetRoomId,
+          conn.userId,
+        ]);
+        if (muted.rows.length > 0) {
+          send(conn.socket, { type: 'error', payload: { code: 'muted', message: 'you are muted in this room', roomId: targetRoomId } });
+          return;
+        }
+        const inserted = await db.query<{ id: string; created_at: string }>(
+          `INSERT INTO messages (room_id, user_id, username, text, mentions, kind, media_url, forwarded_from_label)
+           VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, $6, $7) RETURNING id, created_at`,
+          [targetRoomId, conn.userId, conn.username, srcText, srcKind, srcMediaUrl, label],
+        );
+        const row = inserted.rows[0];
+        const message: ChatMessage = {
+          id: row.id,
+          roomId: targetRoomId,
+          userId: conn.userId,
+          username: conn.username,
+          avatarUrl: conn.avatarUrl,
+          text: srcText,
+          createdAt: row.created_at,
+          mentions: [],
+          kind: srcKind,
+          mediaUrl: srcMediaUrl ? `${conn.httpBase}${srcMediaUrl}` : null,
+          forwardedFromLabel: label,
+        };
+        broadcastToRoom(targetRoomId, { type: 'message:new', payload: { roomId: targetRoomId, message } });
+      } else {
+        // 转发给好友 = 私聊新消息：好友关系校验与 dm:send 一致
+        const friend = await db.query(
+          `SELECT 1 FROM friendships
+           WHERE status = 'accepted'
+             AND ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))`,
+          [conn.userId, targetUserId],
+        );
+        if (friend.rows.length === 0) {
+          send(conn.socket, { type: 'error', payload: { code: 'not_friends', message: '仅好友之间可以私聊' } });
+          return;
+        }
+        const inserted = await db.query<{ id: string; created_at: string }>(
+          `INSERT INTO dm_messages (sender_id, recipient_id, username, text, kind, media_url, forwarded_from_label)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
+          [conn.userId, targetUserId, conn.username, srcText, srcKind, srcMediaUrl, label],
+        );
+        const row = inserted.rows[0];
+        const message: DmMessage = {
+          id: row.id,
+          from: conn.userId,
+          to: targetUserId,
+          username: conn.username,
+          avatarUrl: conn.avatarUrl,
+          text: srcText,
+          createdAt: row.created_at,
+          kind: srcKind,
+          mediaUrl: srcMediaUrl ? `${conn.httpBase}${srcMediaUrl}` : null,
+          recalled: false,
+          forwardedFromLabel: label,
+        };
+        sendToUser(conn.userId, { type: 'dm:new', payload: { message } });
+        sendToUser(targetUserId, { type: 'dm:new', payload: { message } });
       }
       break;
     }
