@@ -52,6 +52,8 @@ export interface ChatMessage {
   editedAt?: string;
   /** 撤回操作者（房主代撤时与作者不同；旧数据/旧服务端无此字段，渲染回落消息作者） */
   recalledBy?: { id: string; username: string };
+  /** 转发来源快照（纯展示，如「来自 群A · 张三」） */
+  forwardedFromLabel?: string | null;
   /** 客户端本地字段：乐观发送未确认时标记（真实服务器消息无此字段） */
   pending?: boolean;
 }
@@ -71,6 +73,8 @@ export interface DmMessage {
   recalled?: boolean;
   /** 编辑时间（ISO；仅编辑过的消息携带） */
   editedAt?: string;
+  /** 转发来源快照（纯展示，如「来自 群A · 张三」） */
+  forwardedFromLabel?: string | null;
 }
 
 // 客户端 -> 服务端
@@ -88,6 +92,10 @@ export type ClientWsMessage =
   | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: string; replyTo?: string } }
   | { type: 'dm:recall'; payload: { messageId: string } }
   | { type: 'dm:edit'; payload: { messageId: string; text: string } }
+  | {
+      type: 'message:forward';
+      payload: { source: 'room' | 'dm'; messageId: string; targetRoomId?: string; targetUserId?: string };
+    }
   | { type: 'ping' };
 
 // 服务端 -> 客户端

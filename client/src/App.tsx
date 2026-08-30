@@ -12,6 +12,9 @@ import { useSettings, applyProxySetting, type OverlayPosition } from './app/sett
 import * as gameMode from './app/gameMode';
 import appIcon from './assets/app-icon.png';
 
+/** deep link 邀请码中转键：根组件收到 gametalk:// 链接后落盘，ChatView（登录后）读取弹确认 */
+const PENDING_INVITE_KEY = 'gametalk_pending_invite';
+
 /**
  * 广播里的资源绝对 URL 由服务器按请求 Host 推导——恶意客户端可伪造 Host 把
  * 头像/图片地址指到自己的域（受害者加载时泄漏 IP、可注入图片内容）。
@@ -68,8 +71,7 @@ function StatusDot({ status }: { status: string }) {
 }
 
 /** 撤回行文案：代撤（操作者≠作者）一律带出被撤人——自己代撤「你撤回了 XX 的消息」，房主代撤「房主撤回了 XX 的消息」；作者自己撤「你/XX撤回了一条消息」 */
-function recallLineOf(m: { userId: string; username: string; recalledBy?: { id: string; username: string } }, meId?: string): string {
-  const op = m.recalledBy ?? { id: m.userId, username: m.username };
+function recallLineOf(m: { userId: string; username: string; recalledBy?: { id: string; username: string } }, meId?: string): string {  const op = m.recalledBy ?? { id: m.userId, username: m.username };
   if (op.id !== m.userId) {
     return op.id === meId ? `你撤回了 ${m.username} 的消息` : `${op.username}撤回了 ${m.username} 的消息`;
   }
@@ -826,6 +828,12 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [friendMenu, setFriendMenu] = useState<{ friend: api.Friend; x: number; y: number; confirmRemove: boolean } | null>(null);
   /** 私聊消息头像右键菜单：查看资料 / 删除好友（二次确认） */
   const [dmMsgMenu, setDmMsgMenu] = useState<{ member: UserBrief; x: number; y: number; confirmRemove: boolean } | null>(null);
+  /** 转发选择器：待转发的消息 + 来源会话类型（目标 = 我的房间列表 ∪ 好友私聊） */
+  const [forwardPicker, setForwardPicker] = useState<{ msg: RoomMessage; source: 'room' | 'dm' } | null>(null);
+  /** 邀请链接管理面板：目标房间 */
+  const [invitePanelRoom, setInvitePanelRoom] = useState<api.Room | null>(null);
+  /** deep link 邀请：待预览确认的邀请码（gametalk://join?code=xxx） */
+  const [pendingInvite, setPendingInvite] = useState<string | null>(null);
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
@@ -942,6 +950,21 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   /** 滚动 effect 的会话键基准：切换会话时区分「内容替换」与「新消息追加」 */
   const convKeyRef = useRef<string | null>(null);
   const connected = status === 'open';
+
+  /** 深链邀请：登录进入聊天页时读取中转的邀请码；运行期新链接经根组件派发自定义事件后再读 */
+  useEffect(() => {
+    const consume = () => {
+      try {
+        const saved = localStorage.getItem(PENDING_INVITE_KEY);
+        if (saved) setPendingInvite(saved);
+      } catch {
+        // localStorage 不可用（隐私模式等）：跳过中转
+      }
+    };
+    consume();
+    window.addEventListener('gametalk-invite', consume);
+    return () => window.removeEventListener('gametalk-invite', consume);
+  }, []);
   const activeRoom = rooms.find((r) => r.id === activeRoomId) ?? null;
   // 活跃会话二选一：DM（好友私聊）优先于房间；DM 时消息/顶栏/成员面板均切换
   const activeDm = activeDmPeerId ? (friends.find((f) => f.id === activeDmPeerId) ?? null) : null;
@@ -2047,6 +2070,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                     <div className="message-head">
                       <span className="message-author">{m.username}</span>
                       <span className="message-time">{m.pending ? '发送中…' : new Date(m.createdAt).toLocaleTimeString()}</span>
+                      {m.forwardedFromLabel && <span className="message-forwarded" title={m.forwardedFromLabel}>转发</span>}
                       {m.editedAt && <span className="message-edited">已编辑</span>}
                     </div>
                     {m.reply && (
@@ -2466,6 +2490,16 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             >
               复制邀请码
             </button>
+            <button
+              className="ctx-menu-item"
+              onClick={() => {
+                const room = rooms.find((r) => r.id === roomMenu.id);
+                if (room) setInvitePanelRoom(room);
+                setRoomMenu(null);
+              }}
+            >
+              邀请链接…
+            </button>
             {roomMenu.isOwner && (
               <button
                 className="ctx-menu-item danger"
@@ -2612,6 +2646,17 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             >
               引用
             </button>
+            {!msgMenu.msg.pending && (
+              <button
+                className="ctx-menu-item"
+                onClick={() => {
+                  setForwardPicker({ msg: msgMenu.msg, source: activeDm ? 'dm' : 'room' });
+                  setMsgMenu(null);
+                }}
+              >
+                转发
+              </button>
+            )}
             {msgMenu.msg.userId === me?.id && !msgMenu.msg.pending && !msgMenu.msg.recalled &&
               !(msgMenu.msg.kind === 'image' && !msgMenu.msg.text) && (
               /* 纯图消息无文字可改，不提供编辑入口 */
@@ -2861,6 +2906,278 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           </div>
         </div>
       )}
+
+      {forwardPicker && (
+        <ForwardPickerModal msg={forwardPicker.msg} source={forwardPicker.source} onClose={() => setForwardPicker(null)} />
+      )}
+      {invitePanelRoom && <InviteLinkModal room={invitePanelRoom} onClose={() => setInvitePanelRoom(null)} />}
+      {pendingInvite && (
+        <DeepLinkInviteModal
+          code={pendingInvite}
+          onClose={() => {
+            setPendingInvite(null);
+            try {
+              localStorage.removeItem(PENDING_INVITE_KEY);
+            } catch {
+              // 同上：不可用则跳过
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** 转发选择器：从我的房间与好友私聊中挑一个目标，经服务端复制消息（来源标签由服务端生成） */
+function ForwardPickerModal({
+  msg,
+  source,
+  onClose,
+}: {
+  msg: RoomMessage;
+  source: 'room' | 'dm';
+  onClose: () => void;
+}) {
+  const rooms = useChat((s) => s.rooms);
+  const forwardMessage = useChat((s) => s.forwardMessage);
+  const friends = useFriends((s) => s.friends);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const preview = msg.recalled ? '（已撤回）' : msg.kind === 'image' && !msg.text ? '[图片]' : msg.text.slice(0, 60);
+  const send = (label: string, target: { roomId?: string; userId?: string }) => {
+    forwardMessage(source, msg.id, target);
+    setSentTo(label);
+    setTimeout(onClose, 500);
+  };
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal forward-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>转发消息</h3>
+        <p className="forward-preview">{preview}</p>
+        {sentTo ? (
+          <p className="forward-done">已转发到「{sentTo}」</p>
+        ) : (
+          <>
+            <div className="forward-section">转发到房间</div>
+            <div className="forward-list">
+              {rooms.length === 0 && <span className="forward-empty">暂无房间</span>}
+              {rooms.map((r) => (
+                <button key={r.id} type="button" className="forward-item" onClick={() => send(r.name, { roomId: r.id })}>
+                  <Avatar name={r.name} url={null} size={26} />
+                  <span className="forward-name">{r.name}</span>
+                </button>
+              ))}
+            </div>
+            <div className="forward-section">转发给好友（私聊）</div>
+            <div className="forward-list">
+              {friends.length === 0 && <span className="forward-empty">暂无好友</span>}
+              {friends.map((f) => (
+                <button key={f.id} type="button" className="forward-item" onClick={() => send(f.username, { userId: f.id })}>
+                  <Avatar name={f.username} url={f.avatarUrl} size={26} />
+                  <span className="forward-name">{f.username}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 邀请链接管理：成员创建（可设有效期/次数）、复制 deep link、吊销（创建者或房主） */
+function InviteLinkModal({ room, onClose }: { room: api.Room; onClose: () => void }) {
+  const me = useChat((s) => s.me);
+  const [invites, setInvites] = useState<api.InviteLink[] | null>(null);
+  const [expiresHours, setExpiresHours] = useState(0);
+  const [maxUses, setMaxUses] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const token = useAuth.getState().token ?? '';
+
+  const load = async () => {
+    try {
+      const r = await api.listInviteLinks(token, room.id);
+      setInvites(r.invites);
+    } catch {
+      setInvites([]);
+    }
+  };
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.id]);
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      await api.createInviteLink(token, room.id, {
+        expiresInHours: expiresHours || undefined,
+        maxUses: maxUses || undefined,
+      });
+      await load();
+    } catch {
+      // 错误信息由全局 roomError 提示，这里仅收尾
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copyLink = async (code: string) => {
+    await copyText(`gametalk://join?code=${code}`);
+    setCopied(code);
+    setTimeout(() => setCopied((c) => (c === code ? null : c)), 1500);
+  };
+  const revoke = async (code: string) => {
+    try {
+      await api.revokeInviteLink(token, code);
+      await load();
+    } catch {
+      // 失败静默：列表刷新即反馈
+    }
+  };
+  const fmtExpiry = (iso: string | null) => (iso ? `有效期至 ${new Date(iso).toLocaleString()}` : '永久有效');
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal invite-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>邀请链接 · {room.name}</h3>
+        <div className="invite-create">
+          <select value={expiresHours} onChange={(e) => setExpiresHours(Number(e.target.value))}>
+            <option value={0}>永久有效</option>
+            <option value={24}>24 小时</option>
+            <option value={168}>7 天</option>
+            <option value={720}>30 天</option>
+          </select>
+          <select value={maxUses} onChange={(e) => setMaxUses(Number(e.target.value))}>
+            <option value={0}>不限次数</option>
+            <option value={1}>限 1 次</option>
+            <option value={10}>限 10 次</option>
+            <option value={50}>限 50 次</option>
+          </select>
+          <button className="btn primary" disabled={busy} onClick={() => void create()}>
+            生成链接
+          </button>
+        </div>
+        <div className="invite-list">
+          {invites === null && <p className="invite-empty">加载中…</p>}
+          {invites !== null && invites.length === 0 && <p className="invite-empty">还没有邀请链接，生成一个发给朋友吧。</p>}
+          {(invites ?? []).map((inv) => {
+            const expired = inv.expiresAt !== null && new Date(inv.expiresAt).getTime() < Date.now();
+            const exhausted = inv.maxUses > 0 && inv.usedCount >= inv.maxUses;
+            return (
+              <div key={inv.id} className={`invite-item ${expired || exhausted ? 'dead' : ''}`}>
+                <div className="invite-meta">
+                  <code className="invite-code">{inv.code}</code>
+                  <span className="invite-sub">
+                    {fmtExpiry(inv.expiresAt)}
+                    {inv.maxUses > 0 ? ` · 已用 ${inv.usedCount}/${inv.maxUses}` : ''}
+                    {inv.inviterName ? ` · ${inv.inviterName} 创建` : ''}
+                    {expired ? ' · 已过期' : exhausted ? ' · 已用完' : ''}
+                  </span>
+                </div>
+                <div className="invite-actions">
+                  <button type="button" className="btn ghost small" onClick={() => void copyLink(inv.code)}>
+                    {copied === inv.code ? '已复制' : '复制链接'}
+                  </button>
+                  {!expired && !exhausted && (
+                    <button
+                      type="button"
+                      className="btn ghost small danger-text"
+                      disabled={!(inv.createdBy === me?.id || room.ownerId === me?.id)}
+                      title={inv.createdBy === me?.id || room.ownerId === me?.id ? '吊销此链接' : '仅创建者或房主可吊销'}
+                      onClick={() => void revoke(inv.code)}
+                    >
+                      吊销
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="invite-hint">链接形如 gametalk://join?code=…，对方点击将直接拉起 GameTalk 加入本房间。</p>
+      </div>
+    </div>
+  );
+}
+
+/** deep link 邀请确认：展示房间名/邀请人/资格，确认后 redeem 入房并切换会话 */
+function DeepLinkInviteModal({ code, onClose }: { code: string; onClose: () => void }) {
+  const token = useAuth.getState().token;
+  const [preview, setPreview] = useState<{
+    roomName: string;
+    inviterName: string;
+    expiresAt: string | null;
+    maxUses: number;
+    usedCount: number;
+    valid: boolean;
+    alreadyMember: boolean;
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [joining, setJoining] = useState(false);
+
+  useEffect(() => {
+    if (!token) {
+      setError('请先登录 GameTalk，再通过链接加入房间');
+      return;
+    }
+    api
+      .getInvitePreview(token, code)
+      .then((r) => setPreview(r.invite))
+      .catch((e) => setError(e instanceof Error ? e.message : '邀请链接无效'));
+  }, [code, token]);
+
+  const join = async () => {
+    if (!token || !preview) return;
+    setJoining(true);
+    try {
+      const r = await api.redeemInvite(token, code);
+      await useChat.getState().refreshRooms();
+      await useChat.getState().selectRoom(r.room.id, true);
+      try {
+        localStorage.removeItem(PENDING_INVITE_KEY);
+      } catch {
+        // 同上
+      }
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '加入失败，请稍后重试');
+    } finally {
+      setJoining(false);
+    }
+  };
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal invite-confirm" onClick={(e) => e.stopPropagation()}>
+        <h3>房间邀请</h3>
+        {error ? (
+          <p className="invite-error">{error}</p>
+        ) : !preview ? (
+          <p className="invite-empty">正在获取邀请信息…</p>
+        ) : (
+          <>
+            <p className="invite-room-name">{preview.roomName}</p>
+            <p className="invite-sub center">
+              {preview.inviterName} 邀请你加入
+              {preview.expiresAt ? ` · ${new Date(preview.expiresAt).toLocaleString()} 过期` : ' · 永久有效'}
+              {preview.maxUses > 0 ? ` · 剩余 ${Math.max(0, preview.maxUses - preview.usedCount)} 次名额` : ''}
+            </p>
+            {!preview.valid ? (
+              <p className="invite-error">该邀请链接已失效。</p>
+            ) : preview.alreadyMember ? (
+              <>
+                <p className="invite-sub center">你已在该房间中。</p>
+                <button className="btn primary block" onClick={() => void join()}>
+                  打开房间
+                </button>
+              </>
+            ) : (
+              <button className="btn primary block" disabled={joining} onClick={() => void join()}>
+                {joining ? '正在加入…' : '加入房间'}
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -2912,6 +3229,63 @@ export default function App() {
   useEffect(() => {
     if (token && !user) void refreshMe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // gametalk:// 邀请链接：根组件监听（登录页也活着），码存 localStorage 中转给 ChatView。
+  // 所有 Tauri API 一律 try/catch + 动态 import：浏览器（无运行时）可能同步 throw（白屏事故教训）。
+  useEffect(() => {
+    const handleUrl = (raw: string) => {
+      const m = /code=([A-Za-z0-9]+)/.exec(raw);
+      if (!m) return;
+      const code = (m[1] ?? '').toUpperCase();
+      try {
+        localStorage.setItem(PENDING_INVITE_KEY, code);
+      } catch {
+        // 同上
+      }
+      window.dispatchEvent(new CustomEvent('gametalk-invite'));
+    };
+    const offs: Array<() => void> = [];
+    void import('@tauri-apps/plugin-deep-link')
+      .then(async (dl) => {
+        try {
+          const cur = await dl.getCurrent();
+          const u = cur?.[0];
+          if (u) handleUrl(String(u));
+        } catch {
+          // 无 Tauri 运行时（浏览器）或无冷启动 URL
+        }
+        try {
+          const un = await dl.onOpenUrl((urls) => {
+            const u = urls?.[0];
+            if (u) handleUrl(String(u));
+          });
+          offs.push(un);
+        } catch {
+          // onOpenUrl 仅桌面运行时可用
+        }
+      })
+      .catch(() => {});
+    // Windows 运行中点击链接：单实例回调经 Rust emit 转发
+    void import('@tauri-apps/api/event')
+      .then(async ({ listen }) => {
+        try {
+          const un = await listen<string>('deep-link-url', (e) => handleUrl(String(e.payload ?? '')));
+          offs.push(un);
+        } catch {
+          // 事件监听在无运行时时不可用
+        }
+      })
+      .catch(() => {});
+    return () => {
+      for (const off of offs) {
+        try {
+          off();
+        } catch {
+          // unlisten 抛错可忽略
+        }
+      }
+    };
   }, []);
 
   // 关闭确认监听提升到根组件：登录页/聊天页都能响应窗口关闭

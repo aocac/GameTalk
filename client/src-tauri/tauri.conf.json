@@ -56,6 +56,13 @@
       "devCsp": null
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["gametalk"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": [

@@ -152,6 +152,8 @@ export interface RoomMessage {
   editedAt?: string;
   /** 撤回操作者（房主代撤时与作者不同） */
   recalledBy?: { id: string; username: string };
+  /** 转发来源快照（纯展示） */
+  forwardedFromLabel?: string | null;
   /** 客户端本地字段：乐观发送未确认时标记（服务器返回的消息无此字段） */
   pending?: boolean;
 }
@@ -302,6 +304,8 @@ export interface DmApiMessage {
   reply?: { id: string; username: string; text: string; kind: 'text' | 'image' };
   recalled?: boolean;
   editedAt?: string;
+  /** 转发来源快照（纯展示） */
+  forwardedFromLabel?: string | null;
 }
 
 export function dmMessages(
@@ -316,4 +320,49 @@ export function dmMessages(
   return request<{ messages: DmApiMessage[]; hasMore: boolean }>(`/api/dm/${peerId}/messages${qs ? `?${qs}` : ''}`, {
     token,
   });
+}
+
+// ============ 邀请链接 ============
+
+export interface InviteLink {
+  id: string;
+  code: string;
+  roomId: string;
+  createdBy: string;
+  inviterName?: string;
+  /** ISO 或 null（永久） */
+  expiresAt: string | null;
+  /** 0 = 不限 */
+  maxUses: number;
+  usedCount: number;
+}
+
+export function createInviteLink(
+  token: string,
+  roomId: string,
+  opts: { expiresInHours?: number; maxUses?: number } = {},
+): Promise<{ invite: InviteLink }> {
+  return request<{ invite: InviteLink }>(`/api/rooms/${roomId}/invites`, { method: 'POST', token, body: opts });
+}
+
+export function listInviteLinks(token: string, roomId: string): Promise<{ invites: InviteLink[] }> {
+  return request<{ invites: InviteLink[] }>(`/api/rooms/${roomId}/invites`, { token });
+}
+
+export function revokeInviteLink(token: string, code: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/invites/${code}`, { method: 'DELETE', token });
+}
+
+export function getInvitePreview(
+  token: string,
+  code: string,
+): Promise<{ invite: { code: string; roomName: string; inviterName: string; expiresAt: string | null; maxUses: number; usedCount: number; valid: boolean; alreadyMember: boolean } }> {
+  return request<{ invite: { code: string; roomName: string; inviterName: string; expiresAt: string | null; maxUses: number; usedCount: number; valid: boolean; alreadyMember: boolean } }>(
+    `/api/invites/${code}`,
+    { token },
+  );
+}
+
+export function redeemInvite(token: string, code: string): Promise<{ room: Room }> {
+  return request<{ room: Room }>(`/api/invites/${code}/redeem`, { method: 'POST', token });
 }

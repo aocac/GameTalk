@@ -51,6 +51,7 @@ function dmToRoomMessage(m: DmMessage): api.RoomMessage {
     reply: m.reply,
     recalled: m.recalled,
     editedAt: m.editedAt,
+    forwardedFromLabel: m.forwardedFromLabel ?? null,
   };
 }
 
@@ -129,6 +130,8 @@ interface ChatState {
   recallDm: (messageId: string) => void;
   editMessage: (roomId: string, messageId: string, text: string) => void;
   editDm: (messageId: string, text: string) => void;
+  /** 转发消息到目标会话（房间或好友私聊）；目标会话在线成员经既有广播通道实时收到 */
+  forwardMessage: (source: 'room' | 'dm', messageId: string, target: { roomId?: string; userId?: string }) => void;
 }
 
 let socket: ChatSocket | null = null;
@@ -1218,6 +1221,23 @@ export const useChat = create<ChatState>()((set, get) => ({
       return;
     }
     socket.send({ type: 'dm:edit', payload: { messageId, text: trimmed } });
+  },
+
+  forwardMessage: (source, messageId, target) => {
+    if (get().status !== 'open' || !socket) {
+      set({ roomError: '连接未就绪，无法操作' });
+      return;
+    }
+    const ok = socket.send({
+      type: 'message:forward',
+      payload: {
+        source,
+        messageId,
+        ...(target.roomId ? { targetRoomId: target.roomId } : {}),
+        ...(target.userId ? { targetUserId: target.userId } : {}),
+      },
+    });
+    if (!ok) set({ roomError: '连接未就绪，无法操作' });
   },
 }));
 

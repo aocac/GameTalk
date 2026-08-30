@@ -45,8 +45,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // 单实例：显示并聚焦主窗口
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // 单实例：Windows 上运行中点击 gametalk:// 链接会启动第二实例，
+            // 邀请链接 URL 在第二实例的 argv 里，这里转发给主实例前端处理
+            if let Some(url) = args.iter().find(|a| a.starts_with("gametalk://")) {
+                let _ = app.emit("deep-link-url", url.clone());
+            }
+            // 显示并聚焦主窗口
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
                 let _ = w.set_focus();
