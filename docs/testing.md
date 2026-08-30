@@ -45,7 +45,7 @@ cd client/src-tauri && cargo check
 | 21 | 房主代撤（广播/历史带 recalledBy，撤回行三态文案，预览作者同步） | ✅ | ✅ 双账号浏览器（docs/ui-fix-050.png） |
 | 22 | Windows 系统通知（三档设置/仅@与私聊/活跃会话不弹） | 档位逻辑随 store | 真机安装包验收（需 Windows 通知权限） |
 
-当前实测：server 51 测试 + client 16 测试（5 集成 + 11 单测）全绿（0.5.0：撤回操作者断言并入既有用例）；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
+当前实测：server 52 测试 + client 17 测试（5 集成 + 12 单测）全绿（含改名 409、撤回操作者归属断言）；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
 
 ## 3. 真机验收清单
 

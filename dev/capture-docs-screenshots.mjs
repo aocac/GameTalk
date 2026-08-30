@@ -215,7 +215,16 @@ async function main(browser) {
   console.log('== 截图：成员右键菜单 ==')
   await pageA.evaluate((name) => {
     const el = [...document.querySelectorAll('.member-item')].find((e) => (e.textContent ?? '').includes(name))
-    el?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    // 合成事件必须带真实坐标：CtxMenu 按 clientX/Y 定位，缺省 0,0 会让菜单「飞天」到左上角
+    const r = el.getBoundingClientRect()
+    el?.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: Math.round(r.left + r.width / 2),
+        clientY: Math.round(r.top + r.height / 2),
+      }),
+    )
   }, USER_B)
   await waitText(pageA, '禁言')
   await sleep(400)
@@ -272,7 +281,16 @@ async function main(browser) {
     const el = [...document.querySelectorAll('[class*=room], li, div')].find(
       (e) => (e.textContent ?? '').trim().startsWith(room) && e.closest('[class*=listbar]'),
     )
-    el?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    // 同成员菜单：合成右键必须带真实坐标
+    const r = el.getBoundingClientRect()
+    el?.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: Math.round(r.left + Math.min(r.width - 10, 180)),
+        clientY: Math.round(r.top + r.height / 2),
+      }),
+    )
   }, ROOM_MAIN)
   await sleep(500)
   await pageA.screenshot({ path: `${OUT}ui-room-context-menu.png` })

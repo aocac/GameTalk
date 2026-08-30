@@ -24,7 +24,7 @@
 
 | 层 | 选型 | 理由 |
 |---|---|---|
-| 客户端 | Tauri 2 + React 18 + TS + Vite | 安装包 ~10MB；系统级全局快捷键、透明置顶窗口原生支持；Rust 侧极小 |
+| 客户端 | Tauri 2 + React 19 + TS + Vite | 安装包 ~10MB；系统级全局快捷键、透明置顶窗口原生支持；Rust 侧极小 |
 | 服务端 | Node 22 + Fastify 5 + @fastify/websocket | 轻量、WebSocket 一等公民、TS 全栈类型统一 |
 | 数据库 | PostgreSQL 16 | 稳定；`pg` 直连 + 纯 SQL migration，无 ORM 心智负担 |
 | 开发/测试库 | PGlite (WASM PostgreSQL) | 本机无 PG/Docker 时的真实 SQL 环境；与生产同源 migration |
@@ -39,7 +39,7 @@ gametalk/
 │   ├── src/                 # React 前端
 │   │   ├── app/             # 基础能力：types / ws / api / settings / gameMode / audio
 │   │   ├── stores/          # zustand 状态（auth / chat / friends / notifications）
-│   │   ├── App.tsx          # 主窗口 UI（登录 / 消息与好友侧栏 / 聊天 / 通知中心 / 设置）
+│   │   ├── App.tsx          # 主窗口 UI（登录 / 图标导航 rail + 会话列表列 / 聊天区 / 设置）
 │   │   ├── input.tsx        # 输入 Overlay 窗口入口
 │   │   └── overlay.tsx      # 消息 Overlay 窗口入口
 │   └── src-tauri/           # Rust 壳（托盘 / 单实例 / quit_app / set_proxy）
