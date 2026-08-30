@@ -32,17 +32,20 @@ async function register(page, username) {
 
 async function addFriendAndAccept(pa, pb, ub) {
   await pa.evaluate(() => {
-    const t = [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('好友'));
+    const t = [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('好友'));
     t?.click();
   });
   await sleep(500);
+  // 添加好友默认折叠，先展开
+  await pa.evaluate(() => document.querySelector('.friends-add-toggle')?.click());
+  await sleep(400);
   await pa.type('.friends-add input', ub);
   await pa.evaluate(() => {
     [...document.querySelectorAll('.friends-add button')].find((b) => b.textContent.includes('加好友'))?.click();
   });
   await sleep(900);
   await pb.evaluate(() => {
-    const t = [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('好友'));
+    const t = [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('好友'));
     t?.click();
   });
   await sleep(500);
@@ -53,7 +56,7 @@ async function addFriendAndAccept(pa, pb, ub) {
   // 双方切回消息 tab
   for (const p of [pa, pb]) {
     await p.evaluate(() => {
-      const t = [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('消息'));
+      const t = [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('消息'));
       t?.click();
     });
   }
@@ -63,12 +66,12 @@ async function addFriendAndAccept(pa, pb, ub) {
 async function openDmByFriendClick(page) {
   // 切好友 tab 单击好友（QQ 式直接进入私聊）→ 再切回消息 tab 验证会话区
   await page.evaluate(() => {
-    const t = [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('好友'));
+    const t = [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('好友'));
     t?.click();
   });
   await sleep(500);
   await page.evaluate(() => {
-    [...document.querySelectorAll('.friend-item')][0]?.click();
+    [...document.querySelectorAll('.friend-item')][0]?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
   });
   await sleep(1200);
 }

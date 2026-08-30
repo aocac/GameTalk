@@ -740,9 +740,9 @@ body {
 }
 
 .user-menu {
-  position: absolute;
-  left: 8px;
-  bottom: 58px;
+  position: fixed;
+  left: 12px;
+  bottom: 74px;
   width: 168px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -3042,3 +3042,227 @@ body {
   border: 1px solid var(--border);
   box-shadow: 0 1px 2px rgba(31, 41, 61, 0.05);
 }
+
+/* ================================================================
+   RAIL + LISTBAR：QQ NT 式三栏（图标导航 / 会话列表 / 聊天区）
+   ================================================================ */
+
+/* 图标导航栏（最左，深色） */
+.rail {
+  width: 66px;
+  min-width: 66px;
+  background: var(--side-bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 0 12px;
+  gap: 6px;
+}
+
+.rail-brand {
+  margin-bottom: 14px;
+}
+
+.rail-brand .logo-img {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  align-items: center;
+}
+
+.rail-item {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--side-text);
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s;
+}
+
+.rail-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--side-text-strong);
+}
+
+/* 当前导航：品牌色圆角方块（QQ NT 标志性） */
+.rail-item.active {
+  background: linear-gradient(135deg, var(--accent), #5a8bff);
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(51, 112, 255, 0.38);
+}
+
+.rail-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--unread);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--side-bg);
+  box-sizing: content-box;
+}
+
+.rail-bottom {
+  margin-top: auto;
+}
+
+.rail-user {
+  width: auto;
+  border: none;
+  background: transparent;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.rail-user .avatar,
+.rail-user .avatar-img {
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
+  transition: box-shadow 0.15s;
+}
+
+.rail-user:hover .avatar,
+.rail-user:hover .avatar-img {
+  box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.65);
+}
+
+/* 会话 / 好友列表列（浅色白底） */
+.listbar {
+  width: 230px;
+  min-width: 230px;
+  background: #f7f8fc;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.listbar-header {
+  padding: 15px 16px 10px;
+}
+
+.listbar-title {
+  font-size: 15.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.listbar-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 列表列内的旧 sidebar 内嵌套层适配：rooms/friends-panel 撑满 */
+.listbar-body > *,
+.listbar .friends-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.listbar .rooms,
+.listbar .dm-rooms {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* 老三栏适配：原 .sidebar 规则不再命中（类名已拆分），列表列独立取值 */
+.listbar .rooms-header,
+.listbar .friends-header {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+.listbar .rooms {
+  padding: 0 8px;
+}
+
+.listbar .friends-panel {
+  padding: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: transparent;
+}
+
+/* 浅色列表列上的选中态适配（QQ NT：浅蓝底 + 深字 + 左侧品牌条） */
+.room-item.active {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--text);
+}
+
+.room-item.active .room-name {
+  color: #1c2a56;
+  font-weight: 600;
+}
+
+.room-item.active .room-preview {
+  color: #5b6b96;
+}
+
+.room-item.active .room-avatar {
+  box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.35);
+}
+
+.room-item.active .room-time {
+  color: var(--accent);
+}
+
+/* 浅色列表列内的好友面板配色（原为深侧栏配色，变量失效需重定义） */
+.listbar .friends-header { color: var(--text-2); }
+.listbar .friends-header .friends-count { color: var(--text-3); }
+.listbar .friends-add-toggle {
+  color: var(--text);
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+}
+.listbar .friends-add-toggle:hover,
+.listbar .friends-add-toggle.open {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.listbar .friends-add input {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+.listbar .friends-add input::placeholder { color: var(--text-3); }
+.listbar .friends-add input:focus { border-color: var(--accent); }
+.listbar .friends-add button { border-radius: 8px; }
+.listbar .friends-notice.ok { background: #e6f6ec; color: #1a7f37; border-radius: 8px; padding: 6px 10px; }
+.listbar .friends-notice.err { background: #fdecec; color: var(--danger); border-radius: 8px; padding: 6px 10px; }
+.listbar .friends-section-title { color: var(--text-3); }
+.listbar .friend-item .member-name { color: var(--text); }
+.listbar .friend-item.offline .member-name { color: var(--text-3); }
+.listbar .friend-sub { color: var(--text-2); }
+.listbar .friend-item:hover { background: rgba(31, 41, 61, 0.05); }
+.listbar .friend-item.selected { background: var(--accent-soft); }
+.listbar .rooms-hint { color: var(--text-3); }

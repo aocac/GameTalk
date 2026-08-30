@@ -41,7 +41,7 @@ const run = async () => {
 
   // 互加好友
   await A.evaluate(() => {
-    [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('好友'))?.click();
+    [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('好友'))?.click();
   });
   await sleep(500);
   await A.type('.friends-add input', UB);
@@ -50,7 +50,7 @@ const run = async () => {
   });
   await sleep(900);
   await B.evaluate(() => {
-    [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('好友'))?.click();
+    [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('好友'))?.click();
   });
   await sleep(500);
   await B.evaluate(() => {
@@ -60,7 +60,7 @@ const run = async () => {
 
   // A 单击好友进 DM 发消息并编辑
   await A.evaluate(() => {
-    [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('好友'))?.click();
+    [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('好友'))?.click();
   });
   await sleep(500);
   await A.evaluate(() => [...document.querySelectorAll('.friend-item')][0]?.click());
@@ -96,7 +96,7 @@ const run = async () => {
 
   // B 好友面板：A 在线 → 状态点应为绿色（online class）
   await B.evaluate(() => {
-    [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('好友'))?.click();
+    [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('好友'))?.click();
   });
   await sleep(800);
   const dot = await B.evaluate(() => {

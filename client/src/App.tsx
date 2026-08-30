@@ -1346,31 +1346,66 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
 
   return (
     <div className="app">
-      <aside className="sidebar">
-        <div className="sidebar-brand">
+      {/* 图标导航栏（QQ NT 式 rail）：品牌 / 消息 / 好友 / 底部账号 */}
+      <aside className="rail">
+        <div className="rail-brand">
           <img src={appIcon} alt="GameTalk" className="logo-img" draggable={false} />
-          <span className="brand-name">GameTalk</span>
         </div>
         {!offline && (
-          <div className="side-tabs">
-            <button type="button" className={`side-tab ${sideTab === 'rooms' ? 'active' : ''}`} onClick={() => setSideTab('rooms')}>
-              消息
+          <nav className="rail-nav">
+            <button
+              type="button"
+              className={`rail-item ${sideTab === 'rooms' ? 'active' : ''}`}
+              title="消息"
+              onClick={() => setSideTab('rooms')}
+            >
+              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+              {(() => {
+                const total =
+                  Object.values(unreadByRoom).reduce((a, b) => a + b, 0) + Object.values(dmUnread).reduce((a, b) => a + b, 0);
+                return total > 0 ? <span className="rail-badge">{total > 99 ? '99+' : total}</span> : null;
+              })()}
             </button>
             <button
               type="button"
-              className={`side-tab ${sideTab === 'friends' ? 'active' : ''}`}
+              className={`rail-item ${sideTab === 'friends' ? 'active' : ''}`}
+              title="好友"
               onClick={() => {
                 setSideTab('friends');
                 void loadFriends();
               }}
             >
-              好友
+              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
               {friendIncoming.length > 0 && (
-                <span className="tab-badge">{friendIncoming.length > 99 ? '99+' : friendIncoming.length}</span>
+                <span className="rail-badge">{friendIncoming.length > 99 ? '99+' : friendIncoming.length}</span>
               )}
             </button>
-          </div>
+          </nav>
         )}
+        <div className="rail-bottom">
+          <button
+            className={`user-trigger rail-user ${userMenuOpen ? 'open' : ''}`}
+            onClick={() => setUserMenuOpen((v) => !v)}
+            title="账号菜单"
+          >
+            <Avatar name={offline ? '访客' : (user?.username ?? '')} url={user?.avatarUrl} size={34} />
+          </button>
+        </div>
+      </aside>
+
+      {/* 会话 / 好友列表列 */}
+      <aside className="listbar">
+        <div className="listbar-header">
+          <span className="listbar-title">{offline || sideTab === 'rooms' ? '消息' : '好友'}</span>
+        </div>
+        <div className="listbar-body">
         {(offline || sideTab === 'rooms') ? (
         <>
         {!offline && dmSidebar.length > 0 && (
@@ -1581,19 +1616,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           </div>
         </div>
         )}
-        <div className="sidebar-footer user-block">
-          <button
-            className={`user-trigger ${userMenuOpen ? 'open' : ''}`}
-            onClick={() => setUserMenuOpen((v) => !v)}
-            title="账号菜单"
-          >
-            <Avatar name={offline ? '访客' : (user?.username ?? '')} url={user?.avatarUrl} size={32} />
-            <div className="user-info">
-              <div className="user-name">{offline ? '离线访客' : user?.username}</div>
-              <div className="user-id">{offline ? '未登录' : `#${user?.id.slice(0, 8)}`}</div>
-            </div>
-          </button>
+
         </div>
+      </aside>
+
         {userMenuOpen && (
           <>
             <div className="menu-mask" onClick={() => setUserMenuOpen(false)} />
@@ -1632,7 +1658,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             </div>
           </>
         )}
-      </aside>
 
       <main className="main">
         {!offline && sideTab === 'friends' ? (

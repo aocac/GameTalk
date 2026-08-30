@@ -36,7 +36,7 @@ async function register(page, username) {
 
 async function switchTab(page, label) {
   await page.evaluate((text) => {
-    const t = [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes(text));
+    const t = [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes(text));
     if (t) t.click();
   }, label);
   await sleep(600);

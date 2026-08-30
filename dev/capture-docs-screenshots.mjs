@@ -113,8 +113,9 @@ async function register(page, username, shotLogin = false) {
 }
 
 async function openSideTab(page, name) {
+  // rail 图标按钮无文本，按 title 匹配
   await page.evaluate((name) => {
-    const el = [...document.querySelectorAll('.side-tab')].find((e) => e.textContent.includes(name))
+    const el = [...document.querySelectorAll('.rail-item')].find((e) => e.title.includes(name))
     el?.click()
   }, name)
   await sleep(500)
@@ -211,51 +212,6 @@ async function main(browser) {
   await pageB.keyboard.press('Enter')
   await sleep(900)
 
-  // 6) 好友：A 申请 → B 同意 → A 好友页截图
-  console.log('== 好友流程 ==')
-  await openSideTab(pageA, '好友')
-  // 添加好友默认折叠（QQ 式管理面板），先展开
-  await pageA.evaluate(() => document.querySelector('.friends-add-toggle')?.click())
-  await sleep(300)
-  await fillByPlaceholder(pageA, ['输入用户名或 #ID 加好友'], USER_B)
-  await clickByText(pageA, '加好友')
-  await sleep(700)
-  await openSideTab(pageB, '好友')
-  await clickByText(pageB, '接受')
-  await sleep(700)
-  await openSideTab(pageA, '好友')
-  await sleep(600)
-  await pageA.screenshot({ path: `${OUT}ui-friends.png` })
-
-  // 7) 回消息页：第二房间（右键菜单素材）+ 主房截图
-  console.log('== A 建第二房 + 切回 ==')
-  await openSideTab(pageA, '消息')
-  await createRoom(pageA, ROOM_SECOND)
-  await sendMessage(pageA, '这个房先占个名')
-  await pageA.evaluate((room) => {
-    const el = [...document.querySelectorAll('[class*=room], li, div')].find(
-      (e) => (e.textContent ?? '').trim().startsWith(room) && e.children.length > 0 && e.closest('[class*=sidebar]'),
-    )
-    el?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-  }, ROOM_MAIN)
-  await sleep(1200)
-  console.log('== 截图：聊天主界面 ==')
-  await pageA.screenshot({ path: `${OUT}ui-chat-owner.png` })
-
-  // 8) 房间右键菜单
-  console.log('== 截图：房间右键菜单 ==')
-  await pageA.evaluate((room) => {
-    const el = [...document.querySelectorAll('[class*=room], li, div')].find(
-      (e) => (e.textContent ?? '').trim().startsWith(room) && e.closest('[class*=sidebar]'),
-    )
-    el?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
-  }, ROOM_MAIN)
-  await sleep(500)
-  await pageA.screenshot({ path: `${OUT}ui-room-context-menu.png` })
-  await pageA.mouse.click(700, 400)
-  await sleep(500)
-
-  // 9) 成员右键菜单（房主视角：禁言/移出）
   console.log('== 截图：成员右键菜单 ==')
   await pageA.evaluate((name) => {
     const el = [...document.querySelectorAll('.member-item')].find((e) => (e.textContent ?? '').includes(name))
@@ -279,6 +235,51 @@ async function main(browser) {
   await closeModal(pageA)
 
   // 11) 个人资料
+  // 6) 好友：A 申请 → B 同意 → A 好友页截图
+  console.log('== 好友流程 ==')
+  await openSideTab(pageA, '好友')
+  // 添加好友默认折叠（QQ 式管理面板），先展开
+  await pageA.evaluate(() => document.querySelector('.friends-add-toggle')?.click())
+  await sleep(300)
+  await fillByPlaceholder(pageA, ['输入用户名或 #ID 加好友'], USER_B)
+  await clickByText(pageA, '加好友')
+  await sleep(700)
+  await openSideTab(pageB, '好友')
+  await clickByText(pageB, '接受')
+  await sleep(700)
+  await openSideTab(pageA, '好友')
+  await sleep(600)
+  await pageA.screenshot({ path: `${OUT}ui-friends.png` })
+
+  // 7) 回消息页：第二房间（右键菜单素材）+ 主房截图
+  console.log('== A 建第二房 + 切回 ==')
+  await openSideTab(pageA, '消息')
+  await createRoom(pageA, ROOM_SECOND)
+  await sendMessage(pageA, '这个房先占个名')
+  await pageA.evaluate((room) => {
+    const el = [...document.querySelectorAll('[class*=room], li, div')].find(
+      (e) => (e.textContent ?? '').trim().startsWith(room) && e.children.length > 0 && e.closest('[class*=listbar]'),
+    )
+    el?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  }, ROOM_MAIN)
+  await sleep(1200)
+  console.log('== 截图：聊天主界面 ==')
+  await pageA.screenshot({ path: `${OUT}ui-chat-owner.png` })
+
+  // 8) 房间右键菜单
+  console.log('== 截图：房间右键菜单 ==')
+  await pageA.evaluate((room) => {
+    const el = [...document.querySelectorAll('[class*=room], li, div')].find(
+      (e) => (e.textContent ?? '').trim().startsWith(room) && e.closest('[class*=listbar]'),
+    )
+    el?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+  }, ROOM_MAIN)
+  await sleep(500)
+  await pageA.screenshot({ path: `${OUT}ui-room-context-menu.png` })
+  await pageA.mouse.click(700, 400)
+  await sleep(500)
+
+  // 9) 成员右键菜单（房主视角：禁言/移出）；好友 Tab 时成员面板隐藏，先切回消息 Tab
   console.log('== 截图：个人资料 ==')
   await openProfileModal(pageA, '主打一个随缘')
   await sleep(300)

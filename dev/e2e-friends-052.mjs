@@ -52,7 +52,7 @@ const run = async () => {
 
   // 互加好友
   await A.evaluate(() => {
-    [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('好友'))?.click();
+    [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('好友'))?.click();
   });
   await sleep(500);
   // 展开前的折叠态检查
@@ -71,7 +71,7 @@ const run = async () => {
   });
   await sleep(900);
   await B.evaluate(() => {
-    [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('好友'))?.click();
+    [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('好友'))?.click();
   });
   await sleep(500);
   await B.evaluate(() => {
@@ -79,13 +79,13 @@ const run = async () => {
   });
   await sleep(800);
   await B.evaluate(() => {
-    [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('消息'))?.click();
+    [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('消息'))?.click();
   });
   await sleep(500);
 
   // A 回好友 Tab：结构断言（管理器标题 / 折叠添加钮 / 默认收起）
   await A.evaluate(() => {
-    [...document.querySelectorAll('.side-tab')].find((b) => b.textContent.includes('好友'))?.click();
+    [...document.querySelectorAll('.rail-item')].find((b) => b.title.includes('好友'))?.click();
   });
   await sleep(700);
   const panel = panelEarly;
