@@ -3258,6 +3258,19 @@ body {
   color: var(--accent);
 }
 
+/* 浅色列表列上的悬停态（原深侧栏 hover 白字在浅底不可读） */
+.listbar .room-item:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.listbar .room-item:hover .room-name {
+  color: var(--text);
+}
+.listbar .room-item:hover .room-preview {
+  color: var(--text-2);
+  opacity: 1;
+}
+
 /* 浅色列表列内的好友面板配色（原为深侧栏配色，变量失效需重定义） */
 .listbar .friends-header { color: var(--text-2); }
 .listbar .friends-header .friends-count { color: var(--text-3); }
@@ -3475,4 +3488,23 @@ body {
   background: #1c1f26;
   box-shadow: 0 6px 24px rgba(31, 41, 61, 0.18);
   object-fit: contain;
+}
+
+/* ---- 表情消息（kind=sticker）：不包气泡、尺寸小于照片 ---- */
+.msg-sticker {
+  display: block;
+  width: 112px;
+  height: 112px;
+  object-fit: contain;
+  border-radius: 8px;
+  cursor: zoom-in;
+  margin-top: 2px;
+}
+.message-body.is-sticker,
+.message.mine .message-body.is-sticker {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  border-radius: 0;
 }

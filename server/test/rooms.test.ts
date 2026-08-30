@@ -428,6 +428,40 @@ describe('realtime + persistence', () => {
     ws.close();
   });
 
+  it('sticker message: kind=sticker survives broadcast AND history (no collapse to text)', async () => {
+    const owner = await registerUser('sticker_owner');
+    const { room } = (
+      await app.inject({ method: 'POST', url: '/api/rooms', headers: auth(owner.token), payload: { name: 'Stickers' } })
+    ).json();
+    const pngDataUrl =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const up = await app.inject({
+      method: 'POST',
+      url: '/api/media',
+      headers: { ...auth(owner.token), 'content-type': 'application/json' },
+      payload: { dataUrl: pngDataUrl },
+    });
+    const { url } = up.json();
+
+    const ws = await connectWs(owner.token);
+    ws.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    await nextMessage(ws, (m) => m.type === 'room:joined');
+
+    // 带 kind=sticker 提示 → 广播保留 sticker
+    const got = nextMessage(ws, (m) => m.type === 'message:new');
+    ws.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '', mediaUrl: url, kind: 'sticker' } }));
+    const msg = await got;
+    expect(msg.payload.message.kind).toBe('sticker');
+    expect(msg.payload.message.mediaUrl).toMatch(/\/api\/media\/[0-9a-f-]{36}$/);
+
+    // 历史接口必须原样返回 sticker（刷新后角标/渲染不丢——关键回归）
+    const hist = await app.inject({ method: 'GET', url: `/api/rooms/${room.id}/messages`, headers: auth(owner.token) });
+    const sticker = hist.json().messages.find((m: any) => m.kind === 'sticker');
+    expect(sticker).toBeTruthy();
+    expect(sticker.mediaUrl).toMatch(/\/api\/media\/[0-9a-f-]{36}$/);
+    ws.close();
+  });
+
   it('mute: owner-only, blocks sending with mutedUntil, unmute restores, owner immune', async () => {
     const owner = await registerUser('mute_owner');
     const { room } = (

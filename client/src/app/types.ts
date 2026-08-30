@@ -29,7 +29,7 @@ export interface ReplyRef {
   id: string;
   username: string;
   text: string;
-  kind: 'text' | 'image';
+  kind: 'text' | 'image' | 'sticker';
 }
 
 export interface ChatMessage {
@@ -42,7 +42,7 @@ export interface ChatMessage {
   createdAt: string;
   mentions?: MentionRef[];
   /** 'image' 时 mediaUrl 指向图片（广播为绝对 URL，乐观期为相对路径） */
-  kind?: 'text' | 'image';
+  kind?: 'text' | 'image' | 'sticker';
   mediaUrl?: string | null;
   /** 引用回复的原消息快照 */
   reply?: ReplyRef;
@@ -67,7 +67,7 @@ export interface DmMessage {
   avatarUrl?: string | null;
   text: string;
   createdAt: string;
-  kind?: 'text' | 'image';
+  kind?: 'text' | 'image' | 'sticker';
   mediaUrl?: string | null;
   reply?: ReplyRef;
   recalled?: boolean;
@@ -86,10 +86,10 @@ export type ClientWsMessage =
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
   | { type: 'member:mute'; payload: { roomId: string; userId: string; minutes: number } }
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
-  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string; replyTo?: string } }
+  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string; replyTo?: string; kind?: 'sticker' } }
   | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
   | { type: 'message:edit'; payload: { roomId: string; messageId: string; text: string } }
-  | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: string; replyTo?: string } }
+  | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: string; replyTo?: string; kind?: 'sticker' } }
   | { type: 'dm:recall'; payload: { messageId: string } }
   | { type: 'dm:edit'; payload: { messageId: string; text: string } }
   | {

@@ -47,8 +47,8 @@ interface ChatMessage {
   createdAt: string;
   /** 被提及的用户快照（历史渲染不依赖成员表） */
   mentions?: MentionRef[];
-  /** 'image' 时 mediaUrl 指向 /api/media/:id（对外转绝对 URL） */
-  kind?: 'text' | 'image';
+  /** 'image'/'sticker' 时 mediaUrl 指向 /api/media/:id（对外转绝对 URL）；sticker=表情，渲染更小且不带气泡 */
+  kind?: 'text' | 'image' | 'sticker';
   mediaUrl?: string | null;
   /** 引用回复的原消息快照 */
   reply?: ReplyRef;
@@ -74,7 +74,7 @@ interface DmMessage {
   avatarUrl: string | null;
   text: string;
   createdAt: string;
-  kind: 'text' | 'image';
+  kind: 'text' | 'image' | 'sticker';
   mediaUrl: string | null;
   reply?: ReplyRef;
   recalled?: boolean;
@@ -89,7 +89,7 @@ interface ReplyRef {
   id: string;
   username: string;
   text: string;
-  kind: 'text' | 'image';
+  kind: 'text' | 'image' | 'sticker';
 }
 
 /** 房间花名册成员 = 全体 DB 成员 + 当前在线标记（QQ 式：离线成员也展示，灰头像） */
@@ -110,10 +110,10 @@ type ClientMessage =
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
   | { type: 'member:mute'; payload: { roomId: string; userId: string; minutes: unknown } }
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
-  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown; replyTo?: unknown } }
+  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown; replyTo?: unknown; kind?: unknown } }
   | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
   | { type: 'message:edit'; payload: { roomId: string; messageId: string; text: string } }
-  | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: unknown; replyTo?: unknown } }
+  | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: unknown; replyTo?: unknown; kind?: unknown } }
   | { type: 'dm:recall'; payload: { messageId: string } }
   | { type: 'dm:edit'; payload: { messageId: string; text: string } }
   | {
@@ -584,6 +584,8 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       const roomId = sanitizeRoomId(msg.payload.roomId);
       const text = safeText(msg.payload.text);
       const mediaUrl = typeof msg.payload.mediaUrl === 'string' ? msg.payload.mediaUrl : null;
+      // 表情消息：客户端带 kind='sticker' 提示（仅在有媒体时生效），渲染更小且不包气泡
+      const mediaKind: 'image' | 'sticker' = msg.payload.kind === 'sticker' ? 'sticker' : 'image';
       // 图片消息允许空文本；纯文本消息仍拒绝空串
       if (!text && !mediaUrl) {
         send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'message is empty' } });
@@ -606,7 +608,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         return;
       }
       // 图片消息：mediaUrl 必须是本服务媒体端点且属于发送者（防伪造他人媒体引用）
-      let kind: 'text' | 'image' = 'text';
+      let kind: 'text' | 'image' | 'sticker' = 'text';
       let storedMediaUrl: string | null = null;
       if (mediaUrl) {
         const m = /^\/api\/media\/([0-9a-f-]{36})$/.exec(mediaUrl);
@@ -626,7 +628,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
             return;
           }
         }
-        kind = 'image';
+        kind = mediaKind;
         storedMediaUrl = mediaUrl;
       }
       // 引用回复：校验同房间原消息；快照（截断 80 字，原消息已撤回则占位）随消息入库与广播
@@ -652,7 +654,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           id: row.id,
           username: row.username,
           text: row.recalled ? '消息已撤回' : row.text.slice(0, 80),
-          kind: (row.kind === 'image' ? 'image' : 'text') as 'image' | 'text',
+          kind: (row.kind === 'image' || row.kind === 'sticker' ? row.kind : 'text') as 'image' | 'sticker' | 'text',
         };
       }
       // 持久化后再广播（Phase 4：消息历史；v0.4.0：提及解析入库 + 图片消息；v0.4.1：引用回复）
@@ -729,6 +731,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       const to = String(msg.payload.to ?? '');
       const text = safeText(msg.payload.text);
       const mediaUrl = typeof msg.payload.mediaUrl === 'string' ? msg.payload.mediaUrl : null;
+      const mediaKind: 'image' | 'sticker' = msg.payload.kind === 'sticker' ? 'sticker' : 'image';
       if (!text && !mediaUrl) {
         send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'message is empty', to, from: conn.userId } });
         return;
@@ -748,7 +751,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         return;
       }
       // 图片消息：mediaUrl 必须是本服务媒体端点且属于发送者（与房间消息同策略）
-      let kind: 'text' | 'image' = 'text';
+      let kind: 'text' | 'image' | 'sticker' = 'text';
       let storedMediaUrl: string | null = null;
       if (mediaUrl) {
         const m = /^\/api\/media\/([0-9a-f-]{36})$/.exec(mediaUrl);
@@ -770,7 +773,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
             return;
           }
         }
-        kind = 'image';
+        kind = mediaKind;
         storedMediaUrl = mediaUrl;
       }
       // 引用回复：原消息必须属于本会话（双向对）；快照随消息入库与广播
@@ -797,7 +800,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           id: row.id,
           username: row.username,
           text: row.recalled ? '消息已撤回' : row.text.slice(0, 80),
-          kind: (row.kind === 'image' ? 'image' : 'text') as 'image' | 'text',
+          kind: (row.kind === 'image' || row.kind === 'sticker' ? row.kind : 'text') as 'image' | 'sticker' | 'text',
         };
       }
       const inserted = await db.query<{ id: string; created_at: string }>(
@@ -954,7 +957,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
 
       // 源消息可见性：房间消息须为源房间成员；私聊须为对话双方
       let srcText: string;
-      let srcKind: 'text' | 'image';
+      let srcKind: 'text' | 'image' | 'sticker';
       let srcMediaUrl: string | null;
       let label: string;
       if (source === 'room') {
@@ -978,7 +981,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           return;
         }
         srcText = row.text;
-        srcKind = row.kind === 'image' ? 'image' : 'text';
+        srcKind = row.kind === 'image' || row.kind === 'sticker' ? row.kind : 'text';
         srcMediaUrl = row.media_url;
         label = `来自 ${row.room_name} · ${row.username}`;
       } else {
@@ -996,7 +999,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           return;
         }
         srcText = row.text;
-        srcKind = row.kind === 'image' ? 'image' : 'text';
+        srcKind = row.kind === 'image' || row.kind === 'sticker' ? row.kind : 'text';
         srcMediaUrl = row.media_url;
         label = `来自 ${row.username} 的私聊`;
       }

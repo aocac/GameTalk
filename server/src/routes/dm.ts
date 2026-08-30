@@ -34,7 +34,7 @@ interface ReplyRef {
   id: string;
   username: string;
   text: string;
-  kind: 'text' | 'image';
+  kind: 'text' | 'image' | 'sticker';
 }
 
 /** DM 消息对外形状（广播与历史同构；from/to 表达会话方向，渲染字段与房间消息对齐） */
@@ -46,7 +46,7 @@ export interface PublicDmMessage {
   avatarUrl: string | null;
   text: string;
   createdAt: string;
-  kind: 'text' | 'image';
+  kind: 'text' | 'image' | 'sticker';
   mediaUrl: string | null;
   reply?: ReplyRef;
   recalled: boolean;
@@ -63,7 +63,7 @@ function toPublicDm(base: string, m: DmRow): PublicDmMessage {
     avatarUrl: avatarHttpUrlOf(base, m.sender_id, m.avatar_url),
     text: m.text,
     createdAt: m.created_at,
-    kind: (m.kind === 'image' ? 'image' : 'text') as 'text' | 'image',
+    kind: (m.kind === 'image' || m.kind === 'sticker' ? m.kind : 'text') as 'text' | 'image' | 'sticker',
     mediaUrl: m.media_url ? `${base}${m.media_url}` : null,
     recalled: m.recalled ?? false,
     editedAt: m.edited_at ? new Date(m.edited_at).toISOString() : undefined,
@@ -73,7 +73,7 @@ function toPublicDm(base: string, m: DmRow): PublicDmMessage {
           id: m.reply_to,
           username: m.reply_username ?? '',
           text: m.reply_recalled ? '消息已撤回' : String(m.reply_text ?? '').slice(0, 80),
-          kind: (m.reply_kind === 'image' ? 'image' : 'text') as 'image' | 'text',
+          kind: (m.reply_kind === 'image' || m.reply_kind === 'sticker' ? m.reply_kind : 'text') as 'image' | 'sticker' | 'text',
         }
       : undefined,
   };

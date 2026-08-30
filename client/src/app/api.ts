@@ -142,10 +142,10 @@ export interface RoomMessage {
   createdAt: string;
   /** 提及快照（服务端解析后的 {id, username}） */
   mentions?: Array<{ id: string; username: string }>;
-  kind?: 'text' | 'image';
+  kind?: 'text' | 'image' | 'sticker';
   mediaUrl?: string | null;
   /** 引用回复的原消息快照 */
-  reply?: { id: string; username: string; text: string; kind: 'text' | 'image' };
+  reply?: { id: string; username: string; text: string; kind: 'text' | 'image' | 'sticker' };
   /** 已撤回：内容已清空 */
   recalled?: boolean;
   /** 编辑时间（ISO；仅编辑过的消息携带） */
@@ -281,7 +281,7 @@ export interface DmConversation {
     username: string;
     text: string;
     createdAt: string;
-    kind?: 'text' | 'image';
+    kind?: 'text' | 'image' | 'sticker';
     recalled?: boolean;
   };
 }
@@ -299,9 +299,9 @@ export interface DmApiMessage {
   avatarUrl?: string | null;
   text: string;
   createdAt: string;
-  kind?: 'text' | 'image';
+  kind?: 'text' | 'image' | 'sticker';
   mediaUrl?: string | null;
-  reply?: { id: string; username: string; text: string; kind: 'text' | 'image' };
+  reply?: { id: string; username: string; text: string; kind: 'text' | 'image' | 'sticker' };
   recalled?: boolean;
   editedAt?: string;
   /** 转发来源快照（纯展示） */

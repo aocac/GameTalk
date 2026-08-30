@@ -35,6 +35,8 @@ export interface SendOptions {
   mediaUrl?: string;
   replyTo?: string;
   reply?: ChatMessage['reply'];
+  /** 表情消息标记：随媒体发送时置 kind='sticker'（渲染更小、不包气泡） */
+  sticker?: boolean;
 }
 
 /** DM 消息 → 房间消息渲染形状（from 映射为 userId，渲染组件完全复用） */
@@ -115,6 +117,7 @@ interface ChatState {
   loadOlderMessages: (roomId: string) => Promise<void>;
   loadRoomPreviews: () => Promise<void>;
   deleteRoom: (roomId: string) => void;
+  leaveRoom: (roomId: string) => Promise<void>;
   leaveActiveRoom: () => Promise<void>;
   kickMember: (roomId: string, userId: string) => void;
   muteMember: (roomId: string, userId: string, minutes: number) => void;
@@ -258,9 +261,10 @@ function clearPending(): void {
 /** 待发送队列：订阅未就绪时先排队（可多条），room:joined 后按序自动发出（游戏内呼出发送场景） */
 let queuedSends: { roomId: string; text: string; opts?: SendOptions }[] = [];
 
-/** 侧栏预览文本：图片无文字显示[图片]、已撤回显示撤回提示 */
-function previewTextOf(m: { kind?: 'text' | 'image'; text: string; recalled?: boolean }): string {
+/** 侧栏预览文本：图片无文字显示[图片]、表情显示[表情]、已撤回显示撤回提示 */
+function previewTextOf(m: { kind?: 'text' | 'image' | 'sticker'; text: string; recalled?: boolean }): string {
   if (m.recalled) return '撤回了一条消息';
+  if (m.kind === 'sticker' && !m.text) return '[表情]';
   return m.kind === 'image' && !m.text ? '[图片]' : m.text;
 }
 
@@ -286,7 +290,7 @@ function appendOptimistic(roomId: string, text: string, opts?: SendOptions): voi
           text,
           createdAt: new Date().toISOString(),
           mentions: mentionRefs,
-          kind: opts?.mediaUrl ? 'image' : 'text',
+          kind: opts?.sticker ? 'sticker' : opts?.mediaUrl ? 'image' : 'text',
           mediaUrl: opts?.mediaUrl ?? null,
           reply: opts?.reply,
           pending: true,
@@ -298,7 +302,7 @@ function appendOptimistic(roomId: string, text: string, opts?: SendOptions): voi
 
 /** 真正发送（不负责乐观上屏，由调用方决定） */
 function doSend(roomId: string, text: string, opts?: SendOptions): void {
-  const ok = socket?.send({ type: 'message:send', payload: { roomId, text, mentions: opts?.mentions, mediaUrl: opts?.mediaUrl, replyTo: opts?.replyTo } });
+  const ok = socket?.send({ type: 'message:send', payload: { roomId, text, mentions: opts?.mentions, mediaUrl: opts?.mediaUrl, replyTo: opts?.replyTo, kind: opts?.sticker ? 'sticker' : undefined } });
   if (ok) playSendSound(useSettings.getState().soundEnabled);
 }
 
@@ -321,7 +325,7 @@ function appendPendingDm(peerId: string, text: string, opts?: SendOptions): void
           avatarUrl: me.avatarUrl ?? null,
           text,
           createdAt: new Date().toISOString(),
-          kind: opts?.mediaUrl ? 'image' : 'text',
+          kind: opts?.sticker ? 'sticker' : opts?.mediaUrl ? 'image' : 'text',
           mediaUrl: opts?.mediaUrl ?? null,
           reply: opts?.reply,
           pending: true,
@@ -1045,18 +1049,23 @@ export const useChat = create<ChatState>()((set, get) => ({
     );
   },
 
-  leaveActiveRoom: async () => {
+  leaveRoom: async (roomId) => {
     const { token } = useAuth.getState();
-    const { activeRoomId } = get();
-    if (!token || !activeRoomId) return;
+    if (!token || !roomId) return;
     try {
-      await api.leaveRoom(token, activeRoomId);
+      await api.leaveRoom(token, roomId);
       // removeRoomLocal 内含退订 WS + 本地清理 + 自动切换到下一个房间
-      removeRoomLocal(activeRoomId);
+      removeRoomLocal(roomId);
       if (get().activeRoomId) await get().selectRoom(get().activeRoomId!);
     } catch (e) {
       set({ roomError: e instanceof Error ? e.message : '离开房间失败' });
     }
+  },
+
+  leaveActiveRoom: async () => {
+    const { activeRoomId } = get();
+    if (!activeRoomId) return;
+    await get().leaveRoom(activeRoomId);
   },
 
   deleteRoom: (roomId) => {
@@ -1230,7 +1239,7 @@ export const useChat = create<ChatState>()((set, get) => ({
       set({ roomError: '连接未就绪，无法发送私聊消息' });
       return;
     }
-    const ok = socket.send({ type: 'dm:send', payload: { to: peerId, text: trimmed, mediaUrl: opts?.mediaUrl, replyTo: opts?.replyTo } });
+    const ok = socket.send({ type: 'dm:send', payload: { to: peerId, text: trimmed, mediaUrl: opts?.mediaUrl, replyTo: opts?.replyTo, kind: opts?.sticker ? 'sticker' : undefined } });
     if (ok) {
       playSendSound(useSettings.getState().soundEnabled);
       appendPendingDm(peerId, trimmed, opts);

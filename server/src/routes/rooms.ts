@@ -238,7 +238,7 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
             id: m.reply_to,
             username: m.reply_username ?? '',
             text: m.reply_recalled ? '消息已撤回' : String(m.reply_text ?? '').slice(0, 80),
-            kind: (m.reply_kind === 'image' ? 'image' : 'text') as 'image' | 'text',
+            kind: (m.reply_kind === 'image' || m.reply_kind === 'sticker' ? m.reply_kind : 'text') as 'image' | 'sticker' | 'text',
           }
         : undefined,
     }));

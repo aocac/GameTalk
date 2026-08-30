@@ -783,7 +783,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     joinRoomByCode,
     selectRoom,
     loadOlderMessages,
-    leaveActiveRoom,
+    leaveRoom,
     deleteRoom,
     kickMember,
     muteMember,
@@ -1073,8 +1073,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           ? {
               id: replyTo.id,
               username: replyTo.username,
-              text: replyTo.kind === 'image' ? '[图片]' : replyTo.recalled ? '消息已撤回' : replyTo.text.slice(0, 80),
-              kind: replyTo.kind === 'image' ? 'image' : 'text',
+              text: replyTo.kind === 'sticker' ? '[表情]' : replyTo.kind === 'image' ? '[图片]' : replyTo.recalled ? '消息已撤回' : replyTo.text.slice(0, 80),
+              kind: replyTo.kind === 'image' || replyTo.kind === 'sticker' ? replyTo.kind : 'text',
             }
           : undefined,
       });
@@ -1230,8 +1230,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     if (offline || !connected || (!activeRoom && !activeDm)) return;
     setShowEmoji(false);
     const mediaUrl = `/api/media/${mediaId}`;
-    if (activeDm) sendDm('', { mediaUrl });
-    else sendMessage('', { mediaUrl });
+    if (activeDm) sendDm('', { mediaUrl, sticker: true });
+    else sendMessage('', { mediaUrl, sticker: true });
   };
 
   useEffect(() => {
@@ -2117,7 +2117,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                     <Avatar name={m.username} url={m.avatarUrl} size={30} />
                   </span>
                   <div
-                    className="message-body"
+                    className={m.kind === 'sticker' && !m.text ? 'message-body is-sticker' : 'message-body'}
                     onContextMenu={(e) => {
                       if (offline || m.pending || m.recalled) return;
                       e.preventDefault();
@@ -2134,14 +2134,14 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                     {m.reply && (
                       <div className="message-quote">
                         <span className="message-quote-name">{m.reply.username}</span>
-                        <span className="message-quote-text">{m.reply.kind === 'image' ? '[图片]' : m.reply.text}</span>
+                        <span className="message-quote-text">{m.reply.kind === 'sticker' ? '[表情]' : m.reply.kind === 'image' ? '[图片]' : m.reply.text}</span>
                       </div>
                     )}
-                    {m.kind === 'image' && m.mediaUrl && (
+                    {(m.kind === 'image' || m.kind === 'sticker') && m.mediaUrl && (
                       <img
-                        className="msg-image"
+                        className={m.kind === 'sticker' ? 'msg-sticker' : 'msg-image'}
                         src={absUrl(m.mediaUrl)}
-                        alt="图片"
+                        alt={m.kind === 'sticker' ? '表情' : '图片'}
                         loading="lazy"
                         onClick={() => {
                           if (m.mediaUrl) openLightbox(absUrl(m.mediaUrl));
@@ -2323,7 +2323,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           {replyTo && (
             <div className="reply-bar">
               <span className="reply-label">回复 {replyTo.username}</span>
-              <span className="reply-snippet">{replyTo.kind === 'image' ? '[图片]' : replyTo.recalled ? '消息已撤回' : replyTo.text}</span>
+              <span className="reply-snippet">{replyTo.kind === 'sticker' ? '[表情]' : replyTo.kind === 'image' ? '[图片]' : replyTo.recalled ? '消息已撤回' : replyTo.text}</span>
               <button className="attachment-remove" title="取消引用" onClick={() => setReplyTo(null)}>
                 ×
               </button>
@@ -2462,11 +2462,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           >
             {editingMsg ? '保存' : '发送'}
           </button>
-          {activeRoom && !activeDm && (
-            <button className="btn ghost" title="离开房间" onClick={() => void leaveActiveRoom()}>
-              离开
-            </button>
-          )}
           </div>
         </footer>
 
@@ -2558,7 +2553,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             >
               邀请链接…
             </button>
-            {roomMenu.isOwner && (
+            {roomMenu.isOwner ? (
               <button
                 className="ctx-menu-item danger"
                 onClick={() => {
@@ -2570,7 +2565,21 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   setRoomMenu(null);
                 }}
               >
-                {confirmDeleteInMenu ? '确认删除？' : '删除房间'}
+                {confirmDeleteInMenu ? '确认删除房间？' : '删除房间'}
+              </button>
+            ) : (
+              <button
+                className="ctx-menu-item danger"
+                onClick={() => {
+                  if (!confirmDeleteInMenu) {
+                    setConfirmDeleteInMenu(true);
+                    return;
+                  }
+                  void leaveRoom(roomMenu.id);
+                  setRoomMenu(null);
+                }}
+              >
+                {confirmDeleteInMenu ? '确认退出房间？' : '退出房间'}
               </button>
             )}
           </CtxMenu>
@@ -2683,7 +2692,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                 复制
               </button>
             )}
-            {msgMenu.msg.kind === 'image' && msgMenu.msg.mediaUrl && (
+            {(msgMenu.msg.kind === 'image' || msgMenu.msg.kind === 'sticker') && msgMenu.msg.mediaUrl && (
               <button
                 className="ctx-menu-item"
                 onClick={() => {
@@ -2716,7 +2725,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               </button>
             )}
             {msgMenu.msg.userId === me?.id && !msgMenu.msg.pending && !msgMenu.msg.recalled &&
-              !(msgMenu.msg.kind === 'image' && !msgMenu.msg.text) && (
+              !((msgMenu.msg.kind === 'image' || msgMenu.msg.kind === 'sticker') && !msgMenu.msg.text) && (
               /* 纯图消息无文字可改，不提供编辑入口 */
               <button
                 className="ctx-menu-item"
@@ -3000,7 +3009,7 @@ function ForwardPickerModal({
   const forwardMessage = useChat((s) => s.forwardMessage);
   const friends = useFriends((s) => s.friends);
   const [sentTo, setSentTo] = useState<string | null>(null);
-  const preview = msg.recalled ? '（已撤回）' : msg.kind === 'image' && !msg.text ? '[图片]' : msg.text.slice(0, 60);
+  const preview = msg.recalled ? '（已撤回）' : msg.kind === 'sticker' && !msg.text ? '[表情]' : msg.kind === 'image' && !msg.text ? '[图片]' : msg.text.slice(0, 60);
   const send = (label: string, target: { roomId?: string; userId?: string }) => {
     forwardMessage(source, msg.id, target);
     setSentTo(label);
