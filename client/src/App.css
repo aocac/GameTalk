@@ -3177,8 +3177,16 @@ body {
   flex-direction: column;
 }
 
-/* 列表列内的旧 sidebar 内嵌套层适配：rooms/friends-panel 撑满 */
-.listbar-body > *,
+/* 列表列内：私聊区自然高、房间区占满剩余（粗暴的 > * flex:1 会把各区平分出大空隙） */
+.listbar-body > * {
+  flex: none;
+}
+
+.listbar-body > .rooms {
+  flex: 1;
+  overflow-y: auto;
+}
+
 .listbar .friends-panel {
   flex: 1;
   min-height: 0;
