@@ -136,12 +136,16 @@ interface ChatState {
   editDm: (messageId: string, text: string) => void;
   /** 转发消息到目标会话（房间或好友私聊）；目标会话在线成员经既有广播通道实时收到 */
   forwardMessage: (source: 'room' | 'dm', messageId: string, target: { roomId?: string; userId?: string }) => void;
-  /** 当前房间屏幕共享状态 */
+  /** 屏幕共享状态（按房间隔离：roomId 标记共享所属会话，仅在该会话显示相关 UI） */
   screenShare: {
-    /** 自己是否正在共享 */
-    sharing: boolean;
-    /** 当前房间正在共享的用户 ID（null = 无人共享） */
+    /** 共享所属房间 ID（null = 无共享） */
+    roomId: string | null;
+    /** 正在共享的用户 ID（null = 无人共享；等于自己 = 我在共享） */
     sharerId: string | null;
+    /** 共享者显示名 */
+    sharerName: string;
+    /** 自己是否已主动加入观看 */
+    watching: boolean;
     /** 收到的远端屏幕视频流 */
     remoteStream: MediaStream | null;
   };
@@ -149,8 +153,10 @@ interface ChatState {
   startScreenShare: () => Promise<void>;
   /** 停止屏幕共享 */
   stopScreenShare: () => void;
-  /** 观看指定用户的共享（切换进房间或手动观看时调用） */
+  /** 主动加入观看指定用户的共享 */
   watchScreenShare: (sharerId: string) => void;
+  /** 停止观看（释放本地 P2P，不通知共享者） */
+  stopWatching: () => void;
   /** 内部：处理 screen:signal 信令 */
   handleScreenSignal: (from: string, data: unknown) => Promise<void>;
 }
@@ -359,7 +365,7 @@ export const useChat = create<ChatState>()((set, get) => ({
   dmPreviews: {},
   activeDmPeerId: null,
   pendingNotifyTarget: null,
-  screenShare: { sharing: false, sharerId: null, remoteStream: null },
+  screenShare: { roomId: null, sharerId: null, sharerName: '', watching: false, remoteStream: null },
 
   connect: () => {
     // 幂等：已在连接/已连接则不重复建连（React StrictMode 双挂载安全）
@@ -744,21 +750,21 @@ export const useChat = create<ChatState>()((set, get) => ({
           break;
         }
         case 'screen:started': {
-          const { roomId, userId } = msg.payload;
-          const activeRoomId = get().activeRoomId;
-          set((s) => ({
-            screenShare: { sharing: s.screenShare.sharing && s.screenShare.sharerId === userId, sharerId: userId, remoteStream: null },
-          }));
-          // 正处在该房间且不是自己共享 → 自动观看（非活跃房间静默，避免打扰）
-          if (activeRoomId === roomId && userId !== state.me?.id) {
-            get().watchScreenShare(userId);
-          }
+          const { roomId, userId, username } = msg.payload;
+          // 记录共享所属房间与共享者；不再自动观看——由用户在该会话内主动点「观看」
+          set({
+            screenShare: { roomId, sharerId: userId, sharerName: username ?? '某人', watching: false, remoteStream: null },
+          });
           break;
         }
         case 'screen:stopped': {
-          screenShareManager?.stop();
-          screenShareManager = null;
-          set({ screenShare: { sharing: false, sharerId: null, remoteStream: null } });
+          const stoppedRoomId = msg.payload.roomId;
+          // 仅清理与该房间匹配（或无归属）的共享状态；正在共享/观看则释放本地 P2P
+          if (!stoppedRoomId || get().screenShare.roomId === stoppedRoomId) {
+            screenShareManager?.stop();
+            screenShareManager = null;
+            set({ screenShare: { roomId: null, sharerId: null, sharerName: '', watching: false, remoteStream: null } });
+          }
           break;
         }
         case 'screen:signal': {
@@ -893,7 +899,7 @@ export const useChat = create<ChatState>()((set, get) => ({
       dmPreviews: {},
       activeDmPeerId: null,
       pendingNotifyTarget: null,
-      screenShare: { sharing: false, sharerId: null, remoteStream: null },
+      screenShare: { roomId: null, sharerId: null, sharerName: '', watching: false, remoteStream: null },
       roomError: null,
       connectionError: null,
     });
@@ -1317,11 +1323,11 @@ export const useChat = create<ChatState>()((set, get) => ({
           // 共享者主动停止或轨道结束：通知服务端并清状态
           sock.send({ type: 'screen:stop', payload: { roomId } });
           screenShareManager = null;
-          set({ screenShare: { sharing: false, sharerId: null, remoteStream: null } });
+          set({ screenShare: { roomId: null, sharerId: null, sharerName: '', watching: false, remoteStream: null } });
         },
       );
       sock.send({ type: 'screen:start', payload: { roomId } });
-      set((s) => ({ screenShare: { ...s.screenShare, sharing: true, sharerId: me.id } }));
+      set({ screenShare: { roomId, sharerId: me.id, sharerName: me.username, watching: false, remoteStream: null } });
     } catch (e) {
       screenShareManager = null;
       set({ roomError: e instanceof Error ? e.message : '无法开始屏幕共享' });
@@ -1335,7 +1341,7 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
     screenShareManager?.stop();
     screenShareManager = null;
-    set({ screenShare: { sharing: false, sharerId: null, remoteStream: null } });
+    set({ screenShare: { roomId: null, sharerId: null, sharerName: '', watching: false, remoteStream: null } });
   },
 
   handleScreenSignal: async (from, data) => {
@@ -1355,6 +1361,7 @@ export const useChat = create<ChatState>()((set, get) => ({
     if (screenShareManager?.isSharing) screenShareManager.stop();
     if (!screenShareManager) screenShareManager = new ScreenShareManager();
     const roomId = activeRoomId;
+    set((s) => ({ screenShare: { ...s.screenShare, roomId, watching: true, remoteStream: null } }));
     screenShareManager.watch(
       sharerId,
       (to, data) => sock.send({ type: 'screen:signal', payload: { roomId, to, data } }),
@@ -1362,6 +1369,15 @@ export const useChat = create<ChatState>()((set, get) => ({
         set((s) => ({ screenShare: { ...s.screenShare, remoteStream } }));
       },
     );
+  },
+
+  stopWatching: () => {
+    // 观看者退出：仅释放本地 P2P，不通知共享者；保留 sharerId/roomId 以便再次点「观看」
+    if (screenShareManager && !screenShareManager.isSharing) {
+      screenShareManager.stop();
+      screenShareManager = null;
+    }
+    set((s) => ({ screenShare: { ...s.screenShare, watching: false, remoteStream: null } }));
   },
 }));
 

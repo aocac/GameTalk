@@ -3476,18 +3476,61 @@ body {
   color: var(--text);
   font-size: 13px;
 }
+.screen-banner.sharing {
+  background: #e7f6ec;
+  color: #1a7f37;
+}
+/* 观看窗：浮动卡片，独立于聊天流，像一个小窗 */
 .screen-viewer {
+  position: fixed;
+  right: 24px;
+  bottom: 96px;
+  width: min(560px, 46vw);
+  z-index: 60;
   display: flex;
-  justify-content: center;
-  padding: 10px 16px 0;
+  flex-direction: column;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #1c1f26;
+  box-shadow: 0 12px 40px rgba(20, 24, 34, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.screen-viewer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: #dfe3ee;
+  background: #23262f;
+}
+.screen-viewer-close {
+  border: none;
+  background: transparent;
+  color: #aab;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.screen-viewer-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
 }
 .screen-video {
+  display: block;
   width: 100%;
-  max-height: 45vh;
-  border-radius: 12px;
-  background: #1c1f26;
-  box-shadow: 0 6px 24px rgba(31, 41, 61, 0.18);
+  max-height: 52vh;
+  background: #000;
   object-fit: contain;
+  cursor: pointer;
+}
+/* 共享中：composer 图标按钮高亮 */
+.composer-icon.active {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 /* ---- 表情消息（kind=sticker）：不包气泡、尺寸小于照片 ---- */

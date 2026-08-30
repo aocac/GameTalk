@@ -807,6 +807,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     startScreenShare,
     stopScreenShare,
     watchScreenShare,
+    stopWatching,
   } = useChat();
   const { user, logout } = useAuth();
   const { gameModeEnabled, hotkey, soundEnabled, notifyLevel } = useSettings();
@@ -956,20 +957,27 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const convKeyRef = useRef<string | null>(null);
   const connected = status === 'open';
 
-  /** 屏幕共享：远端视频流赋给 video 元素 */
+  /** 屏幕共享：远端视频流赋给 video 元素并显式起播（WebView2 下仅靠 autoPlay 属性会黑屏） */
   useEffect(() => {
-    if (screenVideoRef.current && screenShare.remoteStream) {
-      screenVideoRef.current.srcObject = screenShare.remoteStream;
+    const v = screenVideoRef.current;
+    if (!v) return;
+    if (screenShare.remoteStream) {
+      v.srcObject = screenShare.remoteStream;
+      void v.play().catch(() => {
+        /* 自动播放被拦截时，用户点击画面重试 */
+      });
+    } else {
+      v.srcObject = null;
     }
   }, [screenShare.remoteStream]);
 
-  /** 切换活跃会话时：若有人共享且不是自己，自动建立 watch（进房晚于共享开始也能看） */
+  /** 离开共享所属房间时自动停止观看（释放本地 P2P；共享者的共享不受影响，回来可再点观看） */
   useEffect(() => {
-    if (activeRoomId && screenShare.sharerId && screenShare.sharerId !== me?.id && !screenShare.remoteStream) {
-      watchScreenShare(screenShare.sharerId);
+    const ss = useChat.getState().screenShare;
+    if (ss.watching && ss.roomId && ss.roomId !== activeRoomId) {
+      useChat.getState().stopWatching();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRoomId, screenShare.sharerId]);
+  }, [activeRoomId]);
   useEffect(() => {
     const consume = () => {
       try {
@@ -1914,32 +1922,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                 {activeSubscribed ? '订阅 ✓' : '订阅中…'}
               </span>
             )}
-            {activeRoom && !activeDm && !offline && (
-              <button
-                className="btn ghost small"
-                disabled={screenShare.sharerId !== null && screenShare.sharerId !== me?.id}
-                title={
-                  screenShare.sharing
-                    ? '停止共享屏幕'
-                    : screenShare.sharerId
-                      ? `${membersByRoom[activeRoom.id]?.find((m) => m.id === screenShare.sharerId)?.username ?? '某人'} 正在共享屏幕`
-                      : '开始共享屏幕（P2P，不经过服务器）'
-                }
-                onClick={() => {
-                  if (screenShare.sharing) {
-                    stopScreenShare();
-                  } else {
-                    void startScreenShare();
-                  }
-                }}
-              >
-                {screenShare.sharing
-                  ? '停止共享'
-                  : screenShare.sharerId
-                    ? '共享中…'
-                    : '屏幕共享'}
-              </button>
-            )}
             {!offline && (
               <button className="btn ghost small" onClick={connected ? disconnect : connect}>
                 {connected ? '断开' : '连接'}
@@ -1980,17 +1962,48 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           </div>
         )}
 
-        {screenShare.sharing && (
-          <div className="screen-banner">
-            你正在共享屏幕
-            <button className="btn ghost small" onClick={stopScreenShare}>
-              停止共享
-            </button>
-          </div>
-        )}
-        {!screenShare.sharing && screenShare.remoteStream && (
+        {/* 屏幕共享相关 UI：仅在该共享所属房间内显示 */}
+        {screenShare.roomId === activeRoomId &&
+          (screenShare.sharerId === me?.id ? (
+            <div className="screen-banner sharing">
+              <span>🖥 你正在共享本房间屏幕</span>
+              <button className="btn ghost small" onClick={stopScreenShare}>
+                停止共享
+              </button>
+            </div>
+          ) : screenShare.sharerId && !screenShare.watching ? (
+            <div className="screen-banner">
+              <span>🖥 {screenShare.sharerName} 正在共享屏幕</span>
+              <button className="btn primary small" onClick={() => watchScreenShare(screenShare.sharerId!)}>
+                观看
+              </button>
+            </div>
+          ) : screenShare.sharerId && screenShare.watching && !screenShare.remoteStream ? (
+            <div className="screen-banner">
+              <span>正在连接 {screenShare.sharerName} 的共享…</span>
+              <button className="btn ghost small" onClick={stopWatching}>
+                取消
+              </button>
+            </div>
+          ) : null)}
+        {screenShare.roomId === activeRoomId && screenShare.watching && screenShare.remoteStream && (
           <div className="screen-viewer">
-            <video ref={screenVideoRef} autoPlay playsInline muted className="screen-video" />
+            <div className="screen-viewer-head">
+              <span>正在观看 {screenShare.sharerName} 的屏幕共享</span>
+              <button className="screen-viewer-close" title="停止观看" onClick={stopWatching}>
+                ✕
+              </button>
+            </div>
+            <video
+              ref={screenVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className="screen-video"
+              onClick={(e) => {
+                void (e.target as HTMLVideoElement).play().catch(() => {});
+              }}
+            />
           </div>
         )}
 
@@ -2380,6 +2393,29 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               <line x1="15" y1="9" x2="15.01" y2="9" />
             </svg>
           </button>
+          {activeRoom && !activeDm && (
+            <button
+              className={`composer-icon${screenShare.sharerId === me?.id && screenShare.roomId === activeRoomId ? ' active' : ''}`}
+              title={
+                screenShare.sharerId === me?.id && screenShare.roomId === activeRoomId
+                  ? '停止共享本房间屏幕'
+                  : screenShare.sharerId && screenShare.roomId === activeRoomId
+                    ? `${screenShare.sharerName} 正在共享，稍后可加入观看`
+                    : '共享本房间屏幕（P2P，不经过服务器）'
+              }
+              disabled={offline || !connected || (!!screenShare.sharerId && screenShare.sharerId !== me?.id && screenShare.roomId === activeRoomId)}
+              onClick={() => {
+                if (screenShare.sharerId === me?.id && screenShare.roomId === activeRoomId) stopScreenShare();
+                else void startScreenShare();
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                <line x1="8" y1="21" x2="16" y2="21" />
+                <line x1="12" y1="17" x2="12" y2="21" />
+              </svg>
+            </button>
+          )}
           <input
             ref={composerRef}
             className="composer-input"
