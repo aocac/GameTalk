@@ -9,13 +9,20 @@ import * as api from '../app/api';
 import { pushOverlayEdit, pushOverlayMessage, pushOverlayRecall } from '../app/gameMode';
 import type { ChatMessage, DmMessage, RoomMember, UserBrief, WsStatus } from '../app/types';
 
-/** Windows 系统通知（档位判断在调用方；浏览器/无权限环境静默忽略） */
-async function sendWindowsNotify(title: string, body: string): Promise<void> {
+/** 通知点击跳转的会话定位（应用窗口获得焦点时消费） */
+export type NotifyTarget = { kind: 'room' | 'dm'; id: string } | null;
+
+/** Windows 系统通知（档位判断在调用方；浏览器/无权限环境静默忽略）。
+ *  target：点击通知（聚焦应用窗口）后应跳转到的会话 */
+async function sendWindowsNotify(title: string, body: string, target: NotifyTarget): Promise<void> {
   try {
     const { isPermissionGranted, requestPermission, sendNotification } = await import('@tauri-apps/plugin-notification');
     let granted = await isPermissionGranted();
     if (!granted) granted = (await requestPermission()) === 'granted';
-    if (granted && body) sendNotification({ title, body });
+    if (granted && body) {
+      if (target) useChat.setState({ pendingNotifyTarget: target });
+      sendNotification({ title, body });
+    }
   } catch {
     // 非 Tauri 环境（浏览器调试）无插件，忽略
   }
@@ -91,6 +98,10 @@ interface ChatState {
   dmPreviews: Record<string, { id: string; userId: string; username: string; text: string; createdAt: string }>;
   /** 当前打开的 DM 会话（好友 userId）；与 activeRoomId 互斥表达「活跃会话」 */
   activeDmPeerId: string | null;
+  /** 最近一条通知对应的会话：点击通知（窗口聚焦）后跳转，进入会话即清除 */
+  pendingNotifyTarget: NotifyTarget;
+  /** 主窗口获得焦点时调用：有待跳转通知则切换到对应会话 */
+  consumePendingNotifyTarget: () => void;
   connect: () => void;
   disconnect: () => void;
   /** 换账号（登出/注册新号）时清空上一账号的房间/消息/选中态，防止越权请求与界面残留 */
@@ -320,6 +331,7 @@ export const useChat = create<ChatState>()((set, get) => ({
   dmUnread: {},
   dmPreviews: {},
   activeDmPeerId: null,
+  pendingNotifyTarget: null,
 
   connect: () => {
     // 幂等：已在连接/已连接则不重复建连（React StrictMode 双挂载安全）
@@ -521,10 +533,10 @@ export const useChat = create<ChatState>()((set, get) => ({
             const level = useSettings.getState().notifyLevel;
             if (active !== msg.payload.roomId && (level === 'all' || (level === 'mention' && mentionedMe))) {
               const roomName = get().rooms.find((r) => r.id === msg.payload.roomId)?.name ?? '房间';
-              void sendWindowsNotify(
-                `#${roomName} · ${msg.payload.message.username}`,
-                previewTextOf(msg.payload.message),
-              );
+              void sendWindowsNotify(`#${roomName} · ${msg.payload.message.username}`, previewTextOf(msg.payload.message), {
+                kind: 'room',
+                id: msg.payload.roomId,
+              });
             }
           }
           // 侧栏预览实时更新（多房间订阅使非活跃房间也能即时刷新）；图片/撤回显示对应占位
@@ -636,7 +648,7 @@ export const useChat = create<ChatState>()((set, get) => ({
             // Windows 系统通知：私聊 = 点对点定向，「仅@」档同样弹出（正打开的会话不弹）
             const level = useSettings.getState().notifyLevel;
             if (get().activeDmPeerId !== peerId && level !== 'none') {
-              void sendWindowsNotify(`${dm.username} · 私聊`, previewTextOf(dm));
+              void sendWindowsNotify(`${dm.username} · 私聊`, previewTextOf(dm), { kind: 'dm', id: peerId });
             }
           }
           // 侧栏私聊预览实时更新
@@ -830,6 +842,7 @@ export const useChat = create<ChatState>()((set, get) => ({
       dmUnread: {},
       dmPreviews: {},
       activeDmPeerId: null,
+      pendingNotifyTarget: null,
       roomError: null,
       connectionError: null,
     });
@@ -1090,6 +1103,14 @@ export const useChat = create<ChatState>()((set, get) => ({
   },
 
   clearRoomError: () => set({ roomError: null }),
+
+  consumePendingNotifyTarget: () => {
+    const target = get().pendingNotifyTarget;
+    if (!target) return;
+    set({ pendingNotifyTarget: null });
+    if (target.kind === 'dm') void get().openDm(target.id);
+    else void get().selectRoom(target.id);
+  },
 
   clearActiveDmIf: (peerId) => {
     if (get().activeDmPeerId !== peerId) return;

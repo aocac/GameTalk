@@ -1,6 +1,6 @@
 [package]
 name = "gametalk"
-version = "0.6.0"
+version = "0.6.1"
 description = "GameTalk - lightweight group chat for PC gamers"
 authors = ["GameTalk"]
 edition = "2021"

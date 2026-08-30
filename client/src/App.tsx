@@ -1445,6 +1445,34 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     return () => clearTimeout(t);
   }, [friendNotice, clearNotice]);
 
+  // 通知点击跳转：Windows 通知被点击时系统会聚焦应用窗口——监听焦点恢复，
+  // 消费「待跳转会话」记录切到对应会话（正在输入草稿时不打断，避免覆盖思路）
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    let disposed = false;
+    try {
+      void getCurrentWindow()
+        .onFocusChanged(({ payload }) => {
+          if (!payload) return;
+          const { pendingNotifyTarget } = useChat.getState();
+          if (!pendingNotifyTarget) return;
+          if (draft.trim() || editingMsg || pendingImage) return;
+          useChat.getState().consumePendingNotifyTarget();
+        })
+        .then((fn) => {
+          if (disposed) fn();
+          else off = fn;
+        });
+    } catch (e) {
+      console.error('focus listen failed', e);
+    }
+    return () => {
+      disposed = true;
+      off?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, editingMsg, pendingImage]);
+
   // 切换会话（房间/私聊）时取消未完成的编辑/回复/@提及/待发图片与滚动锚定，
   // 避免旧会话的交互状态泄漏进新会话（@ 补全残留会让 Enter 被劫持为插入手打文本）
   useEffect(() => {
