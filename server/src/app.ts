@@ -10,6 +10,7 @@ import { registerAuthRoutes } from './routes/auth.js';
 import { registerRoomsRoutes } from './routes/rooms.js';
 import { registerFriendsRoutes } from './routes/friends.js';
 import { registerDmRoutes } from './routes/dm.js';
+import { registerStickersRoutes } from './routes/stickers.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerWsRoutes } from './ws/gateway.js';
 
@@ -66,6 +67,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerRoomsRoutes(app, { db, jwt });
   registerFriendsRoutes(app, { db, jwt });
   registerDmRoutes(app, { db, jwt });
+  registerStickersRoutes(app, { db, jwt });
   registerMediaRoutes(app, { db, jwt });
   registerWsRoutes(app, { config, db, jwt });
 

@@ -605,8 +605,15 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         }
         const owned = await db.query('SELECT 1 FROM media WHERE id = $1 AND owner_id = $2', [m[1], conn.userId]);
         if (owned.rows.length === 0) {
-          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'media not found' } });
-          return;
+          // 非自传媒体：允许使用本房间共享表情中的媒体（成员贡献、全群使用）
+          const shared = await db.query('SELECT 1 FROM room_stickers WHERE media_id = $1 AND room_id = $2', [
+            m[1],
+            roomId,
+          ]);
+          if (shared.rows.length === 0) {
+            send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'media not found' } });
+            return;
+          }
         }
         kind = 'image';
         storedMediaUrl = mediaUrl;
@@ -740,8 +747,17 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         }
         const owned = await db.query('SELECT 1 FROM media WHERE id = $1 AND owner_id = $2', [m[1], conn.userId]);
         if (owned.rows.length === 0) {
-          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'media not found', to, from: conn.userId } });
-          return;
+          // 非自传媒体：允许使用双方任一人收藏的云表情，或任一群共享表情（成员贡献、跨会话使用）
+          const shared = await db.query(
+            `SELECT 1 FROM user_stickers WHERE media_id = $1 AND owner_id IN ($2, $3)
+             UNION
+             SELECT 1 FROM room_stickers WHERE media_id = $1`,
+            [m[1], conn.userId, to],
+          );
+          if (shared.rows.length === 0) {
+            send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'media not found', to, from: conn.userId } });
+            return;
+          }
         }
         kind = 'image';
         storedMediaUrl = mediaUrl;

@@ -232,6 +232,41 @@ export function removeFriend(token: string, userId: string): Promise<{ ok: boole
   return request<{ ok: boolean }>(`/api/friends/${userId}/remove`, { method: 'POST', token });
 }
 
+// ============ 云表情包（个人 / 群共享） ============
+
+export interface StickerItem {
+  id: string;
+  mediaId: string;
+  url: string;
+  addedBy: string;
+  addedByUsername: string;
+  createdAt: string;
+}
+
+export function listStickers(token: string): Promise<{ stickers: StickerItem[]; max: number }> {
+  return request<{ stickers: StickerItem[]; max: number }>('/api/stickers', { token });
+}
+
+export function addSticker(token: string, mediaId: string): Promise<{ sticker: StickerItem }> {
+  return request<{ sticker: StickerItem }>('/api/stickers', { method: 'POST', token, body: { mediaId } });
+}
+
+export function deleteSticker(token: string, id: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/stickers/${id}`, { method: 'DELETE', token });
+}
+
+export function listRoomStickers(token: string, roomId: string): Promise<{ stickers: StickerItem[]; max: number }> {
+  return request<{ stickers: StickerItem[]; max: number }>(`/api/rooms/${roomId}/stickers`, { token });
+}
+
+export function addRoomSticker(token: string, roomId: string, mediaId: string): Promise<{ sticker: StickerItem }> {
+  return request<{ sticker: StickerItem }>(`/api/rooms/${roomId}/stickers`, { method: 'POST', token, body: { mediaId } });
+}
+
+export function deleteRoomSticker(token: string, roomId: string, stickerId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/rooms/${roomId}/stickers/${stickerId}`, { method: 'DELETE', token });
+}
+
 // ============ 好友私聊（DM） ============
 
 /** DM 会话列表项：peerId + 该会话最后一条消息 */

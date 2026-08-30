@@ -141,16 +141,6 @@ function loadStickers(userId: string): string[] {
   }
 }
 
-function saveStickers(list: string[], userId: string): string[] {
-  const trimmed = list.slice(0, MAX_STICKERS);
-  try {
-    localStorage.setItem(`gt-stickers#${userId}`, JSON.stringify(trimmed));
-  } catch {
-    // 忽略存储失败
-  }
-  return trimmed;
-}
-
 /** 图片文件 → 压缩后的 data URL（最长边 1920，JPEG 0.85；GIF 保留原样避免丢动画） */
 async function fileToCompressedDataUrl(file: File): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -855,15 +845,71 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [showEmoji, setShowEmoji] = useState(false);
   const emojiOwner = me?.id ?? 'guest';
   const [recentEmojis, setRecentEmojis] = useState<string[]>(() => loadRecentEmojis(emojiOwner));
-  const [stickers, setStickers] = useState<string[]>(() => loadStickers(emojiOwner));
-  const [emojiTab, setEmojiTab] = useState<'emoji' | 'stickers'>('emoji');
+  /** 云端表情包（个人 / 当前房间共享），跨设备同步 */
+  const [myStickers, setMyStickers] = useState<api.StickerItem[]>([]);
+  const [roomStickers, setRoomStickers] = useState<api.StickerItem[]>([]);
+  const [stickerBusy, setStickerBusy] = useState(false);
+  const [emojiTab, setEmojiTab] = useState<'emoji' | 'mine' | 'room'>('emoji');
   const stickerInputRef = useRef<HTMLInputElement>(null);
   const [stickerUploading, setStickerUploading] = useState(false);
-  // 换账号后重读该账号的常用表情与表情包
+  // 换账号后重读该账号的常用表情
   useEffect(() => {
     setRecentEmojis(loadRecentEmojis(emojiOwner));
-    setStickers(loadStickers(emojiOwner));
   }, [emojiOwner]);
+
+  // 云表情包：打开面板或切换目标房间时刷新；首次发现本地旧表情包则自动迁移到云端
+  const loadCloudStickers = async () => {
+    const { token } = useAuth.getState();
+    if (!token || offline) return;
+    setStickerBusy(true);
+    try {
+      const { stickers } = await api.listStickers(token);
+      // 本地旧表情包迁移：云端为空且本地有 → 把本地上传过的媒体逐个登记到云端
+      const legacy = loadStickers(emojiOwner);
+      if (stickers.length === 0 && legacy.length > 0) {
+        const migrated: api.StickerItem[] = [];
+        for (const url of legacy) {
+          const mediaId = /api\/media\/([0-9a-f-]{36})/.exec(url)?.[1];
+          if (!mediaId) continue;
+          try {
+            const { sticker } = await api.addSticker(token, mediaId);
+            migrated.push(sticker);
+          } catch {
+            // 单个迁移失败不阻塞其余（媒体可能已过期）
+          }
+        }
+        setMyStickers(migrated);
+        if (migrated.length > 0) {
+          try {
+            localStorage.removeItem(`gt-stickers#${emojiOwner}`);
+          } catch {
+            // 忽略
+          }
+        }
+        return;
+      }
+      setMyStickers(stickers);
+      if (activeRoomId) {
+        try {
+          const rs = await api.listRoomStickers(token, activeRoomId);
+          setRoomStickers(rs.stickers);
+        } catch {
+          setRoomStickers([]);
+        }
+      } else {
+        setRoomStickers([]);
+      }
+    } catch {
+      // 拉取失败保留现状（下次打开面板重试）
+    } finally {
+      setStickerBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showEmoji) void loadCloudStickers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showEmoji, activeRoomId, emojiOwner]);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(1);
   const [lightboxOffset, setLightboxOffset] = useState({ x: 0, y: 0 });
@@ -1108,7 +1154,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       if (!token) return;
       const dataUrl = await fileToCompressedDataUrl(file);
       const { url } = await api.uploadImage(token, dataUrl);
-      setStickers(saveStickers([url, ...loadStickers(emojiOwner).filter((x) => x !== url)], emojiOwner));
+      const mediaId = /api\/media\/([0-9a-f-]{36})$/.exec(url)?.[1];
+      if (!mediaId) throw new Error('媒体上传结果异常');
+      if (emojiTab === 'room' && activeRoomId) {
+        const { sticker } = await api.addRoomSticker(token, activeRoomId, mediaId);
+        setRoomStickers((prev) => [...prev, sticker]);
+      } else {
+        const { sticker } = await api.addSticker(token, mediaId);
+        setMyStickers((prev) => [...prev, sticker]);
+      }
     } catch (e) {
       useChat.setState({ roomError: e instanceof Error ? e.message : '表情包添加失败' });
     } finally {
@@ -1116,16 +1170,27 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     }
   };
 
-  const removeSticker = (url: string) => {
-    setStickers(saveStickers(loadStickers(emojiOwner).filter((x) => x !== url), emojiOwner));
+  // 删除表情包（个人：仅本人；群：添加者本人或房主）
+  const removeSticker = async (sticker: api.StickerItem, scope: 'mine' | 'room') => {
+    const { token } = useAuth.getState();
+    if (!token) return;
+    try {
+      if (scope === 'mine') await api.deleteSticker(token, sticker.id);
+      else if (activeRoomId) await api.deleteRoomSticker(token, activeRoomId, sticker.id);
+      if (scope === 'mine') setMyStickers((prev) => prev.filter((x) => x.id !== sticker.id));
+      else setRoomStickers((prev) => prev.filter((x) => x.id !== sticker.id));
+    } catch (e) {
+      useChat.setState({ roomError: e instanceof Error ? e.message : '表情包删除失败' });
+    }
   };
 
-  // 发送表情包：作为图片消息直接发出（GIF 原样保留动画）
-  const sendSticker = (url: string) => {
+  // 发送表情包：作为图片消息直接发出（GIF 原样保留动画）；按 mediaId 构造服务端校验的相对路径
+  const sendSticker = (mediaId: string) => {
     if (offline || !connected || (!activeRoom && !activeDm)) return;
     setShowEmoji(false);
-    if (activeDm) sendDm('', { mediaUrl: url });
-    else sendMessage('', { mediaUrl: url });
+    const mediaUrl = `/api/media/${mediaId}`;
+    if (activeDm) sendDm('', { mediaUrl });
+    else sendMessage('', { mediaUrl });
   };
 
   useEffect(() => {
@@ -1989,8 +2054,17 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                 <button type="button" className={`emoji-tab ${emojiTab === 'emoji' ? 'active' : ''}`} onClick={() => setEmojiTab('emoji')}>
                   表情
                 </button>
-                <button type="button" className={`emoji-tab ${emojiTab === 'stickers' ? 'active' : ''}`} onClick={() => setEmojiTab('stickers')}>
-                  表情包
+                <button type="button" className={`emoji-tab ${emojiTab === 'mine' ? 'active' : ''}`} onClick={() => setEmojiTab('mine')}>
+                  我的表情包
+                </button>
+                <button
+                  type="button"
+                  className={`emoji-tab ${emojiTab === 'room' ? 'active' : ''}`}
+                  onClick={() => setEmojiTab('room')}
+                  disabled={!activeRoomId}
+                  title={activeRoomId ? '当前房间的共享表情' : '进入房间后可用'}
+                >
+                  群表情
                 </button>
               </div>
               {emojiTab === 'emoji' ? (
@@ -2016,26 +2090,26 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                     ))}
                   </div>
                 </>
-              ) : (
+              ) : emojiTab === 'mine' ? (
                 <div className="sticker-wrap">
-                  <div className="sticker-hint">点击发送；支持 GIF 动图，最多 {MAX_STICKERS} 个</div>
+                  <div className="sticker-hint">云端同步，所有设备可用；支持 GIF 动图，最多 {MAX_STICKERS} 个</div>
                   <div className="sticker-grid">
-                    {stickers.map((url) => (
-                      <div key={url} className="sticker-cell">
+                    {myStickers.map((st) => (
+                      <div key={st.id} className="sticker-cell">
                         <button
                           type="button"
                           className="sticker-img-btn"
                           title="点击发送"
-                          onMouseDown={(ev) => { ev.preventDefault(); sendSticker(url); }}
+                          onMouseDown={(ev) => { ev.preventDefault(); sendSticker(st.mediaId); }}
                         >
-                          <img src={absUrl(url)} alt="表情包" loading="lazy" />
+                          <img src={absUrl(st.url)} alt="表情包" loading="lazy" />
                         </button>
-                        <button type="button" className="sticker-remove" title="移除" onClick={() => removeSticker(url)}>
+                        <button type="button" className="sticker-remove" title="移除" onClick={() => void removeSticker(st, 'mine')}>
                           ×
                         </button>
                       </div>
                     ))}
-                    {stickers.length < MAX_STICKERS && (
+                    {myStickers.length < MAX_STICKERS && (
                       <button
                         type="button"
                         className="sticker-add"
@@ -2047,7 +2121,52 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                       </button>
                     )}
                   </div>
-                  {stickers.length === 0 && <div className="sticker-empty">还没有表情包，点「+」从本地添加 GIF/图片</div>}
+                  {myStickers.length === 0 && !stickerBusy && (
+                    <div className="sticker-empty">还没有表情包，点「+」从本地添加 GIF/图片，云端同步所有设备</div>
+                  )}
+                </div>
+              ) : (
+                <div className="sticker-wrap">
+                  {activeRoomId ? (
+                    <>
+                      <div className="sticker-hint">本房间共享表情，成员共同贡献；点击发送，× 移除（添加者或房主）</div>
+                      <div className="sticker-grid">
+                        {roomStickers.map((st) => (
+                          <div key={st.id} className="sticker-cell">
+                            <button
+                              type="button"
+                              className="sticker-img-btn"
+                              title={st.addedByUsername ? `由 ${st.addedByUsername} 添加 · 点击发送` : '点击发送'}
+                              onMouseDown={(ev) => { ev.preventDefault(); sendSticker(st.mediaId); }}
+                            >
+                              <img src={absUrl(st.url)} alt="群表情" loading="lazy" />
+                            </button>
+                            {(st.addedBy === me?.id || activeRoom?.ownerId === me?.id) && (
+                              <button type="button" className="sticker-remove" title="移除" onClick={() => void removeSticker(st, 'room')}>
+                                ×
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        {roomStickers.length < MAX_STICKERS && (
+                          <button
+                            type="button"
+                            className="sticker-add"
+                            title={stickerUploading ? '上传中…' : '添加群表情'}
+                            disabled={stickerUploading}
+                            onClick={() => stickerInputRef.current?.click()}
+                          >
+                            {stickerUploading ? '…' : '+'}
+                          </button>
+                        )}
+                      </div>
+                      {roomStickers.length === 0 && !stickerBusy && (
+                        <div className="sticker-empty">本房间还没有共享表情，点「+」添加，全群可见</div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="sticker-empty">进入一个房间后，即可使用全群共享的表情</div>
+                  )}
                 </div>
               )}
             </div>
