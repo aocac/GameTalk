@@ -22,6 +22,7 @@ interface DmRow extends QueryResultRow {
   recalled: boolean;
   edited_at: string | null;
   created_at: string;
+  forwarded_from_label: string | null;
   reply_to: string | null;
   reply_username: string | null;
   reply_text: string | null;
@@ -50,6 +51,7 @@ export interface PublicDmMessage {
   reply?: ReplyRef;
   recalled: boolean;
   editedAt?: string;
+  forwardedFromLabel?: string | null;
 }
 
 function toPublicDm(base: string, m: DmRow): PublicDmMessage {
@@ -65,6 +67,7 @@ function toPublicDm(base: string, m: DmRow): PublicDmMessage {
     mediaUrl: m.media_url ? `${base}${m.media_url}` : null,
     recalled: m.recalled ?? false,
     editedAt: m.edited_at ? new Date(m.edited_at).toISOString() : undefined,
+    forwardedFromLabel: m.forwarded_from_label ?? null,
     reply: m.reply_to
       ? {
           id: m.reply_to,
@@ -129,6 +132,7 @@ export function registerDmRoutes(app: FastifyInstance, deps: DmDeps): void {
     const res = await db.query<DmRow>(
       `SELECT * FROM (
          SELECT m.id, m.sender_id, m.recipient_id, m.username, u.avatar_url, m.text, m.kind, m.media_url, m.recalled, m.edited_at, m.created_at,
+                m.forwarded_from_label,
                 m.reply_to, r.username AS reply_username, r.text AS reply_text, r.kind AS reply_kind, r.recalled AS reply_recalled
          FROM dm_messages m
          LEFT JOIN users u ON u.id = m.sender_id
