@@ -44,6 +44,9 @@ async function switchTab(page, label) {
 
 async function addFriend(page, targetName) {
   await switchTab(page, '好友');
+  // 添加好友默认折叠（QQ 式管理面板），先展开
+  await page.evaluate(() => document.querySelector('.friends-add-toggle')?.click());
+  await sleep(400);
   await page.type('.friends-add input', targetName);
   await page.evaluate(() => {
     const btn = [...document.querySelectorAll('.friends-add button')].find((b) => b.textContent.includes('加好友'));
@@ -88,11 +91,10 @@ const run = async () => {
   await addFriend(A, UB);
   await acceptIncoming(B);
 
-  // 3. A 好友面板点「发消息」→ 打开 DM
+  // 3. A 好友面板双击好友 → 打开 DM（单击 = 资料页）
   await A.evaluate((ub) => {
     const item = [...document.querySelectorAll('.friend-item')].find((el) => el.textContent.includes(ub));
-    const btn = item?.querySelector('.friend-dm-btn');
-    btn?.click();
+    item?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
   }, UB);
   await sleep(1200);
   await A.screenshot({ path: `${SHOT_DIR}/ui-dm-open.png` });

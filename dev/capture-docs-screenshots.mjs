@@ -214,6 +214,9 @@ async function main(browser) {
   // 6) 好友：A 申请 → B 同意 → A 好友页截图
   console.log('== 好友流程 ==')
   await openSideTab(pageA, '好友')
+  // 添加好友默认折叠（QQ 式管理面板），先展开
+  await pageA.evaluate(() => document.querySelector('.friends-add-toggle')?.click())
+  await sleep(300)
   await fillByPlaceholder(pageA, ['输入用户名或 #ID 加好友'], USER_B)
   await clickByText(pageA, '加好友')
   await sleep(700)
@@ -282,13 +285,13 @@ async function main(browser) {
   await pageA.screenshot({ path: `${OUT}ui-profile.png` })
   await closeModal(pageA)
 
-  // 12) 通知中心（提及未读 → 打开面板）
-  console.log('== 截图：通知中心 ==')
-  await pageA.evaluate(() => document.querySelector('.bell-btn')?.click())
-  await waitText(pageA, '通知中心')
-  await sleep(400)
-  await pageA.screenshot({ path: `${OUT}ui-mention.png` })
-  await pageA.evaluate(() => document.querySelector('.menu-mask')?.click())
+  // 12) 通知设置页（应用内通知中心已移除，改用 Windows 系统通知 + 设置页）
+  console.log('== 截图：通知设置 ==')
+  const pageS = await ctxA.newPage()
+  await pageS.goto('http://localhost:1420/settings.html?section=notify', { waitUntil: 'networkidle2' })
+  await sleep(900)
+  await pageS.screenshot({ path: `${OUT}ui-mention.png` })
+  await pageS.close()
 }
 
 const browser = await puppeteer.launch({

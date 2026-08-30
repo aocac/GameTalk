@@ -2670,3 +2670,375 @@ body {
 .fpp-actions .btn {
   flex: 1;
 }
+
+/* ================================================================
+   UI POLISH 2026-08：现代桌面 IM 精致化（QQ NT 层次语言）
+   整体浅灰底 + 白色元素浮起（气泡/输入条/面板），统一投影与圆角，
+   精细化 hover/focus/滚动条。只覆盖视觉属性，不改组件结构。
+   ================================================================ */
+
+:root {
+  --bg: #eef1f6;
+  --surface: #ffffff;
+  --border: #e3e7ef;
+  --shadow-bubble: 0 1px 2px rgba(31, 41, 61, 0.07), 0 0 0 1px rgba(31, 41, 61, 0.04);
+  --shadow-bubble-own: 0 1px 2px rgba(51, 112, 255, 0.10), 0 0 0 1px rgba(51, 112, 255, 0.06);
+  --shadow-card: 0 1px 3px rgba(31, 41, 61, 0.06), 0 4px 16px rgba(31, 41, 61, 0.05);
+  --shadow-modal: 0 12px 48px rgba(18, 24, 40, 0.18), 0 2px 8px rgba(18, 24, 40, 0.08);
+  --side-bg: #151821;
+}
+
+/* ---- 主区：去掉「灰底嵌白卡」，整体浅灰底，元素各自浮起 ---- */
+.main {
+  background: var(--bg);
+}
+
+/* 旧打磨层的白卡容器/渐变底全部失效 */
+.chat-area,
+.messages {
+  margin: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  background-image: none !important;
+  padding: 18px 26px 10px;
+  gap: 3px;
+}
+
+/* ---- 顶栏：与消息区融合，去白条 ---- */
+.topbar {
+  background: transparent;
+  border-bottom: none;
+  padding: 0 26px;
+  height: 54px;
+}
+
+.topbar-title {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+/* ---- 气泡：白色浮起，圆角非对称 ---- */
+.message {
+  gap: 11px;
+  padding: 4px 10px;
+  max-width: 72%;
+  border-radius: 12px;
+  transition: background 0.15s;
+}
+
+.message:hover {
+  background: rgba(31, 41, 61, 0.04);
+}
+
+.message-avatar .avatar,
+.message-avatar .avatar-img {
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(31, 41, 61, 0.10);
+}
+
+.message-body {
+  background: var(--surface);
+  border-radius: 3px 14px 14px 14px;
+  padding: 8px 13px 7px;
+  box-shadow: var(--shadow-bubble);
+}
+
+.message-author {
+  font-size: 13px;
+  font-weight: 600;
+  color: #3d4351;
+}
+
+.message-time {
+  font-size: 10.5px;
+  opacity: 0.75;
+}
+
+.message-text {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.message.mine .message-body {
+  background: var(--own-bubble);
+  border-radius: 14px 3px 14px 14px;
+  box-shadow: var(--shadow-bubble-own);
+}
+
+.message.mine .message-text {
+  color: #1d2b4f;
+}
+
+.message.mine .message-author {
+  display: none;
+}
+
+/* 引用块与正文过渡更轻 */
+.message-quote {
+  background: rgba(31, 41, 61, 0.05);
+  border-radius: 7px;
+}
+
+.message.mine .message-quote {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+/* 图片消息圆角与气泡一致 */
+.msg-image {
+  border-radius: 10px;
+}
+
+/* ---- 日期分隔：更轻更精致 ---- */
+.day-divider {
+  margin: 14px 0 8px;
+}
+
+.day-divider span {
+  font-size: 11px;
+  color: var(--text-3);
+  background: transparent;
+  border-radius: 999px;
+  padding: 2px 12px;
+  box-shadow: inset 0 0 0 1px var(--border);
+  backdrop-filter: none;
+}
+
+/* ---- 输入区：输入条卡片化浮起 ---- */
+.composer {
+  background: transparent;
+  border-top: none;
+  padding: 10px 18px 8px;
+}
+
+.composer-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 8px 10px;
+  box-shadow: var(--shadow-card);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.composer-row:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 1px 3px rgba(31, 41, 61, 0.06), 0 4px 16px rgba(51, 112, 255, 0.10);
+}
+
+.composer-input {
+  background: transparent;
+  border: none;
+  padding: 8px 6px;
+}
+
+.composer-input:focus {
+  border: none;
+  background: transparent;
+}
+
+.composer-icon {
+  border-radius: 9px;
+  transition: background 0.14s, color 0.14s;
+}
+
+.composer-icon:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.btn.primary {
+  border-radius: 10px;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(51, 112, 255, 0.28);
+}
+
+.btn.primary:hover:not(:disabled) {
+  box-shadow: 0 2px 6px rgba(51, 112, 255, 0.34);
+  transform: translateY(-1px);
+}
+
+.btn.primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn {
+  transition: background 0.14s, color 0.14s, transform 0.1s, box-shadow 0.14s;
+}
+
+/* ---- 深色侧栏：品牌色选中态 + 精致层次 ---- */
+.sidebar {
+  background: var(--side-bg);
+  padding: 12px 10px 10px;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+.side-tab {
+  border-radius: 9px;
+  transition: background 0.14s, color 0.14s;
+}
+
+.side-tab.active {
+  background: rgba(255, 255, 255, 0.10);
+  color: #fff;
+  font-weight: 600;
+}
+
+.room-item,
+.friend-item {
+  border-radius: 10px;
+  transition: background 0.14s;
+}
+
+/* 当前会话：品牌色浮起（QQ NT 式高亮） */
+.room-item.active {
+  background: linear-gradient(135deg, rgba(51, 112, 255, 0.22), rgba(51, 112, 255, 0.14));
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: #fff;
+}
+
+.room-item.active .room-preview,
+.room-item.active .room-name {
+  color: #eaf0ff;
+}
+
+.room-item.active .room-avatar {
+  box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.45);
+}
+
+.rooms-header {
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  opacity: 0.85;
+  padding: 2px 8px 4px;
+}
+
+/* 用户块 hover 反馈 */
+.user-trigger {
+  border-radius: 10px;
+  transition: background 0.14s;
+}
+
+.user-trigger:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ---- 成员面板：融入浅灰底 + 条目卡片化 ---- */
+.members-panel {
+  background: var(--bg);
+  border-left: none;
+  padding: 54px 10px 10px;
+}
+
+.members-header {
+  color: var(--text-2);
+  font-size: 12px;
+  padding: 0 8px 6px;
+}
+
+.member-item {
+  border-radius: 9px;
+  padding: 6px 8px;
+  transition: background 0.13s;
+}
+
+.member-item:hover {
+  background: rgba(31, 41, 61, 0.05);
+}
+
+/* ---- 弹窗：更大柔影、圆角 ---- */
+.modal {
+  border-radius: 16px;
+  box-shadow: var(--shadow-modal);
+}
+
+.member-card {
+  border-radius: 16px;
+}
+
+/* ---- 滚动条：细圆角现代款 ---- */
+.messages::-webkit-scrollbar,
+.rooms::-webkit-scrollbar,
+.members-list::-webkit-scrollbar,
+.friends-list::-webkit-scrollbar,
+.dm-rooms::-webkit-scrollbar {
+  width: 8px;
+}
+
+.messages::-webkit-scrollbar-thumb,
+.rooms::-webkit-scrollbar-thumb,
+.members-list::-webkit-scrollbar-thumb,
+.friends-list::-webkit-scrollbar-thumb,
+.dm-rooms::-webkit-scrollbar-thumb {
+  background: rgba(31, 41, 61, 0.16);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.messages::-webkit-scrollbar-thumb:hover,
+.rooms::-webkit-scrollbar-thumb:hover,
+.members-list::-webkit-scrollbar-thumb:hover,
+.friends-list::-webkit-scrollbar-thumb:hover,
+.dm-rooms::-webkit-scrollbar-thumb:hover {
+  background: rgba(31, 41, 61, 0.30);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.rooms::-webkit-scrollbar-thumb,
+.friends-list::-webkit-scrollbar-thumb,
+.dm-rooms::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.rooms::-webkit-scrollbar-thumb:hover,
+.friends-list::-webkit-scrollbar-thumb:hover,
+.dm-rooms::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.26);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* ---- 状态栏：更轻的胶囊 ---- */
+.status-bar {
+  background: transparent;
+  border-top: none;
+  padding: 0 18px 10px;
+}
+
+.status-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(31, 41, 61, 0.05);
+  border-radius: 999px;
+  transition: border-color 0.14s, color 0.14s;
+}
+
+.status-item:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- 登录页：纯色底 + 微径向光，卡片柔影 ---- */
+.auth-wrap {
+  background: radial-gradient(1100px 700px at 30% 18%, #f6f8fd 0%, var(--bg) 55%, #e7ebf3 100%);
+}
+
+/* ---- 好友资料页卡片微调对齐新投影 ---- */
+.fpp-card {
+  box-shadow: var(--shadow-card);
+  border-color: var(--border);
+}
+
+/* ---- 附件/回复条融入输入卡 ---- */
+.composer .reply-bar,
+.composer .edit-bar,
+.composer .attachment-bar {
+  margin: 0 2px 6px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(31, 41, 61, 0.05);
+}
