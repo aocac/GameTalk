@@ -44,8 +44,9 @@ cd client/src-tauri && cargo check
 | 20 | 消息编辑（仅发送者/撤回后不可编辑/双端广播/历史 editedAt；房间 + DM） | ✅（2 例 + 客户端集成 1 例） | ✅ 双账号浏览器全流程（编辑模式/双端「已编辑」/Esc 取消，docs/ui-edit-broadcast.png） |
 | 21 | 房主代撤（广播/历史带 recalledBy，撤回行三态文案，预览作者同步） | ✅ | ✅ 双账号浏览器（docs/ui-fix-050.png） |
 | 22 | Windows 系统通知（三档设置/仅@与私聊/活跃会话不弹） | 档位逻辑随 store | 真机安装包验收（需 Windows 通知权限） |
+| 23 | 云表情包（个人 CRUD/归属/上限 24/幂等）+ 群共享（成员 403/贡献者删除/房主删除/幂等）+ 共享媒体发送 | ✅（3 例） | ✅ 双账号浏览器全流程（上传/同步/跨账号可见/点选发送/房主删除，dev/e2e-stickers.mjs，docs/ui-stickers.png） |
 
-当前实测：server 52 测试 + client 17 测试（5 集成 + 12 单测）全绿（含改名 409、撤回操作者归属断言）；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
+当前实测：server 55 测试 + client 17 测试（5 集成 + 12 单测）全绿（含云表情包 3 例）；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
 
 ## 3. 真机验收清单
 

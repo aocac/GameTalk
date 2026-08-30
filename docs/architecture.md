@@ -110,7 +110,9 @@ gametalk/
 
 **禁言**：`member:mute`（仅房主、1 分钟–30 天、不能禁言自己/房主）写 `room_mutes` 并广播 `member:muted`；`message:send` 对生效中的禁言回 `error(code=muted, mutedUntil)`；到期自动失效（惰性判断），`member:unmute` 提前解除。花名册携带 `mutedUntil` 供全员展示禁言标签。
 
-**图片消息**：客户端先 `POST /api/media`（data URL，≤5MB，魔数校验）取得 `/api/media/<uuid>`，再随 `message:send(kind=image)` 发送；服务端校验该媒体必须存在且属于发送者。读取端点免认证（`<img>` 带不了 Authorization 头），与头像同策略：UUID 不可枚举 + immutable 缓存。
+**图片消息**：客户端先 `POST /api/media`（data URL，≤5MB，魔数校验）取得 `/api/media/<uuid>`，再随 `message:send(kind=image)` 发送；服务端校验该媒体必须存在且属于发送者，**或已登记为共享表情**（本房间群表情 / DM 双方任一收藏，支撑「成员贡献、全群使用」的群表情场景；其余引用仍严格拒绝）。读取端点免认证（`<img>` 带不了 Authorization 头），与头像同策略：UUID 不可枚举 + immutable 缓存。
+
+**表情包**：`POST/GET/DELETE /api/stickers`（个人云表情，媒体归属校验 + 24 上限 + 幂等）、`POST/GET/DELETE /api/rooms/:id/stickers`（房间共享，成员资格校验，删除 = 添加者或房主）。客户端表情面板三页签：表情 / 我的表情包（云同步，本地旧数据自动迁移）/ 群表情（按房间隔离）。
 
 **好友**：`friendships`（pending/accepted，双向唯一）；支持 userId / 用户名 / `#8 位短 ID` 查找；反向申请等价于互加。实时事件（`friend:request/accepted/declined/removed`）经 WS 推送在线方。好友与房间完全分离管理。
 
@@ -147,6 +149,7 @@ gametalk/
 - `010_dm_messages`：`dm_messages`（好友私聊，双向索引）
 - `011_edited`：`messages.edited_at` / `dm_messages.edited_at`（消息编辑）
 - `012_recalled_by`：`messages.recalled_by`（撤回操作者，房主代撤文案用）
+- `013_stickers`：`user_stickers`（个人云表情，跨设备同步）/ `room_stickers`（房间共享表情库，成员贡献）
 
 ## 6. 游戏 Overlay（透明置顶窗口方案）
 
