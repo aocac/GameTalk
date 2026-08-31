@@ -36,8 +36,8 @@ ${StrLoc}
 
 !define MANUFACTURER "gametalk"
 !define PRODUCTNAME "GameTalk"
-!define VERSION "0.5.4"
-!define VERSIONWITHBUILD "0.5.4.0"
+!define VERSION "{{version}}"
+!define VERSIONWITHBUILD "{{version_with_build}}"
 !define HOMEPAGE ""
 !define INSTALLMODE "currentUser"
 !define LICENSE ""
