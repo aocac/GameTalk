@@ -15,6 +15,17 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.stunprotocol.org:3478' },
+  // 免费公共 TURN 中继兜底（OpenRelay/metered.ca）：仅当 P2P 直连打不通（对称 NAT / UDP 受限）时才会用到，
+  // 走的是第三方带宽，不消耗自己服务器。适合朋友小群试用；正式/高负载应自建 coturn。含 443/TCP 以穿透封 UDP 的网络。
+  {
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:443?transport=tcp',
+    ],
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
 ];
 
 export type SignalSender = (to: string, roomId: string, data: unknown) => void;
