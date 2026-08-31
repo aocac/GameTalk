@@ -1,9 +1,9 @@
 /**
- * 屏幕共享：P2P WebRTC  Mesh（1 对 N）。
- * - 共享者调用 getDisplayMedia 拿到本地视频流，然后与每个观看者建立 RTCPeerConnection。
- * - 观看者收到 screen:started 后创建 RTCPeerConnection，等待共享者的 offer。
- * - 所有 SDP / ICE 候选通过 WS 信令走服务端透传，媒体流不经过服务器。
- * - STUN 默认使用国内可达公共节点；生产环境可追加自建 coturn（TURN 中继兜底）。
+ * 屏幕共享：P2P WebRTC，请求/应答式 mesh（支持多人同时共享 + 晚加入）。
+ * - 共享者：getDisplayMedia 取流后只广播「我在共享」，不预先给任何人建连接。
+ * - 观看者：点「观看」时向共享者发 `request`；共享者收到后为该观看者建 sender 连接并回 offer。
+ * - 一个客户端可同时是共享者（senders: 我→各观看者）和观看者（receivers: 各共享者→我）。
+ * - SDP / ICE 经服务端 screen:signal 定向透传，媒体流不经服务器。STUN 用国内公共节点；无 TURN 兜底。
  */
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
@@ -13,123 +13,161 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.miwifi.com:3478' },
 ];
 
-export type SignalSender = (to: string, data: unknown) => void;
+export type SignalSender = (to: string, roomId: string, data: unknown) => void;
 
-interface SignalPayload {
-  type: 'offer' | 'answer' | 'candidate';
+type SignalPayload = {
+  type: 'request' | 'offer' | 'answer' | 'candidate';
   sdp?: string;
   candidate?: RTCIceCandidateInit;
-}
+};
 
-/** 管理单个房间的一次屏幕共享会话 */
 export class ScreenShareManager {
   private localStream: MediaStream | null = null;
-  private pcs = new Map<string, RTCPeerConnection>();
+  /** 我作为共享者：viewerId -> sender pc */
+  private senders = new Map<string, RTCPeerConnection>();
+  /** 我作为观看者：sharerId -> receiver pc */
+  private receivers = new Map<string, RTCPeerConnection>();
+  /** 每个对端所属房间（回发信令时带上正确的 roomId） */
+  private roomOf = new Map<string, string>();
   private signalSender: SignalSender | null = null;
-  private onRemoteStream: ((stream: MediaStream) => void) | null = null;
-  private onStop: (() => void) | null = null;
+  private onRemoteStream: ((sharerId: string, stream: MediaStream) => void) | null = null;
+  private onSelfStop: (() => void) | null = null;
 
   get isSharing(): boolean {
     return this.localStream !== null;
   }
 
-  /** 发起共享：获取屏幕流，并向每个房间成员发起 P2P 连接 */
-  async start(
-    _roomId: string,
-    myId: string,
-    memberIds: string[],
-    signalSender: SignalSender,
-    onStop: () => void,
-  ): Promise<void> {
+  setSignalSender(fn: SignalSender): void {
+    this.signalSender = fn;
+  }
+
+  setRemoteStreamHandler(fn: (sharerId: string, stream: MediaStream) => void): void {
+    this.onRemoteStream = fn;
+  }
+
+  /** 发起共享：仅取屏幕流。用户取消选择器时静默返回（isSharing 保持 false）。 */
+  async start(roomId: string, signalSender: SignalSender, onSelfStop: () => void): Promise<void> {
     this.signalSender = signalSender;
-    this.onStop = onStop;
+    this.onSelfStop = onSelfStop;
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      throw new Error('当前运行环境不支持屏幕捕获（WebView2 版本过旧，或非安全上下文）');
+    }
+    if (this.localStream) return; // 已在共享，幂等
     try {
       this.localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
     } catch (e) {
-      this.reset();
-      throw new Error('无法获取屏幕。请确认运行环境支持屏幕捕获（WebView2 需窗口高度 ≥600px）。', { cause: e });
-    }
-    // 用户点浏览器原生「停止共享」按钮时同步停止
-    this.localStream.getVideoTracks()[0]?.addEventListener('ended', () => this.stop());
-    for (const memberId of memberIds) {
-      if (memberId === myId) continue;
-      const pc = this.createPeerConnection(memberId, true);
-      this.pcs.set(memberId, pc);
-      for (const track of this.localStream.getTracks()) {
-        pc.addTrack(track, this.localStream);
+      const name = (e as DOMException)?.name ?? '';
+      if (name === 'NotAllowedError') {
+        // 用户在系统选择器点了取消/未选择：不是故障，静默返回
+        this.onSelfStop = null;
+        return;
       }
+      this.onSelfStop = null;
+      throw new Error(`无法获取屏幕（${name || '未知错误'}）。请确认窗口高度 ≥600px 且 WebView2 支持屏幕捕获。`, { cause: e });
     }
+    this.roomOf.set('__self__', roomId);
+    this.localStream.getVideoTracks()[0]?.addEventListener('ended', () => this.stopLocal());
   }
 
-  /** 观看他人共享：创建 RTCPeerConnection 等待 offer */
-  watch(sharerId: string, signalSender: SignalSender, onRemoteStream: (stream: MediaStream) => void): void {
-    this.signalSender = signalSender;
-    this.onRemoteStream = onRemoteStream;
-    if (!this.pcs.has(sharerId)) {
-      this.createPeerConnection(sharerId, false);
-    }
+  /** 我作为观看者，主动请求观看 sharerId 的共享（晚加入靠这个触发共享者重新 offer） */
+  watch(sharerId: string, roomId: string): void {
+    this.signalSender ??= null;
+    this.roomOf.set(sharerId, roomId);
+    if (this.receivers.has(sharerId)) return;
+    const pc = this.createPeerConnection(sharerId, false);
+    this.receivers.set(sharerId, pc);
+    this.signalSender?.(sharerId, roomId, { type: 'request' });
   }
 
-  /** 处理 incoming WebRTC 信令 */
-  async handleSignal(from: string, raw: unknown): Promise<void> {
+  /** 停止观看某个共享者 */
+  stopWatching(sharerId: string): void {
+    this.receivers.get(sharerId)?.close();
+    this.receivers.delete(sharerId);
+    this.roomOf.delete(sharerId);
+  }
+
+  /** 处理收到的信令（from 为对端用户 ID，roomId 为该共享所属房间） */
+  async handleSignal(from: string, roomId: string, raw: unknown): Promise<void> {
     const data = raw as SignalPayload;
     const type = data?.type;
+    this.roomOf.set(from, roomId);
+
+    if (type === 'request') {
+      // 我是共享者：为该观看者建 sender 连接并 addTrack（addTrack 触发 onnegotiationneeded → offer）
+      if (!this.localStream) return;
+      const existing = this.senders.get(from);
+      if (existing) {
+        existing.close();
+      }
+      const pc = this.createPeerConnection(from, true);
+      this.senders.set(from, pc);
+      for (const track of this.localStream.getTracks()) pc.addTrack(track, this.localStream);
+      return;
+    }
     if (type === 'offer') {
-      let pc = this.pcs.get(from);
+      // 我是观看者：应答
+      let pc = this.receivers.get(from);
       if (!pc) {
         pc = this.createPeerConnection(from, false);
-        this.pcs.set(from, pc);
+        this.receivers.set(from, pc);
       }
       await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp! }));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      this.signalSender?.(from, { type: 'answer', sdp: answer.sdp });
+      this.signalSender?.(from, roomId, { type: 'answer', sdp: answer.sdp });
       return;
     }
     if (type === 'answer') {
-      const pc = this.pcs.get(from);
+      // 我是共享者
+      const pc = this.senders.get(from);
       if (!pc) return;
       await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp! }));
       return;
     }
     if (type === 'candidate') {
-      const pc = this.pcs.get(from);
+      const pc = this.senders.get(from) ?? this.receivers.get(from);
       if (!pc || !data.candidate) return;
       try {
         await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
       } catch {
-        // 候选到达时远程描述可能尚未设置，可忽略
+        // 候选早于远端描述到达，忽略
       }
     }
   }
 
-  stop(): void {
+  /** 停止我的共享：关本地流 + 所有面向观看者的 sender 连接（不影响我在看别人的共享） */
+  stopLocal(): void {
     this.localStream?.getTracks().forEach((t) => t.stop());
     this.localStream = null;
-    this.pcs.forEach((pc) => pc.close());
-    this.pcs.clear();
-    this.signalSender = null;
-    this.onRemoteStream = null;
-    this.onStop?.();
-    this.onStop = null;
+    this.senders.forEach((pc) => pc.close());
+    this.senders.clear();
+    const cb = this.onSelfStop;
+    this.onSelfStop = null;
+    cb?.();
   }
 
-  private reset(): void {
+  /** 完全停止：本地流 + 所有连接（退出/切号/离开房间时调用） */
+  stopAll(): void {
     this.localStream?.getTracks().forEach((t) => t.stop());
     this.localStream = null;
+    this.senders.forEach((pc) => pc.close());
+    this.senders.clear();
+    this.receivers.forEach((pc) => pc.close());
+    this.receivers.clear();
+    this.roomOf.clear();
+    this.onSelfStop = null;
   }
 
   private createPeerConnection(peerId: string, isSender: boolean): RTCPeerConnection {
     const pc = new RTCPeerConnection({ iceServers: DEFAULT_ICE_SERVERS });
+    const room = this.roomOf.get(peerId) ?? '';
     pc.onicecandidate = (ev) => {
-      if (ev.candidate) {
-        this.signalSender?.(peerId, { type: 'candidate', candidate: ev.candidate.toJSON() });
-      }
+      if (ev.candidate) this.signalSender?.(peerId, room, { type: 'candidate', candidate: ev.candidate.toJSON() });
     };
     pc.ontrack = (ev) => {
       if (!isSender) {
         const [stream] = ev.streams;
-        if (stream) this.onRemoteStream?.(stream);
+        if (stream) this.onRemoteStream?.(peerId, stream);
       }
     };
     pc.onnegotiationneeded = async () => {
@@ -137,12 +175,11 @@ export class ScreenShareManager {
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        this.signalSender?.(peerId, { type: 'offer', sdp: offer.sdp });
+        this.signalSender?.(peerId, room, { type: 'offer', sdp: offer.sdp });
       } catch (e) {
         console.error('screen share offer failed:', e);
       }
     };
-    this.pcs.set(peerId, pc);
     return pc;
   }
 }

@@ -1111,7 +1111,8 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
         return;
       }
-      broadcastToRoom(roomId, { type: 'screen:stopped', payload: { roomId } });
+      // 带 userId，让各端精确移除该共享者的图块（多人同时共享场景）
+      broadcastToRoom(roomId, { type: 'screen:stopped', payload: { roomId, userId: conn.userId } });
       break;
     }
 
@@ -1135,7 +1136,8 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'target not in room', roomId } });
         return;
       }
-      sendToUser(targetId, { type: 'screen:signal', payload: { from: conn.userId, data: msg.payload.data } });
+      // 转发带上 roomId，观看端据此把信令路由到对应房间的共享会话
+      sendToUser(targetId, { type: 'screen:signal', payload: { from: conn.userId, roomId, data: msg.payload.data } });
       break;
     }
 

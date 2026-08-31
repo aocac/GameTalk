@@ -123,8 +123,8 @@ export type ServerWsMessage =
   | { type: 'friend:removed'; payload: { userId: string } }
   | { type: 'presence:friend'; payload: { userId: string; online: boolean } }
   | { type: 'screen:started'; payload: { roomId: string; userId: string; username: string } }
-  | { type: 'screen:stopped'; payload: { roomId: string } }
-  | { type: 'screen:signal'; payload: { from: string; data: unknown } }
+  | { type: 'screen:stopped'; payload: { roomId: string; userId?: string } }
+  | { type: 'screen:signal'; payload: { from: string; roomId?: string; data: unknown } }
   | { type: 'error'; payload: { code: string; message: string; roomId?: string; mutedUntil?: string; to?: string; from?: string } }
   | { type: 'pong' };
 

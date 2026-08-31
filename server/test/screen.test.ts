@@ -108,10 +108,10 @@ describe('screen share signaling', () => {
     expect(evA.payload).toMatchObject({ roomId: room.id, userId: a.userId, username: 'scr_a' });
     expect(evB.payload).toMatchObject({ userId: a.userId });
 
-    // 停止 → screen:stopped
+    // 停止 → screen:stopped（带 userId，供各端精确移除该共享者图块）
     const stoppedAtB = nextMessage(wsB, (m) => m.type === 'screen:stopped');
     wsA.send(JSON.stringify({ type: 'screen:stop', payload: { roomId: room.id } }));
-    expect((await stoppedAtB).payload).toMatchObject({ roomId: room.id });
+    expect((await stoppedAtB).payload).toMatchObject({ roomId: room.id, userId: a.userId });
 
     wsA.close();
     wsB.close();
@@ -140,6 +140,7 @@ describe('screen share signaling', () => {
     );
     const ev = await signalAtB;
     expect(ev.payload.from).toBe(a.userId);
+    expect(ev.payload.roomId).toBe(room.id);
     expect(ev.payload.data).toEqual({ type: 'offer', sdp: 'v=0-fake-sdp' });
 
     // 目标非本房间成员 → 拒绝（防把媒体信令发给陌生人）
