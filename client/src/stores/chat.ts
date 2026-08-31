@@ -142,8 +142,8 @@ interface ChatState {
     roomId: string | null;
     /** 我是否正在共享本房间屏幕 */
     selfSharing: boolean;
-    /** 其他人的共享：sharerId -> { 名称, 是否已加入观看, 远端流 } */
-    shares: Record<string, { name: string; watching: boolean; remoteStream: MediaStream | null }>;
+    /** 其他人的共享：sharerId -> { 名称, 是否已加入观看, 远端流, ICE 连接状态 } */
+    shares: Record<string, { name: string; watching: boolean; remoteStream: MediaStream | null; ice?: string }>;
   };
   /** 开始共享当前房间的屏幕（WebRTC P2P） */
   startScreenShare: () => Promise<void>;
@@ -1361,6 +1361,12 @@ export const useChat = create<ChatState>()((set, get) => ({
         return sh ? { screenShare: { ...s.screenShare, shares: { ...s.screenShare.shares, [sharerId]: { ...sh, remoteStream: stream } } } } : {};
       });
     });
+    mgr.setIceStateHandler((id, state) => {
+      set((s) => {
+        const sh = s.screenShare.shares[id];
+        return sh ? { screenShare: { ...s.screenShare, shares: { ...s.screenShare.shares, [id]: { ...sh, ice: state } } } } : {};
+      });
+    });
     await mgr.handleSignal(from, roomId, data);
   },
 
@@ -1379,6 +1385,12 @@ export const useChat = create<ChatState>()((set, get) => ({
       set((s) => {
         const sh = s.screenShare.shares[id];
         return sh ? { screenShare: { ...s.screenShare, shares: { ...s.screenShare.shares, [id]: { ...sh, remoteStream: stream } } } } : {};
+      });
+    });
+    mgr.setIceStateHandler((id, state) => {
+      set((s) => {
+        const sh = s.screenShare.shares[id];
+        return sh ? { screenShare: { ...s.screenShare, shares: { ...s.screenShare.shares, [id]: { ...sh, ice: state } } } } : {};
       });
     });
     set((s) =>

@@ -3527,6 +3527,22 @@ body {
   object-fit: contain;
   cursor: pointer;
 }
+.screen-stage {
+  position: relative;
+}
+.screen-wait {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 16px;
+  color: #d7dbe8;
+  font-size: 13px;
+  line-height: 1.5;
+  background: rgba(16, 19, 27, 0.6);
+}
 /* 共享中：composer 图标按钮高亮 */
 .composer-icon.active {
   color: var(--accent);

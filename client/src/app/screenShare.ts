@@ -7,10 +7,14 @@
  */
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  // 国内可达优先；Google 公共 STUN 作兜底（部分网络可达）
   { urls: 'stun:stun.qq.com:3478' },
   { urls: 'stun:stun.chat.bilibili.com:3478' },
   { urls: 'stun:stun.aliyun.com:3478' },
   { urls: 'stun:stun.miwifi.com:3478' },
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun.stunprotocol.org:3478' },
 ];
 
 export type SignalSender = (to: string, roomId: string, data: unknown) => void;
@@ -32,6 +36,7 @@ export class ScreenShareManager {
   private signalSender: SignalSender | null = null;
   private onRemoteStream: ((sharerId: string, stream: MediaStream) => void) | null = null;
   private onSelfStop: (() => void) | null = null;
+  private onIceState: ((peerId: string, state: string) => void) | null = null;
 
   get isSharing(): boolean {
     return this.localStream !== null;
@@ -43,6 +48,10 @@ export class ScreenShareManager {
 
   setRemoteStreamHandler(fn: (sharerId: string, stream: MediaStream) => void): void {
     this.onRemoteStream = fn;
+  }
+
+  setIceStateHandler(fn: (peerId: string, state: string) => void): void {
+    this.onIceState = fn;
   }
 
   /** 发起共享：仅取屏幕流。用户取消选择器时静默返回（isSharing 保持 false）。 */
@@ -169,6 +178,9 @@ export class ScreenShareManager {
         const [stream] = ev.streams;
         if (stream) this.onRemoteStream?.(peerId, stream);
       }
+    };
+    pc.oniceconnectionstatechange = () => {
+      this.onIceState?.(peerId, pc.iceConnectionState);
     };
     pc.onnegotiationneeded = async () => {
       if (!isSender) return;

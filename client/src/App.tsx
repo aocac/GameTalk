@@ -99,6 +99,81 @@ function CtxMenu({ x, y, children }: { x: number; y: number; children: ReactNode
   );
 }
 
+/** 屏幕共享观看窗：显式设置 video.muted 属性（React 的 muted 属性不可靠 → WebView2 会拦截自动播放导致黑屏），
+ *  并在收到真实画面帧前显示连接状态，便于区分「渲染问题」与「ICE/NAT 不通」。 */
+function ScreenViewer({ name, stream, ice, idx, onStop }: { name: string; stream: MediaStream; ice?: string; idx: number; onStop: () => void }) {
+  const ref = useRef<HTMLVideoElement | null>(null);
+  const [frame, setFrame] = useState(false);
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return;
+    v.muted = true;
+    v.playsInline = true;
+    v.srcObject = stream;
+    void v.play().catch(() => {});
+    let stop = false;
+    let last = -1;
+    const mark = () => {
+      if (!stop) setFrame(true);
+    };
+    const rvfc = (v as unknown as { requestVideoFrameCallback?: (cb: () => void) => number }).requestVideoFrameCallback;
+    if (typeof rvfc === 'function') {
+      try {
+        rvfc.call(v, mark);
+      } catch {
+        /* ignore */
+      }
+    }
+    const iv = setInterval(() => {
+      if (stop) return;
+      if (v.currentTime > 0 && v.currentTime !== last) mark();
+      last = v.currentTime;
+    }, 400);
+    return () => {
+      stop = true;
+      clearInterval(iv);
+      try {
+        v.pause();
+      } catch {
+        /* ignore */
+      }
+      v.srcObject = null;
+    };
+  }, [stream]);
+  const failed = ice === 'failed' || ice === 'disconnected' || ice === 'closed';
+  return (
+    <div className="screen-viewer" style={{ right: 24 + idx * 18, bottom: 96 + idx * 18 }}>
+      <div className="screen-viewer-head">
+        <span>正在观看 {name} 的屏幕共享</span>
+        <button className="screen-viewer-close" title="停止观看" onClick={onStop}>
+          ✕
+        </button>
+      </div>
+      <div className="screen-stage">
+        <video
+          ref={ref}
+          autoPlay
+          playsInline
+          muted
+          className="screen-video"
+          onClick={(e) => {
+            const el = e.target as HTMLVideoElement;
+            el.muted = true;
+            void el.play().catch(() => {});
+          }}
+        />
+        {!frame && (
+          <div className="screen-wait">
+            {failed
+              ? `连接失败（${ice}）——双方网络可能受限（对称 NAT），P2P 直连不通，需 TURN 中继`
+              : `正在建立连接 / 等待画面…${ice ? `（${ice}）` : ''}`}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const MAX_AVATAR_BYTES = 3 * 1024 * 1024; // 3MB
 
 /** 表情面板数据（精选常用集合，纯 Unicode，零资源文件） */
@@ -1984,29 +2059,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           !activeDm &&
           Object.entries(screenShare.shares).map(([id, sh], idx) =>
             sh.remoteStream ? (
-              <div className="screen-viewer" key={id} style={{ right: 24 + idx * 18, bottom: 96 + idx * 18 }}>
-                <div className="screen-viewer-head">
-                  <span>正在观看 {sh.name} 的屏幕共享</span>
-                  <button className="screen-viewer-close" title="停止观看" onClick={() => stopWatching(id)}>
-                    ✕
-                  </button>
-                </div>
-                <video
-                  autoPlay
-                  playsInline
-                  muted
-                  className="screen-video"
-                  ref={(el) => {
-                    if (el && el.srcObject !== sh.remoteStream) {
-                      el.srcObject = sh.remoteStream;
-                      void el.play().catch(() => {});
-                    }
-                  }}
-                  onClick={(e) => {
-                    void (e.target as HTMLVideoElement).play().catch(() => {});
-                  }}
-                />
-              </div>
+              <ScreenViewer key={id} name={sh.name} stream={sh.remoteStream} ice={sh.ice} idx={idx} onStop={() => stopWatching(id)} />
             ) : null,
           )}
 
