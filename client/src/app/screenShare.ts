@@ -6,7 +6,7 @@
  * - SDP / ICE 经服务端 screen:signal 定向透传，媒体流不经服务器。STUN 用国内公共节点；无 TURN 兜底。
  */
 
-const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+const STUN_SERVERS: RTCIceServer[] = [
   // 国内可达优先；Google 公共 STUN 作兜底（部分网络可达）
   { urls: 'stun:stun.qq.com:3478' },
   { urls: 'stun:stun.chat.bilibili.com:3478' },
@@ -15,18 +15,46 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.stunprotocol.org:3478' },
-  // 免费公共 TURN 中继兜底（OpenRelay/metered.ca）：仅当 P2P 直连打不通（对称 NAT / UDP 受限）时才会用到，
-  // 走的是第三方带宽，不消耗自己服务器。适合朋友小群试用；正式/高负载应自建 coturn。含 443/TCP 以穿透封 UDP 的网络。
-  {
-    urls: [
-      'turn:openrelay.metered.ca:80',
-      'turn:openrelay.metered.ca:443',
-      'turn:openrelay.metered.ca:443?transport=tcp',
-    ],
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
 ];
+
+/**
+ * 免费公共 TURN 中继（metered OpenRelay，静态密钥模式）兜底：仅当 P2P 直连打不通时才用到，
+ * 走第三方带宽，不消耗自己服务器。OpenRelay 现用 REST/HMAC 临时凭据（旧的静态 openrelayproject 已废弃），
+ * 故在本地用共享密钥签发 username/credential。正式/高负载或国内直连不稳时应自建 coturn。
+ */
+const TURN_SECRET = 'openrelayprojectsecret';
+const TURN_HOST = 'staticauth.openrelay.metered.ca';
+let cachedTurn: RTCIceServer | null = null;
+let turnPromise: Promise<void> | null = null;
+
+async function mintTurnCredential(): Promise<void> {
+  try {
+    const username = `${Math.floor(Date.now() / 1000) + 86400}:openrelayproject`;
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey('raw', enc.encode(TURN_SECRET), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(username));
+    const credential = btoa(String.fromCharCode(...new Uint8Array(sig)));
+    cachedTurn = {
+      urls: [`turn:${TURN_HOST}:80`, `turn:${TURN_HOST}:80?transport=tcp`, `turns:${TURN_HOST}:443`],
+      username,
+      credential,
+    };
+  } catch {
+    cachedTurn = null;
+  }
+}
+
+/** 预热 TURN 凭据（应用启动即异步签好，用户点共享/观看时已就绪）。 */
+export function ensureTurnCredential(): void {
+  if (!turnPromise) turnPromise = mintTurnCredential();
+}
+
+function iceServers(): RTCIceServer[] {
+  return cachedTurn ? [...STUN_SERVERS, cachedTurn] : STUN_SERVERS;
+}
+
+// 模块加载即预热 TURN 凭据（用户点共享/观看时通常已就绪）
+ensureTurnCredential();
 
 export type SignalSender = (to: string, roomId: string, data: unknown) => void;
 
@@ -121,7 +149,17 @@ export class ScreenShareManager {
       }
       const pc = this.createPeerConnection(from, true);
       this.senders.set(from, pc);
-      for (const track of this.localStream.getTracks()) pc.addTrack(track, this.localStream);
+      for (const track of this.localStream.getTracks()) {
+        const sender = pc.addTrack(track, this.localStream);
+        // 限制上行码率，走中继时也不至于吃满带宽（约 1.2Mbps）
+        try {
+          const params = sender.getParameters();
+          params.encodings = [{ ...(params.encodings?.[0] ?? {}), maxBitrate: 1_200_000 }];
+          void sender.setParameters(params);
+        } catch {
+          /* 某些环境不支持动态 setParameters，忽略 */
+        }
+      }
       return;
     }
     if (type === 'offer') {
@@ -179,7 +217,7 @@ export class ScreenShareManager {
   }
 
   private createPeerConnection(peerId: string, isSender: boolean): RTCPeerConnection {
-    const pc = new RTCPeerConnection({ iceServers: DEFAULT_ICE_SERVERS });
+    const pc = new RTCPeerConnection({ iceServers: iceServers() });
     const room = this.roomOf.get(peerId) ?? '';
     pc.onicecandidate = (ev) => {
       if (ev.candidate) this.signalSender?.(peerId, room, { type: 'candidate', candidate: ev.candidate.toJSON() });
