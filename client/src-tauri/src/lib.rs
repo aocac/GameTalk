@@ -3,11 +3,18 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WindowEvent,
 };
+use tauri_plugin_deep_link::DeepLinkExt;
 
 /// 彻底退出应用（前端关闭确认弹窗 → 退出）
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
+}
+
+/// 把字节写入本地文件（图片灯箱「保存」：前端弹保存对话框拿到路径后调用）
+#[tauri::command]
+fn write_file_bytes(path: String, data: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&path, data).map_err(|e| e.to_string())
 }
 
 /// 运行时设置 WebView 代理（立即生效，无需重启）：
@@ -46,6 +53,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // 单实例：Windows 上运行中点击 gametalk:// 链接会启动第二实例，
             // 邀请链接 URL 在第二实例的 argv 里，这里转发给主实例前端处理
@@ -59,8 +67,11 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![quit_app, set_proxy])
+        .invoke_handler(tauri::generate_handler![quit_app, set_proxy, write_file_bytes])
         .setup(|app| {
+            // 注册 gametalk:// 深链协议到当前用户注册表（不依赖安装器行为；
+            // 浏览器点击链接 → 系统以本 exe 启动第二实例 → 单实例回调转发）
+            app.deep_link().register_all()?;
             // 系统托盘：显示主窗口 / 退出
             let show = MenuItem::with_id(app, "show", "显示 GameTalk", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出 GameTalk", true, None::<&str>)?;

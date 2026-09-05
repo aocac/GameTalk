@@ -190,7 +190,7 @@ export class ScreenShareManager {
         // 码率上限 + 带宽不足时允许降分辨率保帧率（屏幕默认「保分辨率」会疯狂掉帧）
         try {
           const params = sender.getParameters();
-          params.encodings = [{ ...(params.encodings?.[0] ?? {}), maxBitrate: 4_000_000 }];
+          params.encodings = [{ ...(params.encodings?.[0] ?? {}), maxBitrate: 6_000_000 }];
           (params as RTCRtpSendParameters & { degradationPreference?: string }).degradationPreference = 'balanced';
           void sender.setParameters(params);
         } catch {
@@ -201,16 +201,11 @@ export class ScreenShareManager {
     }
 
     if (type === 'offer') {
-      // 我是观看者：应答（cid 缺省时按共享者回退匹配）
+      // 我是观看者：应答。信令按「用户」扇出——同一账号的其他连接（如独立观看窗）的 offer
+      // 也会送达这里；watch() 会同步建好 receiver，因此没有对应 receiver 的 offer 就不是给我的，忽略。
       const key = cid || this.cidOfPeer.get(from) || '';
-      let pc = key ? this.receivers.get(key) : undefined;
-      if (!pc) {
-        const fallbackKey = key || `legacy-${from}`;
-        this.peerOfCid.set(fallbackKey, from);
-        this.roomOfCid.set(fallbackKey, roomId);
-        pc = this.createPeerConnection(fallbackKey, false);
-        this.receivers.set(fallbackKey, pc);
-      }
+      const pc = key ? this.receivers.get(key) : undefined;
+      if (!pc) return;
       await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp! }));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);

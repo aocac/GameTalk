@@ -1954,6 +1954,34 @@ body {
   border-radius: var(--radius);
 }
 
+/* 多图附件：缩略图行内滚动，不撑爆输入条 */
+.attachment-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  max-width: 60%;
+  padding-bottom: 2px;
+}
+
+.attachment-thumb-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.attachment-thumb-wrap .attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  padding: 0 5px;
+  font-size: 12px;
+  line-height: 16px;
+  border-radius: 999px;
+  background: rgba(28, 31, 38, 0.85);
+  color: #fff;
+}
+
 .attachment-thumb {
   width: 44px;
   height: 44px;

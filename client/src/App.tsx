@@ -1098,7 +1098,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const lightboxMoved = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   /** 待发送图片附件：上传完成后先挂起，可配文字，手动发送 */
-  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
   /** 引用回复：待回复的原消息（发送后气泡内渲染引用块） */
   const [replyTo, setReplyTo] = useState<RoomMessage | null>(null);
   /** 编辑消息：正在编辑的自己的消息（composer 变编辑模式，Enter 提交 / Esc 取消） */
@@ -1151,10 +1151,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const dmMessagesList = activeDmPeerId ? (dmMessages[activeDmPeerId] ?? []) : [];
   const messages = activeDm ? dmMessagesList : activeRoomId ? (messagesByRoom[activeRoomId] ?? []) : [];
   const members = activeRoomId ? (membersByRoom[activeRoomId] ?? []) : [];
-  // 花名册排序：自己 → 房主 → 在线 → 离线（QQ 式）；同级按昵称稳定排序
-  const memberRank = (id: string, online: boolean) => (id === me?.id ? 0 : id === activeRoom?.ownerId ? 1 : online ? 2 : 3);
+  // 花名册排序：房主 → 自己 → 其余成员 A-Z（在线/离线不影响顺序，状态点表达）
+  const memberRank = (id: string) => (id === activeRoom?.ownerId ? 0 : id === me?.id ? 1 : 2);
   const roster = [...members].sort(
-    (a, b) => memberRank(a.id, a.online) - memberRank(b.id, b.online) || a.username.localeCompare(b.username),
+    (a, b) => memberRank(a.id) - memberRank(b.id) || a.username.localeCompare(b.username, 'zh-Hans-CN'),
   );
   const onlineCount = members.filter((m) => m.online).length;
   const activeSubscribed = !!activeRoomId && subscribedRoomIds.includes(activeRoomId);
@@ -1191,7 +1191,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     if (activeDm) editDm(editingMsg.id, draft);
     else if (activeRoom) editMessage(activeRoom.id, editingMsg.id, draft);
     setEditingMsg(null);
-    setPendingImage(null);
+    setPendingImages([]);
     setDraft('');
   };
 
@@ -1207,7 +1207,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
 
   const startEdit = (m: RoomMessage) => {
     setReplyTo(null);
-    setPendingImage(null);
+    setPendingImages([]);
     editStashRef.current = draftMap[convKey] ?? '';
     setEditingMsg(m);
     setDraft(m.text);
@@ -1225,49 +1225,40 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       submitEdit();
       return;
     }
-    // DM 会话：无提及语义，图片/引用照常
-    if (activeDm) {
-      if (!draft.trim() && !pendingImage) return;
-      sendDm(draft.trim(), {
-        mediaUrl: pendingImage ?? undefined,
-        replyTo: replyTo?.id,
-        reply: replyTo
-          ? {
-              id: replyTo.id,
-              username: replyTo.username,
-              text: replyTo.kind === 'sticker' ? '[表情]' : replyTo.kind === 'image' ? '[图片]' : replyTo.recalled ? '消息已撤回' : replyTo.text.slice(0, 80),
-              kind: replyTo.kind === 'image' || replyTo.kind === 'sticker' ? replyTo.kind : 'text',
-            }
-          : undefined,
-      });
-      setDraft('');
-      setPendingImage(null);
-      setReplyTo(null);
-      return;
+    if (!draft.trim() && !pendingImages.length) return;
+    // 引用挂在本批第一条消息上（QQ/微信式：一图一条，图先发、文字后发）
+    const replyObj: RoomMessage['reply'] = replyTo
+      ? {
+          id: replyTo.id,
+          username: replyTo.username,
+          text: replyTo.kind === 'sticker' ? '[表情]' : replyTo.kind === 'image' ? '[图片]' : replyTo.recalled ? '消息已撤回' : replyTo.text.slice(0, 80),
+          kind: replyTo.kind === 'image' || replyTo.kind === 'sticker' ? replyTo.kind : 'text',
+        }
+      : undefined;
+    let first = true;
+    const send = (text: string, opts: Parameters<typeof sendMessage>[1]) => {
+      if (activeDm) sendDm(text, opts);
+      else if (activeRoom) sendMessage(text, opts);
+    };
+    for (const url of pendingImages) {
+      send('', { mediaUrl: url, replyTo: first ? replyTo?.id : undefined, reply: first ? replyObj : undefined });
+      first = false;
     }
-    if (!activeRoom) return;
-    if (!draft.trim() && !pendingImage) return;
-    // 只保留文本中确实还带着 @昵称 的提及（用户可能删掉了部分）
-    const picks = [...pickedMentions.current.entries()]
-      .filter(([, name]) => draft.includes(`@${name}`))
-      .map(([id]) => id);
-    sendMessage(draft.trim(), {
-      mentions: picks,
-      mediaUrl: pendingImage ?? undefined,
-      replyTo: replyTo?.id,
-      reply: replyTo
-        ? {
-            id: replyTo.id,
-            username: replyTo.username,
-            text: replyTo.kind === 'image' ? '[图片]' : replyTo.recalled ? '消息已撤回' : replyTo.text.slice(0, 80),
-            kind: replyTo.kind === 'image' ? 'image' : 'text',
-          }
-        : undefined,
-    });
+    if (draft.trim()) {
+      // 只保留文本中确实还带着 @昵称 的提及（用户可能删掉了部分）
+      const picks = [...pickedMentions.current.entries()]
+        .filter(([, name]) => draft.includes(`@${name}`))
+        .map(([id]) => id);
+      send(draft.trim(), {
+        mentions: activeDm ? undefined : picks,
+        replyTo: first ? replyTo?.id : undefined,
+        reply: first ? replyObj : undefined,
+      });
+    }
     pickedMentions.current.clear();
     setDraft('');
     setMentionQuery(null);
-    setPendingImage(null);
+    setPendingImages([]);
     setReplyTo(null);
   };
 
@@ -1285,8 +1276,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       if (!token) return;
       const dataUrl = await fileToCompressedDataUrl(file);
       const { url } = await api.uploadImage(token, dataUrl);
-      // 只挂为待发送附件：可与文字一起编辑，手动发送
-      setPendingImage(url);
+      // 追加为待发送附件（可多张）：可与文字一起编辑，手动发送
+      setPendingImages((prev) => [...prev, url]);
     } catch (e) {
       useChat.setState({ roomError: e instanceof Error ? e.message : '图片上传失败' });
     } finally {
@@ -1326,13 +1317,31 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       const res = await fetch(url);
       const blob = await res.blob();
       const ext = blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/gif' ? 'gif' : blob.type === 'image/webp' ? 'webp' : 'png';
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `gametalk-image-${Date.now()}.${ext}`;
-      a.click();
-      URL.revokeObjectURL(a.href);
+      // Tauri：弹系统「另存为」对话框，选中路径后经 Rust 命令落盘（WebView2 不响应 a[download]）
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const path = await save({
+        title: '保存图片',
+        defaultPath: `gametalk-image-${Date.now()}.${ext}`,
+        filters: [{ name: '图片', extensions: [ext] }],
+      });
+      if (!path) return;
+      const data = new Uint8Array(await blob.arrayBuffer());
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('write_file_bytes', { path, data: Array.from(data) });
     } catch {
-      useChat.setState({ roomError: '图片保存失败' });
+      // 浏览器环境：blob URL + a[download]
+      try {
+        const res = await fetch(url);
+        const blob = await res.blob();
+        const ext = blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/gif' ? 'gif' : blob.type === 'image/webp' ? 'webp' : 'png';
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `gametalk-image-${Date.now()}.${ext}`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch {
+        useChat.setState({ roomError: '图片保存失败' });
+      }
     }
   };
 
@@ -1659,7 +1668,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           if (!payload) return;
           const { pendingNotifyTarget } = useChat.getState();
           if (!pendingNotifyTarget) return;
-          if (draft.trim() || editingMsg || pendingImage) return;
+          if (draft.trim() || editingMsg || pendingImages.length) return;
           useChat.getState().consumePendingNotifyTarget();
         })
         .then((fn) => {
@@ -1674,7 +1683,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       off?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, editingMsg, pendingImage]);
+  }, [draft, editingMsg, pendingImages]);
 
   // 切换会话（房间/私聊）时取消未完成的编辑/回复/@提及/待发图片与滚动锚定，
   // 避免旧会话的交互状态泄漏进新会话（@ 补全残留会让 Enter 被劫持为插入手打文本）
@@ -1683,7 +1692,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     setReplyTo(null);
     setMentionQuery(null);
     pickedMentions.current.clear();
-    setPendingImage(null);
+    setPendingImages([]);
     anchorRef.current = null;
   }, [activeRoomId, activeDmPeerId]);
 
@@ -2014,7 +2023,21 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           </>
         )}
 
-      <main className="main">
+      <main
+        className="main"
+        onDragOver={(e) => {
+          e.preventDefault();
+        }}
+        onDrop={(e) => {
+          // 拖拽图片进聊天区：走附件上传流程（可多张，与选图/粘贴同路）
+          e.preventDefault();
+          const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith('image/'));
+          if (!files.length) return;
+          void (async () => {
+            for (const f of files) await onPickImageFile(f);
+          })();
+        }}
+      >
         {!offline && sideTab === 'friends' ? (
           selectedFriend ? (
             <FriendProfilePane
@@ -2476,11 +2499,24 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               ))}
             </div>
           )}
-          {pendingImage && (
+          {pendingImages.length > 0 && (
             <div className="attachment-bar">
-              <img className="attachment-thumb" src={absUrl(pendingImage)} alt="待发送图片" />
-              <span className="attachment-name">图片已上传，可配文字后发送</span>
-              <button className="attachment-remove" title="移除图片" onClick={() => setPendingImage(null)}>
+              <div className="attachment-list">
+                {pendingImages.map((url, i) => (
+                  <span className="attachment-thumb-wrap" key={`${url}-${i}`}>
+                    <img className="attachment-thumb" src={absUrl(url)} alt={`待发送图片 ${i + 1}`} />
+                    <button
+                      className="attachment-remove"
+                      title="移除图片"
+                      onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <span className="attachment-name">已上传 {pendingImages.length} 张，可配文字后发送</span>
+              <button className="attachment-remove" title="移除全部" onClick={() => setPendingImages([])}>
                 ×
               </button>
             </div>
@@ -2525,10 +2561,13 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <input
             ref={imageInputRef}
             type="file"
+            multiple
             accept="image/png,image/jpeg,image/webp,image/gif"
             style={{ display: 'none' }}
             onChange={(e) => {
-              void onPickImageFile(e.target.files?.[0]);
+              void (async () => {
+                for (const f of Array.from(e.target.files ?? [])) await onPickImageFile(f);
+              })();
               e.target.value = '';
             }}
           />
@@ -2643,7 +2682,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           />
           <button
             className="btn primary"
-            disabled={offline || !connected || (!activeRoom && !activeDm) || (!draft.trim() && !pendingImage)}
+            disabled={offline || !connected || (!activeRoom && !activeDm) || (!draft.trim() && !pendingImages.length)}
             onClick={sendDraft}
           >
             {editingMsg ? '保存' : '发送'}

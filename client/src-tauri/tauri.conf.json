@@ -18,7 +18,8 @@
         "height": 860,
         "minWidth": 1080,
         "minHeight": 720,
-        "center": true
+        "center": true,
+        "dragDropEnabled": false
       },
       {
         "label": "input",
