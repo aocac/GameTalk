@@ -14,7 +14,8 @@ type Status = 'connecting' | 'live' | 'ended' | 'closed' | 'error';
 
 function readToken(): string {
   try {
-    return JSON.parse(localStorage.getItem('gametalk-auth'))?.state?.token ?? '';
+    const raw = localStorage.getItem('gametalk-auth');
+    return raw ? (JSON.parse(raw)?.state?.token ?? '') : '';
   } catch {
     return '';
   }
@@ -22,7 +23,9 @@ function readToken(): string {
 
 function readServerUrl(): string {
   try {
-    return (JSON.parse(localStorage.getItem('gametalk-settings'))?.state?.serverUrl ?? 'http://127.0.0.1:8787').replace(/\/+$/, '');
+    const raw = localStorage.getItem('gametalk-settings');
+    const url = raw ? (JSON.parse(raw)?.state?.serverUrl ?? '') : '';
+    return (url || 'http://127.0.0.1:8787').replace(/\/+$/, '');
   } catch {
     return 'http://127.0.0.1:8787';
   }
