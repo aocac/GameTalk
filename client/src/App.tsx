@@ -425,7 +425,7 @@ async function openSettingsWindow(section?: 'general' | 'notify' | 'game' | 'ove
 }
 
 /** 打开屏幕共享独立观看窗：窗口自持 WS 信令 + 自己的 RTCPeerConnection（MediaStream 不能跨 webview）。
- *  浏览器环境或建窗失败时回落到主窗口内嵌观看。 */
+ *  同一共享者重复点击只聚焦既有窗口；浏览器环境回落主窗口内嵌观看。 */
 async function openScreenWindow(sharerId: string, name: string, roomId: string): Promise<void> {
   try {
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
@@ -446,10 +446,12 @@ async function openScreenWindow(sharerId: string, name: string, roomId: string):
       center: true,
       resizable: true,
     });
-    void win.once('tauri://error', () => {
-      void useChat.getState().watchScreenShare(sharerId);
+    void win.once('tauri://destroyed', () => {
+      useChat.getState().markShareExternal(sharerId, false);
     });
+    useChat.getState().markShareExternal(sharerId, true);
   } catch {
+    // 浏览器环境（vite dev / E2E）：回落主窗口内嵌观看
     void useChat.getState().watchScreenShare(sharerId);
   }
 }
@@ -2131,9 +2133,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   <span>🖥 {sh.name} 正在共享屏幕</span>
                   <button
                     className="btn primary small"
+                    title={sh.external ? '聚焦已打开的独立观看窗' : '打开独立观看窗'}
                     onClick={() => void openScreenWindow(id, sh.name, screenShare.roomId ?? '')}
                   >
-                    观看
+                    {sh.external ? '打开观看窗' : '观看'}
                   </button>
                 </div>
               ) : !sh.remoteStream ? (

@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { emit } from '@tauri-apps/api/event';
 import { ScreenShareManager } from './app/screenShare';
+import { getTurnCredentials } from './app/api';
 import './App.css';
 
 /**
  * 屏幕共享独立观看窗。
  * MediaStream 不能跨 webview 传递，因此本窗口自持一条 WebSocket 信令连接（同源共享 localStorage 的 token）
- * 并建立自己的 RTCPeerConnection；观看结束/关窗时发 `bye` 让共享者释放中继连接。
+ * 并建立自己的 RTCPeerConnection；观看结束/关窗时发 `bye` 让共享者释放对应连接，并通知主窗口更新状态。
  */
 
 type Status = 'connecting' | 'live' | 'ended' | 'closed' | 'error';
@@ -85,8 +87,13 @@ function ScreenWindow() {
           send({ type: 'room:join', payload: { roomId: room } });
           break;
         case 'room:joined':
-          // 收到加入回执后再请求观看：此时本连接已在房间广播列表里
-          mgr.watch(sharer, room);
+          // 先拿自建 TURN 凭据再请求观看（receiver 的 ICE 配置构造时固定）
+          void getTurnCredentials(token)
+            .then(({ iceServers }) => mgr.setExtraIceServers(iceServers as unknown as RTCIceServer[]))
+            .catch(() => undefined)
+            .then(() => {
+              if (!disposed) mgr.watch(sharer, room);
+            });
           break;
         case 'screen:signal':
           void mgr.handleSignal(String(msg.payload?.from ?? ''), String(msg.payload?.roomId ?? room), msg.payload?.data);
@@ -112,6 +119,7 @@ function ScreenWindow() {
       disposed = true;
       if (pingTimer) clearInterval(pingTimer);
       byeRef.current?.();
+      void emit('screen-window-closed', { sharer }).catch(() => undefined);
       mgr.stopAll();
       try {
         ws?.close();
@@ -122,10 +130,21 @@ function ScreenWindow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** 关窗：先发 bye 让共享者释放中继，再关原生窗口 */
+  /** 关窗：destroy 不经过关闭请求链路（最可靠），逐级回落 */
   const closeWindow = async () => {
     byeRef.current?.();
     byeRef.current = null;
+    try {
+      await emit('screen-window-closed', { sharer });
+    } catch {
+      /* 浏览器环境 */
+    }
+    try {
+      await getCurrentWindow().destroy();
+      return;
+    } catch {
+      /* 回落 close */
+    }
     try {
       await getCurrentWindow().close();
     } catch {
@@ -138,6 +157,7 @@ function ScreenWindow() {
     try {
       const un = getCurrentWindow().onCloseRequested(() => {
         byeRef.current?.();
+        void emit('screen-window-closed', { sharer }).catch(() => undefined);
       });
       return () => {
         void un.then((f) => f());
@@ -154,7 +174,7 @@ function ScreenWindow() {
       : status === 'ended'
         ? '共享已结束，窗口即将关闭'
         : status === 'closed'
-          ? '连接已断开（可关闭窗口后重新观看）'
+          ? '连接已断开（关闭窗口后可重新观看）'
           : status === 'error'
             ? '无法建立观看连接'
             : `正在建立连接…${ice ? `（${ice}）` : ''}`;
@@ -162,9 +182,6 @@ function ScreenWindow() {
     <div className="screen-viewer" style={{ left: 0, top: 0, width: '100%', height: '100%', borderRadius: 0, border: 'none' }}>
       <div className="screen-viewer-head" style={{ cursor: 'default' }}>
         <span>{statusText}</span>
-        <button className="screen-viewer-close" title="关闭" onClick={() => void closeWindow()}>
-          ✕
-        </button>
       </div>
       <div className="screen-stage">
         <video

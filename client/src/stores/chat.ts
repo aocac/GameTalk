@@ -142,8 +142,8 @@ interface ChatState {
     roomId: string | null;
     /** 我是否正在共享本房间屏幕 */
     selfSharing: boolean;
-    /** 其他人的共享：sharerId -> { 名称, 是否已加入观看, 远端流, ICE 连接状态 } */
-    shares: Record<string, { name: string; watching: boolean; remoteStream: MediaStream | null; ice?: string }>;
+    /** 其他人的共享：sharerId -> { 名称, 是否已加入观看, 远端流, ICE 连接状态, 是否在独立窗口观看 } */
+    shares: Record<string, { name: string; watching: boolean; remoteStream: MediaStream | null; ice?: string; external?: boolean }>;
   };
   /** 开始共享当前房间的屏幕（WebRTC P2P） */
   startScreenShare: () => Promise<void>;
@@ -153,6 +153,8 @@ interface ChatState {
   watchScreenShare: (sharerId: string) => Promise<void>;
   /** 停止观看某个共享（释放该路 P2P，不通知共享者） */
   stopWatching: (sharerId: string) => void;
+  /** 标记/清除「该共享正在独立观看窗中观看」（窗关闭时清除，横幅据此切换动作） */
+  markShareExternal: (sharerId: string, external: boolean) => void;
   /** 内部：处理 screen:signal 信令 */
   handleScreenSignal: (from: string, roomId: string, data: unknown) => Promise<void>;
 }
@@ -1428,6 +1430,14 @@ export const useChat = create<ChatState>()((set, get) => ({
     set((s) =>
       s.screenShare.shares[sharerId]
         ? { screenShare: { ...s.screenShare, shares: { ...s.screenShare.shares, [sharerId]: { ...s.screenShare.shares[sharerId], watching: false, remoteStream: null } } } }
+        : {},
+    );
+  },
+
+  markShareExternal: (sharerId, external) => {
+    set((s) =>
+      s.screenShare.shares[sharerId]
+        ? { screenShare: { ...s.screenShare, shares: { ...s.screenShare.shares, [sharerId]: { ...s.screenShare.shares[sharerId], external } } } }
         : {},
     );
   },
