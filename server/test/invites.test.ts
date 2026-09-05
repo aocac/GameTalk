@@ -182,5 +182,16 @@ describe('invite links', () => {
     expect(missing.statusCode).toBe(200);
     expect(missing.body).toContain('不存在');
     expect(missing.body).not.toContain('落地页房间');
+
+    // 过期链接：失效态，不出现加入按钮
+    const expiredLink = await db.query(
+      `INSERT INTO invite_links (room_id, code, created_by, expires_at)
+       VALUES ($1, 'LANDEADLINK0001', $2, now() - interval '1 hour') RETURNING code`,
+      [room.id, owner.userId],
+    );
+    const deadPage = await app.inject({ method: 'GET', url: `/i/${expiredLink.rows[0].code}` });
+    expect(deadPage.statusCode).toBe(200);
+    expect(deadPage.body).toContain('已过期');
+    expect(deadPage.body).not.toContain('点此加入房间');
   });
 });

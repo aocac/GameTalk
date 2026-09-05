@@ -271,7 +271,7 @@ a.btn{display:block;padding:13px 0;border-radius:10px;text-decoration:none;font-
 </head>
 <body><div class="card">
 <div style="font-size:34px">🎮</div>
-${inv ? `<div class="room">「${roomName}」</div>
+${inv && !dead ? `<div class="room">「${roomName}」</div>
 <div class="sub">${inviterName} 邀请你加入 GameTalk 房间</div>
 <a class="btn primary" href="${deepLink}">已安装 GameTalk？点此加入房间</a>
 <a class="btn ghost" href="https://github.com/aocac/GameTalk/releases/latest" target="_blank" rel="noopener">下载 GameTalk 客户端</a>` : `<div class="dead">${reason}</div>`}
