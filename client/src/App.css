@@ -3613,3 +3613,26 @@ body {
   padding: 0;
   border-radius: 0;
 }
+
+/* ---- 纯图消息：气泡贴住图片，去掉为文字预留的水平 padding ---- */
+.message-body:has(.msg-image):not(:has(.message-text)) {
+  width: fit-content;
+  padding: 5px;
+}
+
+/* ---- 输入框 textarea：随内容长高（高度由 JS 设置），超出内部滚动 ---- */
+textarea.composer-input {
+  resize: none;
+  overflow-y: auto;
+  line-height: 1.5;
+  min-height: 42px;
+  max-height: 132px;
+}
+
+/* ---- 灯箱图片计数（i/n） ---- */
+.lightbox-count {
+  color: #cfd3e0;
+  font-size: 12px;
+  min-width: 38px;
+  text-align: center;
+}

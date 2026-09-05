@@ -29,6 +29,11 @@ const MAX_EXPIRES_HOURS = 24 * 30;
 /** 单链接使用次数上限：0 = 不限 */
 const MAX_USES_LIMIT = 500;
 
+/** HTML 转义（房间名 / 邀请人是用户输入，落地页必须转义防注入） */
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
+}
+
 export function registerInvitesRoutes(app: FastifyInstance, deps: InvitesDeps): void {
   const { db } = deps;
   const auth = makeAuthPreHandler(deps.jwt);
@@ -225,5 +230,52 @@ export function registerInvitesRoutes(app: FastifyInstance, deps: InvitesDeps): 
     }
     const full = await fetchRoomWithCount(db, invite.room_id);
     await reply.send({ room: toPublicRoom(full!) });
+  });
+
+  // 公网邀请落地页：给没装客户端的朋友（浏览器直接打开，无需登录）。
+  // 页面提供 gametalk:// 深链（已装用户一键进房）与客户端下载入口；信息仅房间名与邀请人。
+  app.get('/i/:code', async (req, reply) => {
+    const code = String((req.params as { code: string }).code ?? '');
+    const found = await db.query<{ room_name: string; inviter_name: string; expires_at: string | null; max_uses: number; used_count: number }>(
+      `SELECT r.name AS room_name, u.username AS inviter_name, il.expires_at, il.max_uses, il.used_count
+       FROM invite_links il
+       JOIN rooms r ON r.id = il.room_id
+       JOIN users u ON u.id = il.created_by
+       WHERE il.code = $1`,
+      [code],
+    );
+    const inv = found.rows[0];
+    const expired = !!inv && inv.expires_at !== null && new Date(inv.expires_at).getTime() < Date.now();
+    const exhausted = !!inv && inv.max_uses > 0 && Number(inv.used_count) >= Number(inv.max_uses);
+    const dead = !inv || expired || exhausted;
+    const reason = !inv ? '链接不存在或已被吊销' : expired ? '链接已过期' : '链接使用次数已达上限';
+    const roomName = inv ? escapeHtml(inv.room_name) : '';
+    const inviterName = inv ? escapeHtml(inv.inviter_name) : '';
+    const deepLink = `gametalk://join?code=${encodeURIComponent(code)}`;
+    const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GameTalk 邀请</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#151821;font-family:system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;color:#e8eaf2}
+.card{max-width:360px;width:calc(100% - 48px);background:#1e222c;border-radius:16px;padding:36px 28px;text-align:center}
+.room{font-size:22px;font-weight:700;margin:10px 0 4px;word-break:break-all}
+.sub{color:#8b93a7;font-size:13px;margin-bottom:28px}
+a.btn{display:block;padding:13px 0;border-radius:10px;text-decoration:none;font-size:15px;margin-top:12px}
+.primary{background:#3370ff;color:#fff;font-weight:600}
+.ghost{border:1px solid #3a4050;color:#aeb6c8}
+.dead{color:#8b93a7;font-size:14px;line-height:1.7}
+</style>
+</head>
+<body><div class="card">
+<div style="font-size:34px">🎮</div>
+${inv ? `<div class="room">「${roomName}」</div>
+<div class="sub">${inviterName} 邀请你加入 GameTalk 房间</div>
+<a class="btn primary" href="${deepLink}">已安装 GameTalk？点此加入房间</a>
+<a class="btn ghost" href="https://github.com/aocac/GameTalk/releases/latest" target="_blank" rel="noopener">下载 GameTalk 客户端</a>` : `<div class="dead">${reason}</div>`}
+</div></body></html>`;
+    await reply.type('text/html; charset=utf-8').send(html);
   });
 }

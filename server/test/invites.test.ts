@@ -159,4 +159,28 @@ describe('invite links', () => {
     const afterRevoke = await app.inject({ method: 'POST', url: `/api/invites/${memberInv.code}/redeem`, headers: auth(stranger.token) });
     expect(afterRevoke.statusCode).toBe(404);
   });
+
+  it('public landing page GET /i/:code: shows room & deep link when valid, dead-state otherwise', async () => {
+    const owner = await registerUser('land_owner');
+    const room = (
+      await app.inject({ method: 'POST', url: '/api/rooms', headers: auth(owner.token), payload: { name: '落地页房间<b>' } })
+    ).json().room;
+    const inv = (
+      await app.inject({ method: 'POST', url: `/api/rooms/${room.id}/invites`, headers: auth(owner.token), payload: {} })
+    ).json().invite;
+
+    // 有效链接：200 HTML，含房间名（已 HTML 转义）、深链与下载入口；无需登录
+    const ok = await app.inject({ method: 'GET', url: `/i/${inv.code}` });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers['content-type']).toContain('text/html');
+    expect(ok.body).toContain('落地页房间&lt;b&gt;');
+    expect(ok.body).toContain(`gametalk://join?code=${inv.code}`);
+    expect(ok.body).toContain('releases/latest');
+
+    // 不存在的 code：仍是 200 的友好失效态 HTML，不泄露任何房间信息
+    const missing = await app.inject({ method: 'GET', url: '/i/NOTEXISTCODE00' });
+    expect(missing.statusCode).toBe(200);
+    expect(missing.body).toContain('不存在');
+    expect(missing.body).not.toContain('落地页房间');
+  });
 });

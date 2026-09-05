@@ -343,12 +343,14 @@ export async function pushOverlayMessage(message: ChatMessage, roomName?: string
   }
   const win = await getOverlayWindow();
   if (!win) {
-    // Overlay 窗口丢失（webview 崩溃等）→ 重建后仍尝试推送
+    // Overlay 窗口丢失（重启后首次使用等）→ 重建，并先应用已保存的位置/缩放配置
+    // （新建窗口落在系统默认位置；启动时的 applyOverlayConfig 因窗口不存在而是空操作）
     await ensureOverlayWindow();
     const w2 = await getOverlayWindow();
     if (!w2) {
       return;
     }
+    await applyOverlayConfig();
   }
   await emit('overlay:append', { ...message, roomName, isSelf });
 }

@@ -1019,7 +1019,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [mentionQuery, setMentionQuery] = useState<{ start: number; token: string; caret: number } | null>(null);
   const [mentionPick, setMentionPick] = useState(0);
   const pickedMentions = useRef<Map<string, string>>(new Map());
-  const composerRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   /** 图片消息 / 表情面板 / 灯箱 */
   const [uploading, setUploading] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
@@ -1090,7 +1090,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     if (showEmoji) void loadCloudStickers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showEmoji, activeRoomId, emojiOwner]);
-  const [lightbox, setLightbox] = useState<string | null>(null);
+  /** 灯箱：list 为当前会话全部图片，idx 为当前查看的张（支持前后切换） */
+  const [lightbox, setLightbox] = useState<{ list: string[]; idx: number } | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(1);
   const [lightboxOffset, setLightboxOffset] = useState({ x: 0, y: 0 });
   const lightboxImgRef = useRef<HTMLImageElement | null>(null);
@@ -1256,6 +1257,13 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       });
     }
     pickedMentions.current.clear();
+    // 随消息发出的表情此刻才计入「最近」
+    if (pendingRecentRef.current.size) {
+      let list = loadRecentEmojis(emojiOwner);
+      for (const e of pendingRecentRef.current) list = saveRecentEmoji(e, emojiOwner);
+      setRecentEmojis(list);
+      pendingRecentRef.current.clear();
+    }
     setDraft('');
     setMentionQuery(null);
     setPendingImages([]);
@@ -1286,7 +1294,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   };
 
   const openLightbox = (url: string) => {
-    setLightbox(url);
+    // 以当前会话的全部图片作为翻页列表
+    const list = messages
+      .filter((m) => !m.recalled && m.mediaUrl && (m.kind === 'image' || m.kind === 'sticker'))
+      .map((m) => absUrl(m.mediaUrl!));
+    setLightbox({ list: list.length ? list : [url], idx: list.length ? Math.max(0, list.indexOf(url)) : 0 });
     setLightboxZoom(1);
     setLightboxOffset({ x: 0, y: 0 });
   };
@@ -1310,6 +1322,17 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     const z = Math.min(8, Math.max(0.2, next));
     setLightboxZoom(z);
     setLightboxOffset((off) => clampLightboxOffset(z, off));
+  };
+
+  /** 灯箱内切换上一张 / 下一张（仅一张时不切换）；切换后重置缩放与平移 */
+  const navLightbox = (dir: 1 | -1) => {
+    setLightbox((lb) => {
+      if (!lb || lb.list.length < 2) return lb;
+      const idx = Math.min(lb.list.length - 1, Math.max(0, lb.idx + dir));
+      return idx === lb.idx ? lb : { list: lb.list, idx };
+    });
+    setLightboxZoom(1);
+    setLightboxOffset({ x: 0, y: 0 });
   };
 
   const saveLightboxImage = async (url: string) => {
@@ -1345,12 +1368,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     }
   };
 
+  /** 本次点选、尚未随消息发出的表情：发送成功后才并入「最近」，避免点了没发也占位 */
+  const pendingRecentRef = useRef<Set<string>>(new Set());
+
   const insertEmoji = (e: string) => {
     const el = composerRef.current;
     const pos = el?.selectionStart ?? draft.length;
     const next = draft.slice(0, pos) + e + draft.slice(pos);
     setDraft(next);
-    setRecentEmojis(saveRecentEmoji(e, emojiOwner));
+    pendingRecentRef.current.add(e);
     requestAnimationFrame(() => {
       el?.focus();
       el?.setSelectionRange(pos + e.length, pos + e.length);
@@ -1624,6 +1650,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setLightbox(null);
+      if (e.key === 'ArrowLeft') navLightbox(-1);
+      if (e.key === 'ArrowRight') navLightbox(1);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -1695,6 +1723,14 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     setPendingImages([]);
     anchorRef.current = null;
   }, [activeRoomId, activeDmPeerId]);
+
+  // 输入框（textarea）高度随内容自适应：单行起步，约 5 行后内部滚动（Shift+Enter 换行）
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+  }, [draft]);
 
   const submitRoomModal = async (kind: 'create' | 'join') => {
     if (kind === 'create') {
@@ -2605,9 +2641,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               </svg>
             </button>
           )}
-          <input
+          <textarea
             ref={composerRef}
             className="composer-input"
+            rows={1}
             value={draft}
             placeholder={
               offline
@@ -2679,7 +2716,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                 sendDraft();
               }
             }}
-          />
+          >
+          </textarea>
           <button
             className="btn primary"
             disabled={offline || !connected || (!activeRoom && !activeDm) || (!draft.trim() && !pendingImages.length)}
@@ -3123,7 +3161,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         >
           <img
             ref={lightboxImgRef}
-            src={lightbox}
+            src={lightbox.list[lightbox.idx]}
             alt="图片预览"
             draggable={false}
             // 阻止原生图片拖拽：浏览器接管后 move 事件停发（指针变禁止、松手才更新位置）
@@ -3132,6 +3170,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             onClick={(e) => e.stopPropagation()}
           />
           <div className="lightbox-toolbar" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+            <button title="上一张（←）" disabled={lightbox.list.length < 2} onClick={() => navLightbox(-1)}>
+              ‹
+            </button>
+            <span className="lightbox-count">
+              {lightbox.idx + 1}/{lightbox.list.length}
+            </span>
+            <button title="下一张（→）" disabled={lightbox.list.length < 2} onClick={() => navLightbox(1)}>
+              ›
+            </button>
             <button title="缩小" onClick={() => zoomLightboxTo(lightboxZoom / 1.25)}>
               −
             </button>
@@ -3148,7 +3195,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
             >
               1:1
             </button>
-            <button title="保存图片" onClick={() => void saveLightboxImage(lightbox)}>
+            <button title="保存图片" onClick={() => void saveLightboxImage(lightbox.list[lightbox.idx])}>
               保存
             </button>
           </div>
@@ -3315,8 +3362,14 @@ function InviteLinkModal({ room, onClose }: { room: api.Room; onClose: () => voi
   };
   const copyLink = async (code: string) => {
     await copyText(`gametalk://join?code=${code}`);
-    setCopied(code);
-    setTimeout(() => setCopied((c) => (c === code ? null : c)), 1500);
+    setCopied(`d_${code}`);
+    setTimeout(() => setCopied((c) => (c === `d_${code}` ? null : c)), 1500);
+  };
+  const copyWebLink = async (code: string) => {
+    // 网页版链接：没装客户端的朋友在浏览器打开（服务端落地页，含深链与下载入口）
+    await copyText(`${useSettings.getState().serverUrl.replace(/\/+$/, '')}/i/${code}`);
+    setCopied(`w_${code}`);
+    setTimeout(() => setCopied((c) => (c === `w_${code}` ? null : c)), 1500);
   };
   const revoke = async (code: string) => {
     try {
@@ -3367,7 +3420,15 @@ function InviteLinkModal({ room, onClose }: { room: api.Room; onClose: () => voi
                 </div>
                 <div className="invite-actions">
                   <button type="button" className="btn ghost small" onClick={() => void copyLink(inv.code)}>
-                    {copied === inv.code ? '已复制' : '复制链接'}
+                    {copied === `d_${inv.code}` ? '已复制' : '复制链接'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    title="给没装客户端的朋友：浏览器打开的邀请页（含下载入口）"
+                    onClick={() => void copyWebLink(inv.code)}
+                  >
+                    {copied === `w_${inv.code}` ? '已复制' : '网页链接'}
                   </button>
                   {!expired && !exhausted && (
                     <button
@@ -3385,7 +3446,7 @@ function InviteLinkModal({ room, onClose }: { room: api.Room; onClose: () => voi
             );
           })}
         </div>
-        <p className="invite-hint">链接形如 gametalk://join?code=…，对方点击将直接拉起 GameTalk 加入本房间。</p>
+        <p className="invite-hint">「复制链接」给已安装的用户（点击直接进房）；「网页链接」给没安装的朋友（浏览器打开邀请页，含下载入口）。</p>
       </div>
     </div>
   );
