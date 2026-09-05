@@ -48,6 +48,8 @@ nano .env && bash deploy.sh
 | `POSTGRES_PASSWORD` | 数据库密码（必改） |
 | `GAMETALK_HOST` | 域名，Caddy 据此申请证书 |
 | `CORS_ORIGIN` | 可选，默认 `*`（桌面客户端不受浏览器同源限制）；需收紧时设置，多来源逗号分隔 |
+| `TURN_SECRET` | 可选，自建 TURN 中继共享密钥（见第 9 节） |
+| `TURN_URL` | 可选，TURN 地址（逗号分隔，建议同时给 UDP 与 TCP） |
 
 ### 数据迁移
 
@@ -135,3 +137,53 @@ docker compose start server                      # 3) 重启并验证 /health、
 
 该部署方案已在真实服务器上长期稳定运行（2026-08-28 起）。自建部署按第 2 节流程操作即可，
 数据库备份与恢复见第 6 节。
+
+## 9. TURN 中继（跨网络屏幕共享，可选）
+
+屏幕共享的媒体流在成员之间 P2P 直连，服务器只转发信令、不消耗带宽。但跨网络时部分网络环境
+（典型：对称 NAT、运营商封 UDP）直连打不通，需要一台 TURN 中继兜底。GameTalk 的约定：
+
+- 客户端优先 P2P 直连；只有直连失败才走 TURN，中继带宽按用户、限时使用。
+- TURN 密钥（`TURN_SECRET`）**只存服务端**，由 `GET /api/turn` 为登录用户签发 1 小时限时凭据
+  （coturn `use-auth-secret` REST 约定），客户端不含密钥——不会被滥用来跑别的流量。
+
+### 部署 coturn（Docker，与 GameTalk 同机即可）
+
+```bash
+# 1) 生成密钥并写入 compose 环境变量
+TURN_SECRET=$(openssl rand -hex 16)
+# 追加到 docker/.env：
+#   TURN_SECRET=<上面的值>
+#   TURN_URL=turn:服务器公网IP:3478,turn:服务器公网IP:3478?transport=tcp
+# 并在 compose 的 server 服务 environment 中加两行：TURN_SECRET: ${TURN_SECRET} / TURN_URL: ${TURN_URL}
+
+# 2) 写 coturn 配置（注意 external-ip 用「公网IP/内网IP」，云服务器多为 1:1 NAT）
+cat > /opt/gametalk/turnserver.conf <<EOF
+listening-port=3478
+realm=gametalk
+use-auth-secret
+static-auth-secret=$TURN_SECRET
+external-ip=服务器公网IP/服务器内网IP
+min-port=49160
+max-port=49200
+fingerprint
+no-tls
+no-dtls
+verbose
+EOF
+
+# 3) 运行（host 网络简化端口管理）
+docker run -d --name coturn --network host --restart unless-stopped \
+  -v /opt/gametalk/turnserver.conf:/etc/coturn/turnserver.conf:ro coturn/coturn:latest \
+  -c /etc/coturn/turnserver.conf
+
+# 4) 重建 GameTalk server 使其读到新环境变量
+cd docker && docker compose up -d --build server
+```
+
+### 检查清单
+
+- 防火墙 / 云安全组放行：**3478 UDP+TCP**、**49160-49200 TCP**（中继端口段）。云厂商安全组常默认只放 TCP，UDP 被拦时 TCP 中继仍可工作（实测路径）。
+- 验证：`docker logs coturn` 应有 `TCP listener opened`；客户端点「观看」若直连失败会自动走中继出画面。
+- 已知坑：配置文件若为 root 600，容器内非 root 的 turnserver 进程读不了（表现为整份配置未生效），`chmod 644` 即可。
+

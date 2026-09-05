@@ -98,8 +98,8 @@ gametalk/
 {"type":"dm:recalled","payload":{"messageId":"...","from":"...","to":"..."}}
 {"type":"dm:edited","payload":{"messageId":"...","from":"...","to":"...","text":"...","editedAt":"..."}}
 {"type":"screen:started","payload":{"roomId":"...","userId":"...","username":"..."}}
-{"type":"screen:stopped","payload":{"roomId":"..."}}
-{"type":"screen:signal","payload":{"from":"<userId>","data":{...WebRTC SDP/ICE...}}}
+{"type":"screen:stopped","payload":{"roomId":"...","userId":"..."}}
+{"type":"screen:signal","payload":{"from":"<userId>","roomId":"...","data":{...WebRTC SDP/ICE/request/bye...}}}
 {"type":"room:deleted","payload":{"roomId":"..."}}
 {"type":"friend:request","payload":{"requestId":"...","from":{...}}}
 {"type":"friend:accepted","payload":{"user":{...}}}
@@ -136,7 +136,7 @@ gametalk/
 
 **消息转发**：`message:forward` 由服务端校验源消息可见性后**代为复制**到新会话，客户端拿不到也不伪造内容——房间消息须为源房间成员、私聊须为对话双方（不可见回 `not_in_room`；撤回消息不可转发）。目标为房间（`targetRoomId`）或好友（`targetUserId`），二者恰好其一（否则 `invalid_input`）；转发进房间复用成员资格 + 禁言校验（等价一条新 `message:send`），转发给好友复用 `dm:send` 的好友校验。文本 / 图片原样带走，**引用与提及不带走**；服务端写 `forwarded_from_label` 展示快照（房间「来自 群A · 张三」/ 私聊「来自 张三 的私聊」），随 `message:new` / `dm:new` 与历史接口透传，客户端渲染「转发」角标。媒体归属：服务端复制 `media_url` 天然绕过发送归属校验（入库时已校验过）。
 
-**屏幕共享**：房间内 1 对 N 的 WebRTC P2P 共享，**媒体流不经服务器**，服务端只做信令透传。WS：`screen:start`（仅房间成员发起，向全房间广播 `screen:started{userId,username}`）、`screen:stop`（广播 `screen:stopped`）、`screen:signal`（按 `to` 定向转发 `screen:signal{from,data}`，服务端校验收发双方均为同房间成员——防止把媒体信令发给陌生人，且**不解析 SDP**）。客户端 `ScreenShareManager` 建 mesh：共享者 `getDisplayMedia` 取流后对每个成员发起 offer、观看者收到 `screen:started` 后建 RTCPeerConnection 等待 offer 并回 answer，ICE 候选双向透传。STUN 默认国内可达公共节点；**无 TURN 兜底**（对称 NAT 连不通为已知限制，生产可自建 coturn 中继）。WebView2 采集要求窗口高度 ≥600px，主窗口正常、input/overlay 小窗口不可用于发起。真机物理验收项（`getDisplayMedia` 系统选择器、跨网络连通）见测试文档。
+**屏幕共享**：房间内 1 对 N（支持多人同时共享）的 WebRTC 共享，**媒体流不经服务器**，服务端只做信令透传。WS：`screen:start`（仅房间成员发起，向全房间广播 `screen:started{roomId,userId,username}`）、`screen:stop`（广播 `screen:stopped{roomId,userId}`，各端按 userId 精确移除）、`screen:signal`（按 `to` 定向转发 `{from,roomId,data}`，服务端校验收发双方均为同房间成员——防把媒体信令发给陌生人，且**不解析 data**）。信令协议（data 内容，客户端约定）：观看端 `request` → 共享者为其建 sender 连接并回 `offer`（晚加入靠观看端主动请求触发，不做预建 mesh）→ 观看端 `answer` → 双向 `candidate`；观看端关窗发 `bye`，共享者立即释放该路连接。**观看为独立系统窗口**（`screen.html` 入口）：MediaStream 不能跨 webview，故观看窗自持一条 WS 信令连接（同源共享 localStorage token）并建立自己的 RTCPeerConnection；关窗（含原生标题栏 X，经 onCloseRequested）先发 `bye` 再关闭。**跨网络兜底（自建 TURN）**：服务器管理员部署 coturn（`use-auth-secret` 模式），服务端经 `GET /api/turn`（登录态）按用户签发限时 1 小时凭据（`username='<到期时间戳>:<userId>'`，`credential=base64(hmac-sha1(TURN_SECRET, username))`）；客户端缓存 55 分钟并作为首选 ICE——密钥不进客户端，中继不会变成无鉴权的开放代理。未配置 `TURN_SECRET`/`TURN_URL` 时接口返回空、客户端仅用 STUN（同网直连可用，跨网对称 NAT 受限）。采集端约束：`contentHint='motion'`、`degradationPreference='balanced'`、上行约 4Mbps 封顶（带宽不足降分辨率保帧率）；WebView2 采集要求窗口高度 ≥600px。
 
 **用户资料**：`users` 含个性签名 `bio`（≤100 字，PATCH /api/auth/me 维护）；成员卡片经
 `GET /api/users/:id`（登录态、UUID 不可枚举）读取公开资料。
