@@ -13,6 +13,7 @@ import { registerFriendsRoutes } from './routes/friends.js';
 import { registerDmRoutes } from './routes/dm.js';
 import { registerStickersRoutes } from './routes/stickers.js';
 import { registerMediaRoutes } from './routes/media.js';
+import { registerTurnRoutes } from './routes/turn.js';
 import { registerWsRoutes } from './ws/gateway.js';
 
 export interface AppDeps {
@@ -71,6 +72,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerDmRoutes(app, { db, jwt });
   registerStickersRoutes(app, { db, jwt });
   registerMediaRoutes(app, { db, jwt });
+  registerTurnRoutes(app, { config, jwt });
   registerWsRoutes(app, { config, db, jwt });
 
   return app;

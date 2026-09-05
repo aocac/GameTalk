@@ -366,3 +366,14 @@ export function getInvitePreview(
 export function redeemInvite(token: string, code: string): Promise<{ room: Room }> {
   return request<{ room: Room }>(`/api/invites/${code}/redeem`, { method: 'POST', token });
 }
+
+/** TURN 中继限时凭据（服务端 coturn use-auth-secret；未配置 TURN 时 iceServers 为空） */
+export interface TurnIceServer {
+  urls: string[];
+  username: string;
+  credential: string;
+}
+
+export function getTurnCredentials(token: string): Promise<{ iceServers: TurnIceServer[] }> {
+  return request<{ iceServers: TurnIceServer[] }>('/api/turn', { token });
+}

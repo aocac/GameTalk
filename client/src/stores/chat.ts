@@ -149,8 +149,8 @@ interface ChatState {
   startScreenShare: () => Promise<void>;
   /** 停止屏幕共享 */
   stopScreenShare: () => void;
-  /** 主动加入观看指定用户的共享 */
-  watchScreenShare: (sharerId: string) => void;
+  /** 主动加入观看指定用户的共享（先取自建 TURN 凭据再建接收连接） */
+  watchScreenShare: (sharerId: string) => Promise<void>;
   /** 停止观看某个共享（释放该路 P2P，不通知共享者） */
   stopWatching: (sharerId: string) => void;
   /** 内部：处理 screen:signal 信令 */
@@ -162,6 +162,22 @@ let socket: ChatSocket | null = null;
 let subWatchdog: ReturnType<typeof setInterval> | null = null;
 /** 当前房间的屏幕共享 P2P 会话管理器（随活跃会话切换而重置） */
 let screenShareManager: ScreenShareManager | null = null;
+/** 服务端 /api/turn 签发的自建 TURN 凭据缓存（服务端 1h 有效，提前 5 分钟刷新） */
+let turnIceCache: { iceServers: api.TurnIceServer[]; expiry: number } | null = null;
+
+/** 取自建 TURN 凭据（命中缓存即返回）；失败时回落缓存或空（仅 STUN/OpenRelay 兜底） */
+async function ensureTurnIceServers(): Promise<api.TurnIceServer[]> {
+  if (turnIceCache && turnIceCache.expiry > Date.now() + 5 * 60_000) return turnIceCache.iceServers;
+  const { token } = useAuth.getState();
+  if (!token) return turnIceCache?.iceServers ?? [];
+  try {
+    const { iceServers } = await api.getTurnCredentials(token);
+    turnIceCache = { iceServers, expiry: Date.now() + 55 * 60_000 };
+    return iceServers;
+  } catch {
+    return turnIceCache?.iceServers ?? [];
+  }
+}
 
 function startSubWatchdog(): void {
   if (subWatchdog) return;
@@ -1321,6 +1337,8 @@ export const useChat = create<ChatState>()((set, get) => ({
     const roomId = activeRoomId;
     if (!screenShareManager) screenShareManager = new ScreenShareManager();
     const mgr = screenShareManager;
+    // 自建 TURN 凭据（非阻塞预热；sender pc 在观看者请求时才建，届时凭据已就绪）
+    void ensureTurnIceServers().then((list) => mgr.setExtraIceServers(list as unknown as RTCIceServer[]));
     mgr.setSignalSender((to, rid, data) => sock.send({ type: 'screen:signal', payload: { roomId: rid, to, data } }));
     mgr.setRemoteStreamHandler((sharerId, stream) => {
       set((s) => {
@@ -1367,10 +1385,12 @@ export const useChat = create<ChatState>()((set, get) => ({
         return sh ? { screenShare: { ...s.screenShare, shares: { ...s.screenShare.shares, [id]: { ...sh, ice: state } } } } : {};
       });
     });
+    // 收到 offer/request 而建的 pc 同样需要自建 TURN 凭据（命中缓存时近乎即时）
+    mgr.setExtraIceServers((await ensureTurnIceServers()) as unknown as RTCIceServer[]);
     await mgr.handleSignal(from, roomId, data);
   },
 
-  watchScreenShare: (sharerId) => {
+  watchScreenShare: async (sharerId) => {
     const { status } = get();
     const roomId = get().screenShare.roomId ?? get().activeRoomId;
     if (!roomId || status !== 'open' || !socket) {
@@ -1380,6 +1400,8 @@ export const useChat = create<ChatState>()((set, get) => ({
     if (!screenShareManager) screenShareManager = new ScreenShareManager();
     const mgr = screenShareManager;
     const sock: ChatSocket = socket;
+    // receiver pc 的 ICE 配置在构造时固定，必须先拿到自建 TURN 凭据再建连接
+    mgr.setExtraIceServers((await ensureTurnIceServers()) as unknown as RTCIceServer[]);
     mgr.setSignalSender((to, rid, d) => sock.send({ type: 'screen:signal', payload: { roomId: rid, to, data: d } }));
     mgr.setRemoteStreamHandler((id, stream) => {
       set((s) => {

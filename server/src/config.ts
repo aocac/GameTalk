@@ -14,6 +14,10 @@ export interface Config {
   rateLimitMax: number;
   /** 认证类路由（注册/登录）每 IP 每分钟最大请求数（防爆破） */
   authRateLimitMax: number;
+  /** TURN 中继共享密钥（coturn use-auth-secret 模式）；未设置时 /api/turn 返回空 iceServers */
+  turnSecret: string | null;
+  /** TURN 地址（逗号分隔，如 turn:host:3478,turn:host:3478?transport=tcp） */
+  turnUrls: string[];
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -34,5 +38,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rateLimitMax: parseInt(env.RATE_LIMIT_MAX || '300', 10),
     // 测试模式放开认证限流（测试套件会大量注册/登录）；生产默认 10 次/分钟
     authRateLimitMax: env.NODE_ENV === 'test' ? 1_000_000 : parseInt(env.RATE_LIMIT_AUTH_MAX || '10', 10),
+    turnSecret: env.TURN_SECRET || null,
+    turnUrls: env.TURN_URL ? env.TURN_URL.split(',').map((s) => s.trim()).filter(Boolean) : [],
   };
 }

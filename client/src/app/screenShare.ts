@@ -49,8 +49,8 @@ export function ensureTurnCredential(): void {
   if (!turnPromise) turnPromise = mintTurnCredential();
 }
 
-function iceServers(): RTCIceServer[] {
-  return cachedTurn ? [...STUN_SERVERS, cachedTurn] : STUN_SERVERS;
+function iceServers(extra: RTCIceServer[] = []): RTCIceServer[] {
+  return [...extra, ...STUN_SERVERS, ...(cachedTurn ? [cachedTurn] : [])];
 }
 
 // 模块加载即预热 TURN 凭据（用户点共享/观看时通常已就绪）
@@ -76,6 +76,8 @@ export class ScreenShareManager {
   private onRemoteStream: ((sharerId: string, stream: MediaStream) => void) | null = null;
   private onSelfStop: (() => void) | null = null;
   private onIceState: ((peerId: string, state: string) => void) | null = null;
+  /** 服务端 /api/turn 签发的自建 coturn 凭据（首选 TURN；OpenRelay 兜底在其后） */
+  private extraIceServers: RTCIceServer[] = [];
 
   get isSharing(): boolean {
     return this.localStream !== null;
@@ -91,6 +93,10 @@ export class ScreenShareManager {
 
   setIceStateHandler(fn: (peerId: string, state: string) => void): void {
     this.onIceState = fn;
+  }
+
+  setExtraIceServers(list: RTCIceServer[]): void {
+    this.extraIceServers = list;
   }
 
   /** 发起共享：仅取屏幕流。用户取消选择器时静默返回（isSharing 保持 false）。 */
@@ -217,7 +223,7 @@ export class ScreenShareManager {
   }
 
   private createPeerConnection(peerId: string, isSender: boolean): RTCPeerConnection {
-    const pc = new RTCPeerConnection({ iceServers: iceServers() });
+    const pc = new RTCPeerConnection({ iceServers: iceServers(this.extraIceServers) });
     const room = this.roomOf.get(peerId) ?? '';
     pc.onicecandidate = (ev) => {
       if (ev.candidate) this.signalSender?.(peerId, room, { type: 'candidate', candidate: ev.candidate.toJSON() });
