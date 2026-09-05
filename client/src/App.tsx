@@ -424,6 +424,36 @@ async function openSettingsWindow(section?: 'general' | 'notify' | 'game' | 'ove
   }
 }
 
+/** 打开屏幕共享独立观看窗：窗口自持 WS 信令 + 自己的 RTCPeerConnection（MediaStream 不能跨 webview）。
+ *  浏览器环境或建窗失败时回落到主窗口内嵌观看。 */
+async function openScreenWindow(sharerId: string, name: string, roomId: string): Promise<void> {
+  try {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+    const label = `screen-${sharerId.replace(/-/g, '').slice(0, 8)}`;
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+      void existing.show();
+      void existing.setFocus();
+      return;
+    }
+    const win = new WebviewWindow(label, {
+      title: `屏幕共享 — ${name}`,
+      url: `screen.html?sharer=${encodeURIComponent(sharerId)}&room=${encodeURIComponent(roomId)}&name=${encodeURIComponent(name)}`,
+      width: 900,
+      height: 560,
+      minWidth: 420,
+      minHeight: 320,
+      center: true,
+      resizable: true,
+    });
+    void win.once('tauri://error', () => {
+      void useChat.getState().watchScreenShare(sharerId);
+    });
+  } catch {
+    void useChat.getState().watchScreenShare(sharerId);
+  }
+}
+
 /** 个人资料：头像 / 昵称 / 个性签名 / ID / 注册时间（与软件设置分离） */
 function ProfileModal({ onClose }: { onClose: () => void }) {
   const { user, updateProfile, uploadAvatar, busy } = useAuth();
@@ -942,7 +972,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     screenShare,
     startScreenShare,
     stopScreenShare,
-    watchScreenShare,
     stopWatching,
   } = useChat();
   const { user, logout } = useAuth();
@@ -2100,7 +2129,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               !sh.watching ? (
                 <div className="screen-banner" key={id}>
                   <span>🖥 {sh.name} 正在共享屏幕</span>
-                  <button className="btn primary small" onClick={() => watchScreenShare(id)}>
+                  <button
+                    className="btn primary small"
+                    onClick={() => void openScreenWindow(id, sh.name, screenShare.roomId ?? '')}
+                  >
                     观看
                   </button>
                 </div>

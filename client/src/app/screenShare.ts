@@ -59,7 +59,7 @@ ensureTurnCredential();
 export type SignalSender = (to: string, roomId: string, data: unknown) => void;
 
 type SignalPayload = {
-  type: 'request' | 'offer' | 'answer' | 'candidate';
+  type: 'request' | 'offer' | 'answer' | 'candidate' | 'bye';
   sdp?: string;
   candidate?: RTCIceCandidateInit;
 };
@@ -152,6 +152,15 @@ export class ScreenShareManager {
     const type = data?.type;
     this.roomOf.set(from, roomId);
 
+    if (type === 'bye') {
+      // 对端观看端关闭/断开：释放与其相关的连接（共享者侧释放 sender，带宽不再占用）
+      this.senders.get(from)?.close();
+      this.senders.delete(from);
+      this.receivers.get(from)?.close();
+      this.receivers.delete(from);
+      this.roomOf.delete(from);
+      return;
+    }
     if (type === 'request') {
       // 我是共享者：为该观看者建 sender 连接并 addTrack（addTrack 触发 onnegotiationneeded → offer）
       if (!this.localStream) return;

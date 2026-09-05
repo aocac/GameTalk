@@ -9,7 +9,7 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
-  // 多页面：主窗口 + 输入 Overlay + 消息 Overlay
+  // 多页面：主窗口 + 输入 Overlay + 消息 Overlay + 设置 + 屏幕共享观看窗
   build: {
     rollupOptions: {
       input: {
@@ -17,6 +17,7 @@ export default defineConfig(async () => ({
         input: resolve(__dirname, "input.html"),
         overlay: resolve(__dirname, "overlay.html"),
         settings: resolve(__dirname, "settings.html"),
+        screen: resolve(__dirname, "screen.html"),
       },
     },
   },
