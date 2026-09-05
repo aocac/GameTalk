@@ -100,10 +100,54 @@ function CtxMenu({ x, y, children }: { x: number; y: number; children: ReactNode
 }
 
 /** 屏幕共享观看窗：显式设置 video.muted 属性（React 的 muted 属性不可靠 → WebView2 会拦截自动播放导致黑屏），
- *  并在收到真实画面帧前显示连接状态，便于区分「渲染问题」与「ICE/NAT 不通」。 */
+ *  收到真实画面帧前显示连接状态；标题栏可拖拽移动、右下角可拖拽缩放。 */
 function ScreenViewer({ name, stream, ice, idx, onStop }: { name: string; stream: MediaStream; ice?: string; idx: number; onStop: () => void }) {
   const ref = useRef<HTMLVideoElement | null>(null);
   const [frame, setFrame] = useState(false);
+  const [size, setSize] = useState(() => ({
+    w: Math.max(300, Math.min(560, Math.round(window.innerWidth * 0.46))),
+    h: Math.min(Math.round(window.innerHeight * 0.6), Math.round(Math.min(window.innerHeight * 0.52, 480)) + 36),
+  }));
+  const [pos, setPos] = useState(() => ({
+    left: Math.max(8, window.innerWidth - Math.min(560, Math.round(window.innerWidth * 0.46)) - 24 - idx * 18),
+    top: Math.max(8, window.innerHeight - Math.min(Math.round(window.innerHeight * 0.6), Math.round(Math.min(window.innerHeight * 0.52, 480)) + 36) - 96 - idx * 18),
+  }));
+  const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const resize = useRef<{ sx: number; sy: number; sw: number; sh: number } | null>(null);
+
+  /** 位置钳制在视口内（至少留 60px 可抓） */
+  const clampPos = (left: number, top: number) => ({
+    left: Math.max(8, Math.min(left, window.innerWidth - 120)),
+    top: Math.max(8, Math.min(top, window.innerHeight - 80)),
+  });
+
+  useEffect(() => {
+    // 项目坑位：headless/合成输入下 pointer 事件不可靠，统一 window 级 mouse 监听 + buttons===0 兜底
+    const onMove = (e: MouseEvent) => {
+      if (drag.current) {
+        setPos(clampPos(e.clientX - drag.current.dx, e.clientY - drag.current.dy));
+        if (e.buttons === 0) drag.current = null;
+        return;
+      }
+      if (resize.current) {
+        const w = Math.max(300, Math.min(window.innerWidth - 40, resize.current.sw + (e.clientX - resize.current.sx)));
+        const h = Math.max(200, Math.min(window.innerHeight - 40, resize.current.sh + (e.clientY - resize.current.sy)));
+        setSize({ w, h });
+        if (e.buttons === 0) resize.current = null;
+      }
+    };
+    const onUp = () => {
+      drag.current = null;
+      resize.current = null;
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
@@ -142,8 +186,15 @@ function ScreenViewer({ name, stream, ice, idx, onStop }: { name: string; stream
   }, [stream]);
   const failed = ice === 'failed' || ice === 'disconnected' || ice === 'closed';
   return (
-    <div className="screen-viewer" style={{ right: 24 + idx * 18, bottom: 96 + idx * 18 }}>
-      <div className="screen-viewer-head">
+    <div className="screen-viewer" style={{ left: pos.left, top: pos.top, width: size.w, height: size.h }}>
+      <div
+        className="screen-viewer-head"
+        onMouseDown={(e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          drag.current = { dx: e.clientX - pos.left, dy: e.clientY - pos.top };
+        }}
+      >
         <span>正在观看 {name} 的屏幕共享</span>
         <button className="screen-viewer-close" title="停止观看" onClick={onStop}>
           ✕
@@ -170,6 +221,16 @@ function ScreenViewer({ name, stream, ice, idx, onStop }: { name: string; stream
           </div>
         )}
       </div>
+      <div
+        className="screen-resize"
+        title="拖拽调整大小"
+        onMouseDown={(e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          e.stopPropagation();
+          resize.current = { sx: e.clientX, sy: e.clientY, sw: size.w, sh: size.h };
+        }}
+      />
     </div>
   );
 }
@@ -2029,7 +2090,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <>
             {screenShare.selfSharing && (
               <div className="screen-banner sharing">
-                <span>🖥 你正在共享本房间屏幕</span>
+                <span>🖥 你正在本房间共享屏幕</span>
                 <button className="btn ghost small" onClick={stopScreenShare}>
                   停止共享
                 </button>

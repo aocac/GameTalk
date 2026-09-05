@@ -108,7 +108,10 @@ export class ScreenShareManager {
     }
     if (this.localStream) return; // 已在共享，幂等
     try {
-      this.localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      this.localStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { ideal: 30, max: 60 } },
+        audio: false,
+      });
     } catch (e) {
       const name = (e as DOMException)?.name ?? '';
       if (name === 'NotAllowedError') {
@@ -119,6 +122,9 @@ export class ScreenShareManager {
       this.onSelfStop = null;
       throw new Error(`无法获取屏幕（${name || '未知错误'}）。请确认窗口高度 ≥600px 且 WebView2 支持屏幕捕获。`, { cause: e });
     }
+    // 屏幕内容默认按「保分辨率」降级，带宽不足时疯狂掉帧；游戏画面改为帧率优先
+    const track = this.localStream.getVideoTracks()[0];
+    if (track) track.contentHint = 'motion';
     this.roomOf.set('__self__', roomId);
     this.localStream.getVideoTracks()[0]?.addEventListener('ended', () => this.stopLocal());
   }
@@ -157,10 +163,11 @@ export class ScreenShareManager {
       this.senders.set(from, pc);
       for (const track of this.localStream.getTracks()) {
         const sender = pc.addTrack(track, this.localStream);
-        // 限制上行码率，走中继时也不至于吃满带宽（约 1.2Mbps）
+        // 码率上限 + 带宽不足时允许降分辨率保帧率（屏幕默认「保分辨率」会疯狂掉帧）
         try {
           const params = sender.getParameters();
-          params.encodings = [{ ...(params.encodings?.[0] ?? {}), maxBitrate: 1_200_000 }];
+          params.encodings = [{ ...(params.encodings?.[0] ?? {}), maxBitrate: 4_000_000 }];
+          (params as RTCRtpSendParameters & { degradationPreference?: string }).degradationPreference = 'balanced';
           void sender.setParameters(params);
         } catch {
           /* 某些环境不支持动态 setParameters，忽略 */
