@@ -186,12 +186,6 @@ async function ensureTurnIceServers(): Promise<api.TurnIceServer[]> {
   }
 }
 
-/** 提示音是否应当响起：设置开关 + 自己正在共享音频时不响（提示音会回流进共享的系统声音） */
-function soundsOn(): boolean {
-  if (!useSettings.getState().soundEnabled) return false;
-  const ss = useChat.getState().screenShare;
-  return !(ss.selfSharing && ss.selfSharingAudio);
-}
 
 function startSubWatchdog(): void {
   if (subWatchdog) return;
@@ -336,7 +330,7 @@ function appendOptimistic(roomId: string, text: string, opts?: SendOptions): voi
 /** 真正发送（不负责乐观上屏，由调用方决定） */
 function doSend(roomId: string, text: string, opts?: SendOptions): void {
   const ok = socket?.send({ type: 'message:send', payload: { roomId, text, mentions: opts?.mentions, mediaUrl: opts?.mediaUrl, mediaUrls: opts?.mediaUrls, replyTo: opts?.replyTo, kind: opts?.sticker ? 'sticker' : undefined } });
-  if (ok) playSendSound(soundsOn());
+  if (ok) playSendSound(useSettings.getState().soundEnabled);
 }
 
 /** DM 乐观上屏：结构与房间乐观消息一致（userId=自己），服务器确认后按 tempId 校正 */
@@ -590,7 +584,7 @@ export const useChat = create<ChatState>()((set, get) => ({
                 },
               }));
             }
-            playMessageSound(soundsOn());
+            playMessageSound(useSettings.getState().soundEnabled);
             // Windows 系统通知：按设置档位（仅@我 / 全部；当前正打开的房间不弹，消息就在眼前）
             const level = useSettings.getState().notifyLevel;
             if (active !== msg.payload.roomId && (level === 'all' || (level === 'mention' && mentionedMe))) {
@@ -706,7 +700,7 @@ export const useChat = create<ChatState>()((set, get) => ({
             if (get().activeDmPeerId !== peerId) {
               set((s) => ({ dmUnread: { ...s.dmUnread, [peerId]: (s.dmUnread[peerId] ?? 0) + 1 } }));
             }
-            playMessageSound(soundsOn());
+            playMessageSound(useSettings.getState().soundEnabled);
             // Windows 系统通知：私聊 = 点对点定向，「仅@」档同样弹出（正打开的会话不弹）
             const level = useSettings.getState().notifyLevel;
             if (get().activeDmPeerId !== peerId && level !== 'none') {
@@ -1292,7 +1286,7 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
     const ok = socket.send({ type: 'dm:send', payload: { to: peerId, text: trimmed, mediaUrl: opts?.mediaUrl, mediaUrls: opts?.mediaUrls, replyTo: opts?.replyTo, kind: opts?.sticker ? 'sticker' : undefined } });
     if (ok) {
-      playSendSound(soundsOn());
+      playSendSound(useSettings.getState().soundEnabled);
       appendPendingDm(peerId, trimmed, opts);
     }
   },

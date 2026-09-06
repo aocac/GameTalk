@@ -120,7 +120,9 @@ export class ScreenShareManager {
     try {
       this.localStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: { ideal: 30, max: 60 } },
-        audio: withAudio,
+        // restrictOwnAudio（WebView2/Chrome 123+）：共享系统声音时剔除本应用自己的提示音——
+        // 本地照常可听，但对方听不到（即「屏蔽提示音」而非「给软件静音」）
+        audio: withAudio ? ({ restrictOwnAudio: true } as MediaTrackConstraints) : false,
       });
     } catch (e) {
       const name = (e as DOMException)?.name ?? '';
@@ -197,11 +199,11 @@ export class ScreenShareManager {
       this.senders.set(key, this.createPeerConnection(key, true));
       for (const track of this.localStream.getTracks()) {
         const sender = this.senders.get(key)!.addTrack(track, this.localStream);
-        // 码率上限 + 带宽不足时允许降分辨率保帧率（屏幕默认「保分辨率」会疯狂掉帧）
+        // 保分辨率优先（8Mbps 上限下清晰度不再妥协；带宽不足时表现为降帧而非降分辨率）
         try {
           const params = sender.getParameters();
-          params.encodings = [{ ...(params.encodings?.[0] ?? {}), maxBitrate: 8_000_000 }];
-          (params as RTCRtpSendParameters & { degradationPreference?: string }).degradationPreference = 'balanced';
+          params.encodings = [{ ...(params.encodings?.[0] ?? {}), maxBitrate: 8_000_000, scaleResolutionDownBy: 1 }];
+          (params as RTCRtpSendParameters & { degradationPreference?: string }).degradationPreference = 'maintain-resolution';
           void sender.setParameters(params);
         } catch {
           /* 某些环境不支持动态 setParameters，忽略 */
