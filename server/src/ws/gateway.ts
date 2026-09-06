@@ -1044,7 +1044,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       let srcText: string;
       let srcKind: 'text' | 'image' | 'sticker';
       let srcMediaUrl: string | null;
-      let srcMediaUrls: string[] | null = null;
+      let srcMediaUrls: string[] | null;
       let label: string;
       if (source === 'room') {
         const found = await db.query<{ username: string; text: string; kind: string; media_url: string | null; media_urls: string[] | null; room_name: string }>(
