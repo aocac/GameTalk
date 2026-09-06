@@ -484,8 +484,8 @@ async function openShareWindow(roomId: string): Promise<void> {
     new WebviewWindow(label, {
       title: 'GameTalk 屏幕共享',
       url: `share.html?room=${encodeURIComponent(roomId)}`,
-      width: 380,
-      height: 240,
+      width: 440,
+      height: 300,
       center: true,
       resizable: false,
     });

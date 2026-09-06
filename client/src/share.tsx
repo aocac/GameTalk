@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
-import { PhysicalPosition } from '@tauri-apps/api/dpi';
+import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import { ScreenShareManager } from './app/screenShare';
 import { getTurnCredentials } from './app/api';
 import './App.css';
@@ -72,6 +72,12 @@ function ShareWindow() {
       return;
     }
     setError(null);
+    // WebView2 的共享选择器渲染在本窗口内部：先放大窗口，选择器才有空间完整展示
+    try {
+      getCurrentWindow().setSize(new LogicalSize(1020, 720));
+    } catch {
+      /* ignore */
+    }
     const mgr = new ScreenShareManager();
     mgrRef.current = mgr;
     let ws: WebSocket | null = null;
@@ -170,6 +176,19 @@ function ShareWindow() {
     }
   };
 
+  // 结束后自动销毁：位置已在屏幕外，重开共享由主窗口新建窗口
+  useEffect(() => {
+    if (phase !== 'ended') return;
+    const t = setTimeout(() => {
+      try {
+        void getCurrentWindow().destroy();
+      } catch {
+        /* ignore */
+      }
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [phase]);
+
   useEffect(() => {
     // 主窗口「停止共享」→ 停止采集
     let un1: (() => void) | undefined;
@@ -218,12 +237,7 @@ function ShareWindow() {
             <div className="share-sub">在主窗口点「停止共享」结束</div>
           </>
         ) : (
-          <>
-            <div className="share-sub">共享已结束</div>
-            <button className="btn ghost" onClick={() => setPhase('ready')}>
-              再次共享
-            </button>
-          </>
+          <div className="share-sub">共享已结束，窗口即将关闭…</div>
         )}
       </div>
     </div>
