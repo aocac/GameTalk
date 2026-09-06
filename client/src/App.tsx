@@ -157,6 +157,12 @@ function ScreenViewer({ name, stream, ice, idx, onStop }: { name: string; stream
     v.playsInline = true;
     v.srcObject = stream;
     void v.play().catch(() => {});
+    // 流里有音频轨时解除静音（共享的系统声音要在观看端播放）；
+    // 初始静音只为满足自动播放策略，播放成功后立即放开
+    if (stream.getAudioTracks().length > 0) {
+      v.muted = false;
+      void v.play().catch(() => {});
+    }
     let stop = false;
     let last = -1;
     let lastFrameAt = 0;
@@ -219,7 +225,7 @@ function ScreenViewer({ name, stream, ice, idx, onStop }: { name: string; stream
           className="screen-video"
           onClick={(e) => {
             const el = e.target as HTMLVideoElement;
-            el.muted = true;
+            if (stream.getAudioTracks().length > 0) el.muted = false;
             void el.play().catch(() => {});
           }}
         />
