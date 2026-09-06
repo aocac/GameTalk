@@ -120,10 +120,11 @@ export class ScreenShareManager {
     try {
       this.localStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: { ideal: 30, max: 60 } },
-        // restrictOwnAudio（WebView2/Chrome 123+）：共享系统声音时剔除本应用自己的提示音——
-        // 本地照常可听，但对方听不到（即「屏蔽提示音」而非「给软件静音」）
-        audio: { restrictOwnAudio: true } as MediaTrackConstraints,
-      });
+        // WebView2：audio:true 请求音频轨，systemAudio:'include' 让整屏选择提供系统音频。
+        // 观看端实测：开启原生「使用系统音频共享」后收到 live 音轨且 RMS 非零。
+        audio: true,
+        systemAudio: 'include',
+      } as DisplayMediaStreamOptions);
     } catch (e) {
       const name = (e as DOMException)?.name ?? '';
       if (name === 'NotAllowedError') {
