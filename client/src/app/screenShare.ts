@@ -300,7 +300,26 @@ export class ScreenShareManager {
       }
     };
     pc.oniceconnectionstatechange = () => {
-      this.onIceState?.(peer, pc.iceConnectionState);
+      const state = pc.iceConnectionState;
+      this.onIceState?.(peer, state);
+      // 连上后补报选中链路的候选类型（host=同网直连 / srflx=STUN 打洞 / relay=TURN 中继），
+      // 让「画面卡/糊/断」的实测反馈能直接读出传输路径
+      if (state === 'connected' || state === 'completed') {
+        void pc
+          .getStats()
+          .then((stats) => {
+            let pair: Record<string, unknown> | undefined;
+            stats.forEach((r) => {
+              const rr = r as Record<string, unknown>;
+              if (rr.type === 'candidate-pair' && (rr.selected === true || (rr.state === 'succeeded' && rr.nominated === true))) pair = rr;
+            });
+            if (!pair) return;
+            const local = (stats.get(pair.localCandidateId as string) as Record<string, unknown> | undefined)?.candidateType ?? '';
+            const remote = (stats.get(pair.remoteCandidateId as string) as Record<string, unknown> | undefined)?.candidateType ?? '';
+            this.onIceState?.(peer, `${state}·${local}↔${remote}`);
+          })
+          .catch(() => undefined);
+      }
     };
     pc.onnegotiationneeded = async () => {
       if (!isSender) return;
