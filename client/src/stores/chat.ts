@@ -1380,9 +1380,15 @@ export const useChat = create<ChatState>()((set, get) => ({
   },
 
   stopScreenShare: () => {
-    // stopLocal 内部经 onSelfStop 发 screen:stop 并清 selfSharing
-    if (screenShareManager) screenShareManager.stopLocal();
-    else set((s) => ({ screenShare: { ...s.screenShare, selfSharing: false, selfSharingAudio: false } }));
+    // 主窗口/独立采集窗两种模式都要广播 screen:stop（采集窗收到后自行停止轨道）
+    const { activeRoomId } = get();
+    const roomId = get().screenShare.roomId ?? activeRoomId;
+    if (roomId && socket) {
+      socket.send({ type: 'screen:stop', payload: { roomId } });
+    }
+    // 内嵌共享路径（浏览器回落）：停本地轨道；onSelfStop 会再发一次 stop，服务端幂等
+    screenShareManager?.stopLocal();
+    set((s) => ({ screenShare: { ...s.screenShare, selfSharing: false, selfSharingAudio: false } }));
   },
 
   handleScreenSignal: async (from, roomId, data) => {

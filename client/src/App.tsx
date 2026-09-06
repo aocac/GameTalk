@@ -469,6 +469,31 @@ async function openScreenWindow(sharerId: string, name: string, roomId: string):
   }
 }
 
+/** 打开屏幕共享采集窗：采集与信令都在这个窗口里发生（WebView2 的共享浮条画在采集窗表面，
+ *  采集开始后窗口移到屏幕外，浮条随之不可见）。浏览器环境回落主窗口内嵌共享。 */
+async function openShareWindow(roomId: string): Promise<void> {
+  try {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+    const label = `share-${roomId.replace(/-/g, '').slice(0, 8)}`;
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+      void existing.show();
+      void existing.setFocus();
+      return;
+    }
+    new WebviewWindow(label, {
+      title: 'GameTalk 屏幕共享',
+      url: `share.html?room=${encodeURIComponent(roomId)}`,
+      width: 380,
+      height: 240,
+      center: true,
+      resizable: false,
+    });
+  } catch {
+    void useChat.getState().startScreenShare(false);
+  }
+}
+
 /** 个人资料：头像 / 昵称 / 个性签名 / ID / 注册时间（与软件设置分离） */
 function ProfileModal({ onClose }: { onClose: () => void }) {
   const { user, updateProfile, uploadAvatar, busy } = useAuth();
@@ -985,7 +1010,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     editMessage,
     editDm,
     screenShare,
-    startScreenShare,
     stopScreenShare,
     stopWatching,
   } = useChat();
@@ -1015,8 +1039,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [dmMsgMenu, setDmMsgMenu] = useState<{ member: UserBrief; x: number; y: number; confirmRemove: boolean } | null>(null);
   /** 转发选择器：待转发的消息 + 来源会话类型（目标 = 我的房间列表 ∪ 好友私聊） */
   const [forwardPicker, setForwardPicker] = useState<{ msg: RoomMessage; source: 'room' | 'dm' } | null>(null);
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [shareAudio, setShareAudio] = useState(false);
   const [dragOverFiles, setDragOverFiles] = useState(false);
   const dragDepth = useRef(0);
   /** 邀请链接管理面板：目标房间 */
@@ -2692,10 +2714,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               disabled={offline || !connected}
               onClick={() => {
                 if (screenShare.selfSharing && screenShare.roomId === activeRoomId) stopScreenShare();
-                else {
-                  setShareAudio(false);
-                  setShowShareModal(true);
-                }
+                else void openShareWindow(activeRoomId ?? '');
               }}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -3310,32 +3329,6 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         </div>
       )}
 
-      {showShareModal && (
-        <div className="modal-mask" onClick={() => setShowShareModal(false)}>
-          <div className="modal share-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>共享屏幕</h3>
-            <p className="share-hint">点「开始共享」后在系统选择器里选择要共享的全屏或窗口。</p>
-            <label className="share-audio-row">
-              <input type="checkbox" checked={shareAudio} onChange={(e) => setShareAudio(e.target.checked)} />
-              <span>同时共享系统声音——对方能听到你电脑播放的声音（Windows 10+，系统选择器里也可再勾选）。共享期间本应用的提示音会自动静音。</span>
-            </label>
-            <div className="modal-actions">
-              <button className="btn ghost" onClick={() => setShowShareModal(false)}>
-                取消
-              </button>
-              <button
-                className="btn primary"
-                onClick={() => {
-                  setShowShareModal(false);
-                  void startScreenShare(shareAudio);
-                }}
-              >
-                开始共享
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {forwardPicker && (
         <ForwardPickerModal msg={forwardPicker.msg} source={forwardPicker.source} onClose={() => setForwardPicker(null)} />
       )}

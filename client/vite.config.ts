@@ -18,6 +18,7 @@ export default defineConfig(async () => ({
         overlay: resolve(__dirname, "overlay.html"),
         settings: resolve(__dirname, "settings.html"),
         screen: resolve(__dirname, "screen.html"),
+        share: resolve(__dirname, "share.html"),
       },
     },
   },
