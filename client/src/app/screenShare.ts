@@ -107,10 +107,10 @@ export class ScreenShareManager {
     this.extraIceServers = list;
   }
 
-  /** 发起共享：仅取屏幕流。withAudio=true 时请求系统声音（WebView2 选择器内可勾选「共享系统声音」，Windows 10+）。
-   *  用户取消选择器时静默返回（isSharing 保持 false）。
+  /** 发起共享：请求屏幕 + 系统声音（audio 带 restrictOwnAudio——本应用提示音不进共享流，本地照常可响；
+   *  选择器内可关掉声音）。用户取消选择器时静默返回（isSharing 保持 false）。
    *  预留：单独共享某个程序的声音 Chromium/getDisplayMedia 尚未开放，待上游支持后在此接入。 */
-  async start(roomId: string, withAudio: boolean, signalSender: SignalSender, onSelfStop: () => void): Promise<void> {
+  async start(roomId: string, signalSender: SignalSender, onSelfStop: () => void): Promise<void> {
     this.signalSender = signalSender;
     this.onSelfStop = onSelfStop;
     if (!navigator.mediaDevices?.getDisplayMedia) {
@@ -122,7 +122,7 @@ export class ScreenShareManager {
         video: { frameRate: { ideal: 30, max: 60 } },
         // restrictOwnAudio（WebView2/Chrome 123+）：共享系统声音时剔除本应用自己的提示音——
         // 本地照常可听，但对方听不到（即「屏蔽提示音」而非「给软件静音」）
-        audio: withAudio ? ({ restrictOwnAudio: true } as MediaTrackConstraints) : false,
+        audio: { restrictOwnAudio: true } as MediaTrackConstraints,
       });
     } catch (e) {
       const name = (e as DOMException)?.name ?? '';

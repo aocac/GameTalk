@@ -151,7 +151,7 @@ interface ChatState {
     shares: Record<string, { name: string; watching: boolean; remoteStream: MediaStream | null; ice?: string; external?: boolean }>;
   };
   /** 开始共享当前房间的屏幕（WebRTC P2P） */
-  startScreenShare: (withAudio: boolean) => Promise<void>;
+  startScreenShare: () => Promise<void>;
   /** 停止屏幕共享 */
   stopScreenShare: () => void;
   /** 主动加入观看指定用户的共享（先取自建 TURN 凭据再建接收连接） */
@@ -1338,7 +1338,7 @@ export const useChat = create<ChatState>()((set, get) => ({
     if (!ok) set({ roomError: '连接未就绪，无法操作' });
   },
 
-  startScreenShare: async (withAudio) => {
+  startScreenShare: async () => {
     const { status, activeRoomId, me } = get();
     if (status !== 'open' || !socket || !activeRoomId || !me) {
       set({ roomError: '连接未就绪或不在房间中' });
@@ -1358,7 +1358,7 @@ export const useChat = create<ChatState>()((set, get) => ({
       });
     });
     try {
-      await mgr.start(roomId, withAudio, (to, rid, data) => sock.send({ type: 'screen:signal', payload: { roomId: rid, to, data } }), () => {
+      await mgr.start(roomId, (to, rid, data) => sock.send({ type: 'screen:signal', payload: { roomId: rid, to, data } }), () => {
         // 本地轨道结束（浏览器原生「停止共享」按钮）：通知服务端并清 selfSharing
         sock.send({ type: 'screen:stop', payload: { roomId } });
         set((s) => ({ screenShare: { ...s.screenShare, selfSharing: false, selfSharingAudio: false } }));

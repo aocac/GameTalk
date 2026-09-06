@@ -492,7 +492,7 @@ async function openShareWindow(roomId: string): Promise<void> {
       resizable: true,
     });
   } catch {
-    void useChat.getState().startScreenShare(false);
+    void useChat.getState().startScreenShare();
   }
 }
 

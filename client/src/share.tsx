@@ -65,7 +65,7 @@ function ShareWindow() {
     }
   };
 
-  const beginShare = async (withAudio: boolean) => {
+  const beginShare = async () => {
     const token = readToken();
     if (!room || !token) {
       setError('缺少房间或登录信息，请从主窗口重新打开');
@@ -90,7 +90,6 @@ function ShareWindow() {
     try {
       await mgr.start(
         room,
-        withAudio,
         (to, rid, data) => send({ type: 'screen:signal', payload: { roomId: rid, to, data } }),
         () => {
           // 轨道结束（系统/条内停止）：广播结束并回到待命
@@ -220,11 +219,8 @@ function ShareWindow() {
           </>
         ) : phase === 'ready' ? (
           <>
-            <label className="share-audio-row">
-              <input type="checkbox" id="share-audio-check" />
-              <span>同时共享系统声音（对方能听到你电脑播放的声音；Windows 10+ 支持，不会包含 GameTalk 自己的提示音）</span>
-            </label>
-            <button className="btn primary share-start" onClick={() => void beginShare((document.getElementById('share-audio-check') as HTMLInputElement)?.checked ?? false)}>
+            <p className="share-sub" style={{ margin: '0 0 14px', textAlign: 'left' }}>点「开始共享」后，在弹出的选择器里选择屏幕 / 窗口，并用底部开关决定是否带上系统声音。</p>
+            <button className="btn primary share-start" onClick={() => void beginShare()}>
               开始共享（选择屏幕 / 窗口）
             </button>
           </>
