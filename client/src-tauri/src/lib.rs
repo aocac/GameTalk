@@ -17,6 +17,68 @@ fn write_file_bytes(path: String, data: Vec<u8>) -> Result<(), String> {
     std::fs::write(&path, data).map_err(|e| e.to_string())
 }
 
+/// 隐藏 WebView2 的屏幕共享提示条（getDisplayMedia 的强制隐私 UI，官方无开关）。
+/// 该提示条是 msedgewebview2.exe 进程下的独立条状顶层窗口：枚举可见的此类窗口，
+/// 命中条状尺寸即 SW_HIDE。前端在共享期间周期性调用（防其重新显示）。
+#[cfg(windows)]
+#[tauri::command]
+fn hide_webview2_capture_bar() {
+    use windows::{
+        core::BOOL,
+        core::PWSTR,
+        Win32::{
+            Foundation::{CloseHandle, HWND, LPARAM, RECT},
+            System::Threading::{
+                OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+                PROCESS_QUERY_LIMITED_INFORMATION,
+            },
+            UI::WindowsAndMessaging::{
+                EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE,
+            },
+        },
+    };
+    unsafe extern "system" fn on_window(hwnd: HWND, _lparam: LPARAM) -> BOOL {
+        if !IsWindowVisible(hwnd).as_bool() {
+            return BOOL(1);
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return BOOL(1);
+        }
+        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return BOOL(1);
+        };
+        let mut buf = [0u16; 512];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len);
+        let _ = CloseHandle(handle);
+        if ok.is_err() {
+            return BOOL(1);
+        }
+        if !String::from_utf16_lossy(&buf[..len as usize]).ends_with("msedgewebview2.exe") {
+            return BOOL(1);
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            let w = (rect.right - rect.left) as i32;
+            let h = (rect.bottom - rect.top) as i32;
+            // 条状可见窗口（宽 300~1400、高 16~200）：共享提示条
+            if w > 200 && w < 1600 && h > 16 && h < 200 {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+        }
+        BOOL(1)
+    }
+    unsafe {
+        let _ = EnumWindows(Some(on_window), LPARAM(0));
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn hide_webview2_capture_bar() {}
+
 /// 运行时设置 WebView 代理（立即生效，无需重启）：
 /// - enabled=true 且 addr 非空 → Network.setProxyOverride 走指定代理
 /// - enabled=false → 不干预（保持 WebView2 默认行为 = 跟随系统代理）
@@ -67,7 +129,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![quit_app, set_proxy, write_file_bytes])
+        .invoke_handler(tauri::generate_handler![quit_app, set_proxy, write_file_bytes, hide_webview2_capture_bar])
         .setup(|app| {
             // 注册 gametalk:// 深链协议到当前用户注册表（不依赖安装器行为；
             // 浏览器点击链接 → 系统以本 exe 启动第二实例 → 单实例回调转发）

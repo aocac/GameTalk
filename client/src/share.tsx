@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { PhysicalPosition } from '@tauri-apps/api/dpi';
 import { ScreenShareManager } from './app/screenShare';
@@ -45,13 +46,14 @@ function ShareWindow() {
   const wsRef = useRef<WebSocket | null>(null);
   const sharingRef = useRef(false);
   const offscreenRef = useRef(false);
+  const barTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  /** 共享开始后把窗口挪到屏幕外：浮条画在本窗口表面，随窗口一起离开视野 */
-  const goOffscreen = () => {
+  /** 共享开始后隐藏本窗口：采集与信令都在此窗口继续运行（overlay 同模式） */
+  const hideSelf = () => {
     if (offscreenRef.current) return;
     offscreenRef.current = true;
     try {
-      getCurrentWindow().setPosition(new PhysicalPosition(-32000, -32000));
+      void getCurrentWindow().hide();
     } catch {
       /* 浏览器环境忽略 */
     }
@@ -127,6 +129,11 @@ function ShareWindow() {
           send({ type: 'screen:start', payload: { roomId: room } });
           sharingRef.current = true;
           setPhase('sharing');
+          // 周期性补隐 WebView2 共享提示条（音频开关切换等场景会重新显示）
+          if (barTimerRef.current) clearInterval(barTimerRef.current);
+          barTimerRef.current = setInterval(() => {
+            void invoke('hide_webview2_capture_bar').catch(() => undefined);
+          }, 3000);
           break;
         case 'screen:signal':
           void mgr.handleSignal(String(msg.payload?.from ?? ''), String(msg.payload?.roomId ?? room), msg.payload?.data);
@@ -137,6 +144,10 @@ function ShareWindow() {
             sharingRef.current = false;
             mgr.stopAll();
             setPhase('ended');
+          }
+          if (barTimerRef.current) {
+            clearInterval(barTimerRef.current);
+            barTimerRef.current = null;
           }
           break;
         case 'error':
@@ -154,15 +165,25 @@ function ShareWindow() {
     };
     setInterval(() => send({ type: 'ping' }), 15000);
 
-    // 共享已建立：窗口挪出屏幕（浮条随之不可见），主窗口经 screen:started 广播同步状态
+    // 共享已建立：隐藏采集窗（浮条所在的 WebView2 置顶条由 Rust 命令隐藏）
     await new Promise((r) => setTimeout(r, 300));
-    goOffscreen();
+    hideSelf();
+    try {
+      void invoke('hide_webview2_capture_bar').catch(() => undefined);
+      window.setTimeout(() => void invoke('hide_webview2_capture_bar').catch(() => undefined), 800);
+    } catch {
+      /* ignore */
+    }
   };
 
   const stopShare = () => {
     mgrRef.current?.stopLocal(); // 触发 onSelfStop → screen:stop 广播
     sendStop();
     sharingRef.current = false;
+    if (barTimerRef.current) {
+      clearInterval(barTimerRef.current);
+      barTimerRef.current = null;
+    }
     setPhase('ended');
     try {
       getCurrentWindow().setPosition(new PhysicalPosition(200, 200));

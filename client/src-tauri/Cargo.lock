@@ -1181,6 +1181,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "windows",
  "windows-core 0.61.2",
 ]
 
