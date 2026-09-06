@@ -44,6 +44,8 @@ export interface ChatMessage {
   /** 'image' 时 mediaUrl 指向图片（广播为绝对 URL，乐观期为相对路径） */
   kind?: 'text' | 'image' | 'sticker';
   mediaUrl?: string | null;
+  /** 多图：完整媒体列表（对外绝对 URL，首图与 mediaUrl 一致）；旧消息为空 */
+  mediaUrls?: string[];
   /** 引用回复的原消息快照 */
   reply?: ReplyRef;
   /** 已撤回：内容已清空，渲染占位文案 */
@@ -69,6 +71,7 @@ export interface DmMessage {
   createdAt: string;
   kind?: 'text' | 'image' | 'sticker';
   mediaUrl?: string | null;
+  mediaUrls?: string[];
   reply?: ReplyRef;
   recalled?: boolean;
   /** 编辑时间（ISO；仅编辑过的消息携带） */
@@ -86,10 +89,10 @@ export type ClientWsMessage =
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
   | { type: 'member:mute'; payload: { roomId: string; userId: string; minutes: number } }
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
-  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string; replyTo?: string; kind?: 'sticker' } }
+  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: string[]; mediaUrl?: string; mediaUrls?: string[]; replyTo?: string; kind?: 'sticker' } }
   | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
   | { type: 'message:edit'; payload: { roomId: string; messageId: string; text: string } }
-  | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: string; replyTo?: string; kind?: 'sticker' } }
+  | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: string; mediaUrls?: string[]; replyTo?: string; kind?: 'sticker' } }
   | { type: 'dm:recall'; payload: { messageId: string } }
   | { type: 'dm:edit'; payload: { messageId: string; text: string } }
   | {

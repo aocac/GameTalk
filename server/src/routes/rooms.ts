@@ -37,6 +37,7 @@ interface MessageRow extends QueryResultRow {
   mentions: Array<{ id: string; username: string }> | null;
   kind: string;
   media_url: string | null;
+  media_urls: string[] | null;
   forwarded_from_label: string | null;
   recalled: boolean;
   edited_at: string | null;
@@ -198,7 +199,7 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
 
     const res = await db.query<MessageRow>(
       `SELECT * FROM (
-         SELECT m.id, m.room_id, m.user_id, m.username, u.avatar_url, m.text, m.mentions, m.kind, m.media_url, m.recalled, m.edited_at,
+         SELECT m.id, m.room_id, m.user_id, m.username, u.avatar_url, m.text, m.mentions, m.kind, m.media_url, m.media_urls, m.recalled, m.edited_at,
                 m.recalled_by, rby.username AS recalled_by_username, m.forwarded_from_label,
                 m.reply_to, r.username AS reply_username, r.text AS reply_text, r.kind AS reply_kind, r.recalled AS reply_recalled,
                 m.created_at
@@ -229,6 +230,7 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
       mentions: m.mentions ?? [],
       kind: m.kind ?? 'text',
       mediaUrl: m.media_url ? `${base}${m.media_url}` : null,
+      mediaUrls: m.media_urls?.length ? m.media_urls.map((u) => `${base}${u}`) : undefined,
       forwardedFromLabel: m.forwarded_from_label ?? null,
       recalled: m.recalled ?? false,
       editedAt: m.edited_at ? new Date(m.edited_at).toISOString() : undefined,

@@ -144,6 +144,7 @@ export interface RoomMessage {
   mentions?: Array<{ id: string; username: string }>;
   kind?: 'text' | 'image' | 'sticker';
   mediaUrl?: string | null;
+  mediaUrls?: string[];
   /** 引用回复的原消息快照 */
   reply?: { id: string; username: string; text: string; kind: 'text' | 'image' | 'sticker' };
   /** 已撤回：内容已清空 */
@@ -301,6 +302,7 @@ export interface DmApiMessage {
   createdAt: string;
   kind?: 'text' | 'image' | 'sticker';
   mediaUrl?: string | null;
+  mediaUrls?: string[];
   reply?: { id: string; username: string; text: string; kind: 'text' | 'image' | 'sticker' };
   recalled?: boolean;
   editedAt?: string;

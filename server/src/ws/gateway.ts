@@ -50,6 +50,8 @@ interface ChatMessage {
   /** 'image'/'sticker' 时 mediaUrl 指向 /api/media/:id（对外转绝对 URL）；sticker=表情，渲染更小且不带气泡 */
   kind?: 'text' | 'image' | 'sticker';
   mediaUrl?: string | null;
+  /** 多图：完整媒体列表（对外绝对 URL，首图与 mediaUrl 一致）；旧消息为空 */
+  mediaUrls?: string[];
   /** 引用回复的原消息快照 */
   reply?: ReplyRef;
   /** 已撤回：内容已清空，客户端渲染占位文案 */
@@ -76,6 +78,8 @@ interface DmMessage {
   createdAt: string;
   kind: 'text' | 'image' | 'sticker';
   mediaUrl: string | null;
+  /** 多图：完整媒体列表（对外绝对 URL，首图与 mediaUrl 一致） */
+  mediaUrls?: string[];
   reply?: ReplyRef;
   recalled?: boolean;
   /** 编辑时间（ISO；仅编辑过的消息携带） */
@@ -110,10 +114,10 @@ type ClientMessage =
   | { type: 'member:kick'; payload: { roomId: string; userId: string } }
   | { type: 'member:mute'; payload: { roomId: string; userId: string; minutes: unknown } }
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
-  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown; replyTo?: unknown; kind?: unknown } }
+  | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown; mediaUrls?: unknown; replyTo?: unknown; kind?: unknown } }
   | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
   | { type: 'message:edit'; payload: { roomId: string; messageId: string; text: string } }
-  | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: unknown; replyTo?: unknown; kind?: unknown } }
+  | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: unknown; mediaUrls?: unknown; replyTo?: unknown; kind?: unknown } }
   | { type: 'dm:recall'; payload: { messageId: string } }
   | { type: 'dm:edit'; payload: { messageId: string; text: string } }
   | {
@@ -586,8 +590,8 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       const mediaUrl = typeof msg.payload.mediaUrl === 'string' ? msg.payload.mediaUrl : null;
       // 表情消息：客户端带 kind='sticker' 提示（仅在有媒体时生效），渲染更小且不包气泡
       const mediaKind: 'image' | 'sticker' = msg.payload.kind === 'sticker' ? 'sticker' : 'image';
-      // 图片消息允许空文本；纯文本消息仍拒绝空串
-      if (!text && !mediaUrl) {
+      // 图片消息允许空文本；纯文本消息仍拒绝空串（mediaUrls 视为有内容）
+      if (!text && !mediaUrl && !Array.isArray(msg.payload.mediaUrls)) {
         send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'message is empty' } });
         return;
       }
@@ -631,6 +635,43 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         kind = mediaKind;
         storedMediaUrl = mediaUrl;
       }
+      // 多图（≤9 张）：每张同单图校验；media_url 落首图保旧客户端可渲染，完整列表落 media_urls
+      let storedMediaUrls: string[] | null = null;
+      if (Array.isArray(msg.payload.mediaUrls)) {
+        const rawList = msg.payload.mediaUrls as unknown[];
+        if (rawList.length > 9) {
+          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'too many media (max 9)' } });
+          return;
+        }
+        const list: string[] = [];
+        for (const mu of rawList) {
+          if (typeof mu !== 'string') {
+            send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid media url' } });
+            return;
+          }
+          const m2 = /^\/api\/media\/([0-9a-f-]{36})$/.exec(mu);
+          if (!m2) {
+            send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid media url' } });
+            return;
+          }
+          const owned = await db.query('SELECT 1 FROM media WHERE id = $1 AND owner_id = $2', [m2[1], conn.userId]);
+          if (owned.rows.length === 0) {
+            const shared = await db.query('SELECT 1 FROM room_stickers WHERE media_id = $1 AND room_id = $2', [m2[1], roomId]);
+            if (shared.rows.length === 0) {
+              send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'media not found' } });
+              return;
+            }
+          }
+          if (!list.includes(mu)) list.push(mu);
+        }
+        if (list.length > 0) {
+          storedMediaUrls = list;
+          if (!storedMediaUrl) {
+            storedMediaUrl = list[0];
+            kind = mediaKind;
+          }
+        }
+      }
       // 引用回复：校验同房间原消息；快照（截断 80 字，原消息已撤回则占位）随消息入库与广播
       let replyTo: string | null = null;
       let reply: ReplyRef | undefined;
@@ -660,8 +701,8 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       // 持久化后再广播（Phase 4：消息历史；v0.4.0：提及解析入库 + 图片消息；v0.4.1：引用回复）
       const mentions = await resolveMentions(db, roomId, conn.userId, text, msg.payload.mentions);
       const inserted = await db.query<{ id: string; created_at: string; mentions: MentionRef[] }>(
-        'INSERT INTO messages (room_id, user_id, username, text, mentions, kind, media_url, reply_to) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8) RETURNING id, created_at, mentions',
-        [roomId, conn.userId, conn.username, text, JSON.stringify(mentions), kind, storedMediaUrl, replyTo],
+        'INSERT INTO messages (room_id, user_id, username, text, mentions, kind, media_url, media_urls, reply_to) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $9) RETURNING id, created_at, mentions',
+        [roomId, conn.userId, conn.username, text, JSON.stringify(mentions), kind, storedMediaUrl, storedMediaUrls ? JSON.stringify(storedMediaUrls) : null, replyTo],
       );
       const row = inserted.rows[0];
       const message: ChatMessage = {
@@ -676,6 +717,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         kind,
         // 广播用发送者的 httpBase 转绝对 URL（与头像策略一致）
         mediaUrl: storedMediaUrl ? `${conn.httpBase}${storedMediaUrl}` : null,
+        mediaUrls: storedMediaUrls ? storedMediaUrls.map((u) => `${conn.httpBase}${u}`) : undefined,
         reply,
       };
       broadcastToRoom(roomId, { type: 'message:new', payload: { roomId, message } });
@@ -711,7 +753,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       }
       // 记录撤回操作者（房主代撤时客户端文案为「房主撤回了 XX 的消息」，历史同样可查）
       const updated = await db.query<{ id: string }>(
-        'UPDATE messages SET recalled = true, text = \'\', media_url = NULL, mentions = \'[]\'::jsonb, recalled_by = $3 WHERE id = $1 AND room_id = $2 RETURNING id',
+        'UPDATE messages SET recalled = true, text = \'\', media_url = NULL, media_urls = NULL, mentions = \'[]\'::jsonb, recalled_by = $3 WHERE id = $1 AND room_id = $2 RETURNING id',
         [messageId, roomId, conn.userId],
       );
       if (updated.rows.length > 0) {
@@ -732,7 +774,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       const text = safeText(msg.payload.text);
       const mediaUrl = typeof msg.payload.mediaUrl === 'string' ? msg.payload.mediaUrl : null;
       const mediaKind: 'image' | 'sticker' = msg.payload.kind === 'sticker' ? 'sticker' : 'image';
-      if (!text && !mediaUrl) {
+      if (!text && !mediaUrl && !Array.isArray(msg.payload.mediaUrls)) {
         send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'message is empty', to, from: conn.userId } });
         return;
       }
@@ -776,6 +818,48 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         kind = mediaKind;
         storedMediaUrl = mediaUrl;
       }
+      // 多图（≤9 张）：每张同单图校验（双方收藏或任一群共享表情可用）
+      let storedMediaUrls: string[] | null = null;
+      if (Array.isArray(msg.payload.mediaUrls)) {
+        const rawList = msg.payload.mediaUrls as unknown[];
+        if (rawList.length > 9) {
+          send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'too many media (max 9)', to, from: conn.userId } });
+          return;
+        }
+        const list: string[] = [];
+        for (const mu of rawList) {
+          if (typeof mu !== 'string') {
+            send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid media url', to, from: conn.userId } });
+            return;
+          }
+          const m2 = /^\/api\/media\/([0-9a-f-]{36})$/.exec(mu);
+          if (!m2) {
+            send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid media url', to, from: conn.userId } });
+            return;
+          }
+          const owned = await db.query('SELECT 1 FROM media WHERE id = $1 AND owner_id = $2', [m2[1], conn.userId]);
+          if (owned.rows.length === 0) {
+            const shared = await db.query(
+              `SELECT 1 FROM user_stickers WHERE media_id = $1 AND owner_id IN ($2, $3)
+               UNION
+               SELECT 1 FROM room_stickers WHERE media_id = $1`,
+              [m2[1], conn.userId, to],
+            );
+            if (shared.rows.length === 0) {
+              send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'media not found', to, from: conn.userId } });
+              return;
+            }
+          }
+          if (!list.includes(mu)) list.push(mu);
+        }
+        if (list.length > 0) {
+          storedMediaUrls = list;
+          if (!storedMediaUrl) {
+            storedMediaUrl = list[0];
+            kind = mediaKind;
+          }
+        }
+      }
       // 引用回复：原消息必须属于本会话（双向对）；快照随消息入库与广播
       let replyTo: string | null = null;
       let reply: ReplyRef | undefined;
@@ -804,8 +888,8 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         };
       }
       const inserted = await db.query<{ id: string; created_at: string }>(
-        'INSERT INTO dm_messages (sender_id, recipient_id, username, text, kind, media_url, reply_to) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at',
-        [conn.userId, to, conn.username, text, kind, storedMediaUrl, replyTo],
+        'INSERT INTO dm_messages (sender_id, recipient_id, username, text, kind, media_url, media_urls, reply_to) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8) RETURNING id, created_at',
+        [conn.userId, to, conn.username, text, kind, storedMediaUrl, storedMediaUrls ? JSON.stringify(storedMediaUrls) : null, replyTo],
       );
       const row = inserted.rows[0];
       const message: DmMessage = {
@@ -818,6 +902,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         createdAt: row.created_at,
         kind,
         mediaUrl: storedMediaUrl ? `${conn.httpBase}${storedMediaUrl}` : null,
+        mediaUrls: storedMediaUrls ? storedMediaUrls.map((u) => `${conn.httpBase}${u}`) : undefined,
         recalled: false,
         reply,
       };
@@ -959,10 +1044,11 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       let srcText: string;
       let srcKind: 'text' | 'image' | 'sticker';
       let srcMediaUrl: string | null;
+      let srcMediaUrls: string[] | null = null;
       let label: string;
       if (source === 'room') {
-        const found = await db.query<{ username: string; text: string; kind: string; media_url: string | null; room_name: string }>(
-          `SELECT m.username, m.text, m.kind, m.media_url, r.name AS room_name
+        const found = await db.query<{ username: string; text: string; kind: string; media_url: string | null; media_urls: string[] | null; room_name: string }>(
+          `SELECT m.username, m.text, m.kind, m.media_url, m.media_urls, r.name AS room_name
            FROM messages m JOIN rooms r ON r.id = m.room_id
            WHERE m.id = $1 AND m.recalled = false`,
           [messageId],
@@ -983,10 +1069,11 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         srcText = row.text;
         srcKind = row.kind === 'image' || row.kind === 'sticker' ? row.kind : 'text';
         srcMediaUrl = row.media_url;
+        srcMediaUrls = row.media_urls ?? null;
         label = `来自 ${row.room_name} · ${row.username}`;
       } else {
-        const found = await db.query<{ username: string; text: string; kind: string; media_url: string | null; sender_id: string; recipient_id: string }>(
-          'SELECT username, text, kind, media_url, sender_id, recipient_id FROM dm_messages WHERE id = $1 AND recalled = false',
+        const found = await db.query<{ username: string; text: string; kind: string; media_url: string | null; media_urls: string[] | null; sender_id: string; recipient_id: string }>(
+          'SELECT username, text, kind, media_url, media_urls, sender_id, recipient_id FROM dm_messages WHERE id = $1 AND recalled = false',
           [messageId],
         );
         const row = found.rows[0];
@@ -1001,9 +1088,10 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         srcText = row.text;
         srcKind = row.kind === 'image' || row.kind === 'sticker' ? row.kind : 'text';
         srcMediaUrl = row.media_url;
+        srcMediaUrls = row.media_urls ?? null;
         label = `来自 ${row.username} 的私聊`;
       }
-      if (!srcText && !srcMediaUrl) {
+      if (!srcText && !srcMediaUrl && !srcMediaUrls) {
         send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'nothing to forward' } });
         return;
       }
@@ -1027,9 +1115,9 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           return;
         }
         const inserted = await db.query<{ id: string; created_at: string }>(
-          `INSERT INTO messages (room_id, user_id, username, text, mentions, kind, media_url, forwarded_from_label)
-           VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, $6, $7) RETURNING id, created_at`,
-          [targetRoomId, conn.userId, conn.username, srcText, srcKind, srcMediaUrl, label],
+          `INSERT INTO messages (room_id, user_id, username, text, mentions, kind, media_url, media_urls, forwarded_from_label)
+           VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, $6, $7::jsonb, $8) RETURNING id, created_at`,
+          [targetRoomId, conn.userId, conn.username, srcText, srcKind, srcMediaUrl, srcMediaUrls ? JSON.stringify(srcMediaUrls) : null, label],
         );
         const row = inserted.rows[0];
         const message: ChatMessage = {
@@ -1043,6 +1131,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           mentions: [],
           kind: srcKind,
           mediaUrl: srcMediaUrl ? `${conn.httpBase}${srcMediaUrl}` : null,
+          mediaUrls: srcMediaUrls ? srcMediaUrls.map((u) => `${conn.httpBase}${u}`) : undefined,
           forwardedFromLabel: label,
         };
         broadcastToRoom(targetRoomId, { type: 'message:new', payload: { roomId: targetRoomId, message } });
@@ -1059,9 +1148,9 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           return;
         }
         const inserted = await db.query<{ id: string; created_at: string }>(
-          `INSERT INTO dm_messages (sender_id, recipient_id, username, text, kind, media_url, forwarded_from_label)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
-          [conn.userId, targetUserId, conn.username, srcText, srcKind, srcMediaUrl, label],
+          `INSERT INTO dm_messages (sender_id, recipient_id, username, text, kind, media_url, media_urls, forwarded_from_label)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8) RETURNING id, created_at`,
+          [conn.userId, targetUserId, conn.username, srcText, srcKind, srcMediaUrl, srcMediaUrls ? JSON.stringify(srcMediaUrls) : null, label],
         );
         const row = inserted.rows[0];
         const message: DmMessage = {
@@ -1074,6 +1163,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           createdAt: row.created_at,
           kind: srcKind,
           mediaUrl: srcMediaUrl ? `${conn.httpBase}${srcMediaUrl}` : null,
+          mediaUrls: srcMediaUrls ? srcMediaUrls.map((u) => `${conn.httpBase}${u}`) : undefined,
           recalled: false,
           forwardedFromLabel: label,
         };

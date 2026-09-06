@@ -104,6 +104,8 @@ function CtxMenu({ x, y, children }: { x: number; y: number; children: ReactNode
 function ScreenViewer({ name, stream, ice, idx, onStop }: { name: string; stream: MediaStream; ice?: string; idx: number; onStop: () => void }) {
   const ref = useRef<HTMLVideoElement | null>(null);
   const [frame, setFrame] = useState(false);
+  /** 已有画面但超过 4 秒无新帧：对方可能最小化了共享窗口（窗口捕获会冻结在最后一帧） */
+  const [stale, setStale] = useState(false);
   const [size, setSize] = useState(() => ({
     w: Math.max(300, Math.min(560, Math.round(window.innerWidth * 0.46))),
     h: Math.min(Math.round(window.innerHeight * 0.6), Math.round(Math.min(window.innerHeight * 0.52, 480)) + 36),
@@ -157,8 +159,14 @@ function ScreenViewer({ name, stream, ice, idx, onStop }: { name: string; stream
     void v.play().catch(() => {});
     let stop = false;
     let last = -1;
+    let lastFrameAt = 0;
+    let gotFrame = false;
     const mark = () => {
-      if (!stop) setFrame(true);
+      if (stop) return;
+      setFrame(true);
+      setStale(false);
+      lastFrameAt = Date.now();
+      gotFrame = true;
     };
     const rvfc = (v as unknown as { requestVideoFrameCallback?: (cb: () => void) => number }).requestVideoFrameCallback;
     if (typeof rvfc === 'function') {
@@ -172,6 +180,8 @@ function ScreenViewer({ name, stream, ice, idx, onStop }: { name: string; stream
       if (stop) return;
       if (v.currentTime > 0 && v.currentTime !== last) mark();
       last = v.currentTime;
+      // 画面冻结检测：已有首帧但 4 秒无新帧（窗口最小化 / 暂停）
+      if (gotFrame && lastFrameAt > 0 && Date.now() - lastFrameAt > 4000) setStale(true);
     }, 400);
     return () => {
       stop = true;
@@ -219,6 +229,9 @@ function ScreenViewer({ name, stream, ice, idx, onStop }: { name: string; stream
               ? `连接失败（${ice}）——双方网络可能受限（对称 NAT），P2P 直连不通，需 TURN 中继`
               : `正在建立连接 / 等待画面…${ice ? `（${ice}）` : ''}`}
           </div>
+        )}
+        {stale && !failed && (
+          <div className="screen-stale">画面已停止更新——对方可能最小化了共享窗口</div>
         )}
       </div>
       <div
@@ -1002,6 +1015,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const [dmMsgMenu, setDmMsgMenu] = useState<{ member: UserBrief; x: number; y: number; confirmRemove: boolean } | null>(null);
   /** 转发选择器：待转发的消息 + 来源会话类型（目标 = 我的房间列表 ∪ 好友私聊） */
   const [forwardPicker, setForwardPicker] = useState<{ msg: RoomMessage; source: 'room' | 'dm' } | null>(null);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareAudio, setShareAudio] = useState(false);
+  const [dragOverFiles, setDragOverFiles] = useState(false);
+  const dragDepth = useRef(0);
   /** 邀请链接管理面板：目标房间 */
   const [invitePanelRoom, setInvitePanelRoom] = useState<api.Room | null>(null);
   /** deep link 邀请：待预览确认的邀请码（gametalk://join?code=xxx） */
@@ -1152,10 +1169,14 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const dmMessagesList = activeDmPeerId ? (dmMessages[activeDmPeerId] ?? []) : [];
   const messages = activeDm ? dmMessagesList : activeRoomId ? (messagesByRoom[activeRoomId] ?? []) : [];
   const members = activeRoomId ? (membersByRoom[activeRoomId] ?? []) : [];
-  // 花名册排序：房主 → 自己 → 其余成员 A-Z（在线/离线不影响顺序，状态点表达）
-  const memberRank = (id: string) => (id === activeRoom?.ownerId ? 0 : id === me?.id ? 1 : 2);
+  // 花名册排序：房主 → 自己 → 在线 A-Z → 离线 A-Z（状态点表达在线，离线沉底不插队）
+  const memberRank = (m: RoomMember) => {
+    if (m.id === activeRoom?.ownerId) return 0;
+    if (m.id === me?.id) return 1;
+    return m.online ? 2 : 3;
+  };
   const roster = [...members].sort(
-    (a, b) => memberRank(a.id) - memberRank(b.id) || a.username.localeCompare(b.username, 'zh-Hans-CN'),
+    (a, b) => memberRank(a) - memberRank(b) || a.username.localeCompare(b.username, 'zh-Hans-CN'),
   );
   const onlineCount = members.filter((m) => m.online).length;
   const activeSubscribed = !!activeRoomId && subscribedRoomIds.includes(activeRoomId);
@@ -1236,24 +1257,27 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           kind: replyTo.kind === 'image' || replyTo.kind === 'sticker' ? replyTo.kind : 'text',
         }
       : undefined;
-    let first = true;
     const send = (text: string, opts: Parameters<typeof sendMessage>[1]) => {
       if (activeDm) sendDm(text, opts);
       else if (activeRoom) sendMessage(text, opts);
     };
-    for (const url of pendingImages) {
-      send('', { mediaUrl: url, replyTo: first ? replyTo?.id : undefined, reply: first ? replyObj : undefined });
-      first = false;
-    }
-    if (draft.trim()) {
-      // 只保留文本中确实还带着 @昵称 的提及（用户可能删掉了部分）
-      const picks = [...pickedMentions.current.entries()]
-        .filter(([, name]) => draft.includes(`@${name}`))
-        .map(([id]) => id);
+    // 只保留文本中确实还带着 @昵称 的提及（用户可能删掉了部分）
+    const picks = [...pickedMentions.current.entries()]
+      .filter(([, name]) => draft.includes(`@${name}`))
+      .map(([id]) => id);
+    if (pendingImages.length) {
+      // 多图合并为一条消息（可带文字；服务端落 media_urls，旧客户端渲染首图）
+      send(draft.trim(), {
+        mediaUrls: pendingImages,
+        mentions: activeDm ? undefined : picks,
+        replyTo: replyTo?.id,
+        reply: replyObj,
+      });
+    } else if (draft.trim()) {
       send(draft.trim(), {
         mentions: activeDm ? undefined : picks,
-        replyTo: first ? replyTo?.id : undefined,
-        reply: first ? replyObj : undefined,
+        replyTo: replyTo?.id,
+        reply: replyObj,
       });
     }
     pickedMentions.current.clear();
@@ -1294,10 +1318,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   };
 
   const openLightbox = (url: string) => {
-    // 以当前会话的全部图片作为翻页列表
-    const list = messages
-      .filter((m) => !m.recalled && m.mediaUrl && (m.kind === 'image' || m.kind === 'sticker'))
-      .map((m) => absUrl(m.mediaUrl!));
+    // 以当前会话的全部图片作为翻页列表（多图消息展开为逐张）
+    const list = [
+      ...new Set(
+        messages
+          .filter((m) => !m.recalled && (m.kind === 'image' || m.kind === 'sticker'))
+          .flatMap((m) => [m.mediaUrl, ...(m.mediaUrls ?? [])].filter((u): u is string => Boolean(u)))
+          .map((u) => absUrl(u)),
+      ),
+    ];
     setLightbox({ list: list.length ? list : [url], idx: list.length ? Math.max(0, list.indexOf(url)) : 0 });
     setLightboxZoom(1);
     setLightboxOffset({ x: 0, y: 0 });
@@ -2061,12 +2090,24 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
 
       <main
         className="main"
+        onDragEnter={(e) => {
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragOverFiles(true);
+        }}
         onDragOver={(e) => {
           e.preventDefault();
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragOverFiles(false);
         }}
         onDrop={(e) => {
           // 拖拽图片进聊天区：走附件上传流程（可多张，与选图/粘贴同路）
           e.preventDefault();
+          dragDepth.current = 0;
+          setDragOverFiles(false);
           const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith('image/'));
           if (!files.length) return;
           void (async () => {
@@ -2074,6 +2115,11 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           })();
         }}
       >
+        {dragOverFiles && (
+          <div className="drop-hint">
+            <span>松开鼠标，把图片加入待发送</span>
+          </div>
+        )}
         {!offline && sideTab === 'friends' ? (
           selectedFriend ? (
             <FriendProfilePane
@@ -2180,7 +2226,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <>
             {screenShare.selfSharing && (
               <div className="screen-banner sharing">
-                <span>🖥 你正在本房间共享屏幕</span>
+                <span>🖥 你正在本房间共享屏幕{screenShare.selfSharingAudio ? '（含系统声音）' : ''}</span>
                 <button className="btn ghost small" onClick={stopScreenShare}>
                   停止共享
                 </button>
@@ -2361,7 +2407,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                         <span className="message-quote-text">{m.reply.kind === 'sticker' ? '[表情]' : m.reply.kind === 'image' ? '[图片]' : m.reply.text}</span>
                       </div>
                     )}
-                    {(m.kind === 'image' || m.kind === 'sticker') && m.mediaUrl && (
+                    {(m.kind === 'image' || m.kind === 'sticker') && m.mediaUrl && (m.mediaUrls?.length ?? 0) <= 1 && (
                       <img
                         className={m.kind === 'sticker' ? 'msg-sticker' : 'msg-image'}
                         src={absUrl(m.mediaUrl)}
@@ -2371,6 +2417,21 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                           if (m.mediaUrl) openLightbox(absUrl(m.mediaUrl));
                         }}
                       />
+                    )}
+                    {(m.mediaUrls?.length ?? 0) > 1 && (
+                      <div className="msg-image-grid">
+                        {m.mediaUrls!.map((u, i) => (
+                          <img
+                            key={`${u}-${i}`}
+                            className="msg-image"
+                            src={absUrl(u)}
+                            alt={`图片 ${i + 1}`}
+                            loading="lazy"
+                            onClick={() => openLightbox(absUrl(u))}
+                            onDragStart={(e) => e.preventDefault()}
+                          />
+                        ))}
+                      </div>
                     )}
                     {m.text && <div className="message-text">{renderMentions(m.text, m.mentions)}</div>}
                   </div>
@@ -2631,7 +2692,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               disabled={offline || !connected}
               onClick={() => {
                 if (screenShare.selfSharing && screenShare.roomId === activeRoomId) stopScreenShare();
-                else void startScreenShare();
+                else {
+                  setShareAudio(false);
+                  setShowShareModal(true);
+                }
               }}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -3246,6 +3310,32 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         </div>
       )}
 
+      {showShareModal && (
+        <div className="modal-mask" onClick={() => setShowShareModal(false)}>
+          <div className="modal share-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>共享屏幕</h3>
+            <p className="share-hint">点「开始共享」后在系统选择器里选择要共享的全屏或窗口。</p>
+            <label className="share-audio-row">
+              <input type="checkbox" checked={shareAudio} onChange={(e) => setShareAudio(e.target.checked)} />
+              <span>同时共享系统声音——对方能听到你电脑播放的声音（Windows 10+，系统选择器里也可再勾选）。共享期间本应用的提示音会自动静音。</span>
+            </label>
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={() => setShowShareModal(false)}>
+                取消
+              </button>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  setShowShareModal(false);
+                  void startScreenShare(shareAudio);
+                }}
+              >
+                开始共享
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {forwardPicker && (
         <ForwardPickerModal msg={forwardPicker.msg} source={forwardPicker.source} onClose={() => setForwardPicker(null)} />
       )}

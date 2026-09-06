@@ -665,4 +665,59 @@ describe('realtime + persistence', () => {
     wsOwner.close();
     wsMember.close();
   });
+
+  it('multi-image message: mediaUrls ride broadcast + history, validation caps and rejects', async () => {
+    const owner = await registerUser('multi_owner');
+    const { room } = (
+      await app.inject({ method: 'POST', url: '/api/rooms', headers: auth(owner.token), payload: { name: 'MultiImg' } })
+    ).json();
+    const png =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const up = async () =>
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/media',
+          headers: { ...auth(owner.token), 'content-type': 'application/json' },
+          payload: { dataUrl: png },
+        })
+      ).json().url as string;
+    const url1 = await up();
+    const url2 = await up();
+
+    const ws = await connectWs(owner.token);
+    ws.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    await nextMessage(ws, (m) => m.type === 'room:joined');
+
+    // 2 图一条消息：广播带 mediaUrls（绝对 URL，2 项）且 mediaUrl = 首图
+    const got = nextMessage(ws, (m) => m.type === 'message:new');
+    ws.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '两图', mediaUrls: [url1, url2] } }));
+    const msg = await got;
+    expect(msg.payload.message.kind).toBe('image');
+    expect(msg.payload.message.mediaUrls).toHaveLength(2);
+    expect(msg.payload.message.mediaUrl).toBe(msg.payload.message.mediaUrls[0]);
+    expect(msg.payload.message.mediaUrls[0]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/media\/[0-9a-f-]{36}$/);
+
+    // 历史同样携带 mediaUrls
+    const hist = await app.inject({ method: 'GET', url: `/api/rooms/${room.id}/messages`, headers: auth(owner.token) });
+    const found = hist.json().messages.find((m: any) => m.kind === 'image');
+    expect(found.mediaUrls).toHaveLength(2);
+
+    // >9 张拒绝
+    const many = Array.from({ length: 10 }, () => url1);
+    const errMany = nextMessage(ws, (m) => m.type === 'error');
+    ws.send(JSON.stringify({ type: 'message:send', payload: { roomId: room.id, text: '', mediaUrls: many } }));
+    expect((await errMany).payload.code).toBe('invalid_input');
+
+    // 列表里的伪造 URL 拒绝
+    const errBad = nextMessage(ws, (m) => m.type === 'error');
+    ws.send(
+      JSON.stringify({
+        type: 'message:send',
+        payload: { roomId: room.id, text: '', mediaUrls: [url1, `/api/media/${'0'.repeat(8)}-0000-4000-8000-000000000000`] },
+      }),
+    );
+    expect((await errBad).payload.code).toBe('invalid_input');
+    ws.close();
+  });
 });

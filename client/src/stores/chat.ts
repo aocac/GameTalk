@@ -33,6 +33,8 @@ async function sendWindowsNotify(title: string, body: string, target: NotifyTarg
 export interface SendOptions {
   mentions?: string[];
   mediaUrl?: string;
+  /** 多图：一条消息携带多张（服务端落 media_urls，首图写 media_url 兼容旧端） */
+  mediaUrls?: string[];
   replyTo?: string;
   reply?: ChatMessage['reply'];
   /** 表情消息标记：随媒体发送时置 kind='sticker'（渲染更小、不包气泡） */
@@ -51,6 +53,7 @@ function dmToRoomMessage(m: DmMessage): api.RoomMessage {
     createdAt: m.createdAt,
     kind: m.kind,
     mediaUrl: m.mediaUrl ?? null,
+    mediaUrls: m.mediaUrls,
     reply: m.reply,
     recalled: m.recalled,
     editedAt: m.editedAt,
@@ -142,11 +145,13 @@ interface ChatState {
     roomId: string | null;
     /** 我是否正在共享本房间屏幕 */
     selfSharing: boolean;
+    /** 我共享的流是否包含音频（共享期间抑制本地提示音，避免回流进共享流） */
+    selfSharingAudio: boolean;
     /** 其他人的共享：sharerId -> { 名称, 是否已加入观看, 远端流, ICE 连接状态, 是否在独立窗口观看 } */
     shares: Record<string, { name: string; watching: boolean; remoteStream: MediaStream | null; ice?: string; external?: boolean }>;
   };
   /** 开始共享当前房间的屏幕（WebRTC P2P） */
-  startScreenShare: () => Promise<void>;
+  startScreenShare: (withAudio: boolean) => Promise<void>;
   /** 停止屏幕共享 */
   stopScreenShare: () => void;
   /** 主动加入观看指定用户的共享（先取自建 TURN 凭据再建接收连接） */
@@ -179,6 +184,13 @@ async function ensureTurnIceServers(): Promise<api.TurnIceServer[]> {
   } catch {
     return turnIceCache?.iceServers ?? [];
   }
+}
+
+/** 提示音是否应当响起：设置开关 + 自己正在共享音频时不响（提示音会回流进共享的系统声音） */
+function soundsOn(): boolean {
+  if (!useSettings.getState().soundEnabled) return false;
+  const ss = useChat.getState().screenShare;
+  return !(ss.selfSharing && ss.selfSharingAudio);
 }
 
 function startSubWatchdog(): void {
@@ -310,8 +322,9 @@ function appendOptimistic(roomId: string, text: string, opts?: SendOptions): voi
           text,
           createdAt: new Date().toISOString(),
           mentions: mentionRefs,
-          kind: opts?.sticker ? 'sticker' : opts?.mediaUrl ? 'image' : 'text',
-          mediaUrl: opts?.mediaUrl ?? null,
+          kind: opts?.sticker ? 'sticker' : opts?.mediaUrl || opts?.mediaUrls?.length ? 'image' : 'text',
+          mediaUrl: opts?.mediaUrl ?? opts?.mediaUrls?.[0] ?? null,
+          mediaUrls: opts?.mediaUrls,
           reply: opts?.reply,
           pending: true,
         },
@@ -322,8 +335,8 @@ function appendOptimistic(roomId: string, text: string, opts?: SendOptions): voi
 
 /** 真正发送（不负责乐观上屏，由调用方决定） */
 function doSend(roomId: string, text: string, opts?: SendOptions): void {
-  const ok = socket?.send({ type: 'message:send', payload: { roomId, text, mentions: opts?.mentions, mediaUrl: opts?.mediaUrl, replyTo: opts?.replyTo, kind: opts?.sticker ? 'sticker' : undefined } });
-  if (ok) playSendSound(useSettings.getState().soundEnabled);
+  const ok = socket?.send({ type: 'message:send', payload: { roomId, text, mentions: opts?.mentions, mediaUrl: opts?.mediaUrl, mediaUrls: opts?.mediaUrls, replyTo: opts?.replyTo, kind: opts?.sticker ? 'sticker' : undefined } });
+  if (ok) playSendSound(soundsOn());
 }
 
 /** DM 乐观上屏：结构与房间乐观消息一致（userId=自己），服务器确认后按 tempId 校正 */
@@ -345,8 +358,9 @@ function appendPendingDm(peerId: string, text: string, opts?: SendOptions): void
           avatarUrl: me.avatarUrl ?? null,
           text,
           createdAt: new Date().toISOString(),
-          kind: opts?.sticker ? 'sticker' : opts?.mediaUrl ? 'image' : 'text',
-          mediaUrl: opts?.mediaUrl ?? null,
+          kind: opts?.sticker ? 'sticker' : opts?.mediaUrl || opts?.mediaUrls?.length ? 'image' : 'text',
+          mediaUrl: opts?.mediaUrl ?? opts?.mediaUrls?.[0] ?? null,
+          mediaUrls: opts?.mediaUrls,
           reply: opts?.reply,
           pending: true,
         },
@@ -379,7 +393,7 @@ export const useChat = create<ChatState>()((set, get) => ({
   dmPreviews: {},
   activeDmPeerId: null,
   pendingNotifyTarget: null,
-  screenShare: { roomId: null, selfSharing: false, shares: {} },
+  screenShare: { roomId: null, selfSharing: false, selfSharingAudio: false, shares: {} },
 
   connect: () => {
     // 幂等：已在连接/已连接则不重复建连（React StrictMode 双挂载安全）
@@ -576,7 +590,7 @@ export const useChat = create<ChatState>()((set, get) => ({
                 },
               }));
             }
-            playMessageSound(useSettings.getState().soundEnabled);
+            playMessageSound(soundsOn());
             // Windows 系统通知：按设置档位（仅@我 / 全部；当前正打开的房间不弹，消息就在眼前）
             const level = useSettings.getState().notifyLevel;
             if (active !== msg.payload.roomId && (level === 'all' || (level === 'mention' && mentionedMe))) {
@@ -692,7 +706,7 @@ export const useChat = create<ChatState>()((set, get) => ({
             if (get().activeDmPeerId !== peerId) {
               set((s) => ({ dmUnread: { ...s.dmUnread, [peerId]: (s.dmUnread[peerId] ?? 0) + 1 } }));
             }
-            playMessageSound(useSettings.getState().soundEnabled);
+            playMessageSound(soundsOn());
             // Windows 系统通知：私聊 = 点对点定向，「仅@」档同样弹出（正打开的会话不弹）
             const level = useSettings.getState().notifyLevel;
             if (get().activeDmPeerId !== peerId && level !== 'none') {
@@ -773,6 +787,7 @@ export const useChat = create<ChatState>()((set, get) => ({
               screenShare: {
                 roomId: s.screenShare.roomId ?? roomId,
                 selfSharing: s.screenShare.selfSharing,
+                selfSharingAudio: s.screenShare.selfSharingAudio,
                 shares: { ...s.screenShare.shares, [userId]: { name: username ?? '某人', watching: false, remoteStream: null } },
               },
             }));
@@ -785,13 +800,13 @@ export const useChat = create<ChatState>()((set, get) => ({
           if (!userId || userId === state.me?.id) {
             // 无 userId（旧服务端）或自己停止：整体清理
             set((s) => ({ screenShare: { ...s.screenShare, selfSharing: false } }));
-            if (!userId) set({ screenShare: { roomId: null, selfSharing: false, shares: {} } });
+            if (!userId) set({ screenShare: { roomId: null, selfSharing: false, selfSharingAudio: false, shares: {} } });
           } else {
             screenShareManager?.stopWatching(userId);
             const next = { ...cur.shares };
             delete next[userId];
             const empty = Object.keys(next).length === 0;
-            set({ screenShare: { roomId: empty && !cur.selfSharing ? null : cur.roomId, selfSharing: cur.selfSharing, shares: next } });
+            set({ screenShare: { roomId: empty && !cur.selfSharing ? null : cur.roomId, selfSharing: cur.selfSharing, selfSharingAudio: cur.selfSharingAudio, shares: next } });
           }
           break;
         }
@@ -929,7 +944,7 @@ export const useChat = create<ChatState>()((set, get) => ({
       dmPreviews: {},
       activeDmPeerId: null,
       pendingNotifyTarget: null,
-      screenShare: { roomId: null, selfSharing: false, shares: {} },
+      screenShare: { roomId: null, selfSharing: false, selfSharingAudio: false, shares: {} },
       roomError: null,
       connectionError: null,
     });
@@ -1275,9 +1290,9 @@ export const useChat = create<ChatState>()((set, get) => ({
       set({ roomError: '连接未就绪，无法发送私聊消息' });
       return;
     }
-    const ok = socket.send({ type: 'dm:send', payload: { to: peerId, text: trimmed, mediaUrl: opts?.mediaUrl, replyTo: opts?.replyTo, kind: opts?.sticker ? 'sticker' : undefined } });
+    const ok = socket.send({ type: 'dm:send', payload: { to: peerId, text: trimmed, mediaUrl: opts?.mediaUrl, mediaUrls: opts?.mediaUrls, replyTo: opts?.replyTo, kind: opts?.sticker ? 'sticker' : undefined } });
     if (ok) {
-      playSendSound(useSettings.getState().soundEnabled);
+      playSendSound(soundsOn());
       appendPendingDm(peerId, trimmed, opts);
     }
   },
@@ -1329,7 +1344,7 @@ export const useChat = create<ChatState>()((set, get) => ({
     if (!ok) set({ roomError: '连接未就绪，无法操作' });
   },
 
-  startScreenShare: async () => {
+  startScreenShare: async (withAudio) => {
     const { status, activeRoomId, me } = get();
     if (status !== 'open' || !socket || !activeRoomId || !me) {
       set({ roomError: '连接未就绪或不在房间中' });
@@ -1349,10 +1364,10 @@ export const useChat = create<ChatState>()((set, get) => ({
       });
     });
     try {
-      await mgr.start(roomId, (to, rid, data) => sock.send({ type: 'screen:signal', payload: { roomId: rid, to, data } }), () => {
+      await mgr.start(roomId, withAudio, (to, rid, data) => sock.send({ type: 'screen:signal', payload: { roomId: rid, to, data } }), () => {
         // 本地轨道结束（浏览器原生「停止共享」按钮）：通知服务端并清 selfSharing
         sock.send({ type: 'screen:stop', payload: { roomId } });
-        set((s) => ({ screenShare: { ...s.screenShare, selfSharing: false } }));
+        set((s) => ({ screenShare: { ...s.screenShare, selfSharing: false, selfSharingAudio: false } }));
       });
     } catch (e) {
       set({ roomError: e instanceof Error ? e.message : '无法开始屏幕共享' });
@@ -1360,13 +1375,20 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
     if (!mgr.isSharing) return; // 用户在系统选择器取消：静默
     sock.send({ type: 'screen:start', payload: { roomId } });
-    set((s) => ({ screenShare: { roomId: s.screenShare.roomId ?? roomId, selfSharing: true, shares: s.screenShare.shares } }));
+    set((s) => ({
+      screenShare: {
+        roomId: s.screenShare.roomId ?? roomId,
+        selfSharing: true,
+        selfSharingAudio: mgr.hasAudio,
+        shares: s.screenShare.shares,
+      },
+    }));
   },
 
   stopScreenShare: () => {
     // stopLocal 内部经 onSelfStop 发 screen:stop 并清 selfSharing
     if (screenShareManager) screenShareManager.stopLocal();
-    else set((s) => ({ screenShare: { ...s.screenShare, selfSharing: false } }));
+    else set((s) => ({ screenShare: { ...s.screenShare, selfSharing: false, selfSharingAudio: false } }));
   },
 
   handleScreenSignal: async (from, roomId, data) => {

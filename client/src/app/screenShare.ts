@@ -84,6 +84,8 @@ export class ScreenShareManager {
   private onIceState: ((peerId: string, state: string) => void) | null = null;
   /** 服务端 /api/turn 签发的自建 coturn 凭据（首选 TURN；OpenRelay 兜底在其后） */
   private extraIceServers: RTCIceServer[] = [];
+  /** 本次共享是否包含音频 */
+  private selfAudio = false;
 
   get isSharing(): boolean {
     return this.localStream !== null;
@@ -105,8 +107,10 @@ export class ScreenShareManager {
     this.extraIceServers = list;
   }
 
-  /** 发起共享：仅取屏幕流。用户取消选择器时静默返回（isSharing 保持 false）。 */
-  async start(roomId: string, signalSender: SignalSender, onSelfStop: () => void): Promise<void> {
+  /** 发起共享：仅取屏幕流。withAudio=true 时请求系统声音（WebView2 选择器内可勾选「共享系统声音」，Windows 10+）。
+   *  用户取消选择器时静默返回（isSharing 保持 false）。
+   *  预留：单独共享某个程序的声音 Chromium/getDisplayMedia 尚未开放，待上游支持后在此接入。 */
+  async start(roomId: string, withAudio: boolean, signalSender: SignalSender, onSelfStop: () => void): Promise<void> {
     this.signalSender = signalSender;
     this.onSelfStop = onSelfStop;
     if (!navigator.mediaDevices?.getDisplayMedia) {
@@ -116,7 +120,7 @@ export class ScreenShareManager {
     try {
       this.localStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: { ideal: 30, max: 60 } },
-        audio: false,
+        audio: withAudio,
       });
     } catch (e) {
       const name = (e as DOMException)?.name ?? '';
@@ -131,8 +135,14 @@ export class ScreenShareManager {
     // 屏幕内容默认按「保分辨率」降级，带宽不足时疯狂掉帧；游戏画面改为帧率优先
     const track = this.localStream.getVideoTracks()[0];
     if (track) track.contentHint = 'motion';
+    this.selfAudio = this.localStream.getAudioTracks().length > 0;
     this.roomOfCid.set('__self__', roomId);
     this.localStream.getVideoTracks()[0]?.addEventListener('ended', () => this.stopLocal());
+  }
+
+  /** 本次共享是否包含音频（系统声音）；供主窗口抑制本地提示音（避免回流进共享流） */
+  get hasAudio(): boolean {
+    return this.selfAudio;
   }
 
   /** 我作为观看者，主动请求观看 sharerId 的共享（晚加入靠这个触发共享者重新 offer） */
@@ -190,7 +200,7 @@ export class ScreenShareManager {
         // 码率上限 + 带宽不足时允许降分辨率保帧率（屏幕默认「保分辨率」会疯狂掉帧）
         try {
           const params = sender.getParameters();
-          params.encodings = [{ ...(params.encodings?.[0] ?? {}), maxBitrate: 6_000_000 }];
+          params.encodings = [{ ...(params.encodings?.[0] ?? {}), maxBitrate: 8_000_000 }];
           (params as RTCRtpSendParameters & { degradationPreference?: string }).degradationPreference = 'balanced';
           void sender.setParameters(params);
         } catch {

@@ -19,6 +19,7 @@ interface DmRow extends QueryResultRow {
   text: string;
   kind: string;
   media_url: string | null;
+  media_urls: string[] | null;
   recalled: boolean;
   edited_at: string | null;
   created_at: string;
@@ -48,6 +49,7 @@ export interface PublicDmMessage {
   createdAt: string;
   kind: 'text' | 'image' | 'sticker';
   mediaUrl: string | null;
+  mediaUrls?: string[];
   reply?: ReplyRef;
   recalled: boolean;
   editedAt?: string;
@@ -65,6 +67,7 @@ function toPublicDm(base: string, m: DmRow): PublicDmMessage {
     createdAt: m.created_at,
     kind: (m.kind === 'image' || m.kind === 'sticker' ? m.kind : 'text') as 'text' | 'image' | 'sticker',
     mediaUrl: m.media_url ? `${base}${m.media_url}` : null,
+    mediaUrls: m.media_urls?.length ? m.media_urls.map((u) => `${base}${u}`) : undefined,
     recalled: m.recalled ?? false,
     editedAt: m.edited_at ? new Date(m.edited_at).toISOString() : undefined,
     forwardedFromLabel: m.forwarded_from_label ?? null,
@@ -99,7 +102,7 @@ export function registerDmRoutes(app: FastifyInstance, deps: DmDeps): void {
     const res = await db.query<DmRow>(
       `SELECT DISTINCT ON (peer_id) *
        FROM (
-         SELECT m.id, m.sender_id, m.recipient_id, m.username, u.avatar_url, m.text, m.kind, m.media_url, m.recalled, m.edited_at, m.created_at,
+         SELECT m.id, m.sender_id, m.recipient_id, m.username, u.avatar_url, m.text, m.kind, m.media_url, m.media_urls, m.recalled, m.edited_at, m.created_at,
                 NULL::uuid AS reply_to, NULL::text AS reply_username, NULL::text AS reply_text, NULL::text AS reply_kind, NULL::boolean AS reply_recalled,
                 CASE WHEN m.sender_id = $1 THEN m.recipient_id ELSE m.sender_id END AS peer_id
          FROM dm_messages m
@@ -131,7 +134,7 @@ export function registerDmRoutes(app: FastifyInstance, deps: DmDeps): void {
 
     const res = await db.query<DmRow>(
       `SELECT * FROM (
-         SELECT m.id, m.sender_id, m.recipient_id, m.username, u.avatar_url, m.text, m.kind, m.media_url, m.recalled, m.edited_at, m.created_at,
+         SELECT m.id, m.sender_id, m.recipient_id, m.username, u.avatar_url, m.text, m.kind, m.media_url, m.media_urls, m.recalled, m.edited_at, m.created_at,
                 m.forwarded_from_label,
                 m.reply_to, r.username AS reply_username, r.text AS reply_text, r.kind AS reply_kind, r.recalled AS reply_recalled
          FROM dm_messages m
