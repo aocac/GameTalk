@@ -484,10 +484,12 @@ async function openShareWindow(roomId: string): Promise<void> {
     new WebviewWindow(label, {
       title: 'GameTalk 屏幕共享',
       url: `share.html?room=${encodeURIComponent(roomId)}`,
-      width: 440,
-      height: 300,
+      width: 1020,
+      height: 720,
+      minWidth: 900,
+      minHeight: 640,
       center: true,
-      resizable: false,
+      resizable: true,
     });
   } catch {
     void useChat.getState().startScreenShare(false);

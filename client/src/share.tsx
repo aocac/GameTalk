@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
-import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
+import { PhysicalPosition } from '@tauri-apps/api/dpi';
 import { ScreenShareManager } from './app/screenShare';
 import { getTurnCredentials } from './app/api';
 import './App.css';
@@ -72,12 +72,9 @@ function ShareWindow() {
       return;
     }
     setError(null);
-    // WebView2 的共享选择器渲染在本窗口内部：先放大窗口，选择器才有空间完整展示
-    try {
-      getCurrentWindow().setSize(new LogicalSize(1020, 720));
-    } catch {
-      /* ignore */
-    }
+    // WebView2 的共享选择器渲染在本窗口内部（按窗口尺寸布局）：
+    // 窗口创建时已是全尺寸，这里再留出布局时间，避免选择器按旧尺寸弹出被裁切
+    await new Promise((r) => setTimeout(r, 400));
     const mgr = new ScreenShareManager();
     mgrRef.current = mgr;
     let ws: WebSocket | null = null;
