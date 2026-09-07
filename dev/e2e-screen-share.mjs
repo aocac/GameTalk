@@ -1,12 +1,12 @@
 /* eslint-disable */
 // 屏幕共享 UI 自验（请求/应答多路 mesh 版）：按钮常驻可多人共享、按会话隔离(含私聊)、显式加入、连接中、userId 精确移除
-// 用法：node dev/e2e-screen-share.mjs （需本地 server 8787 + vite 5199 已启动）
+// 用法：node dev/e2e-screen-share.mjs （需本地 server 8787 + vite 1420 已启动）
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const BASE = 'http://127.0.0.1:5199';
+const BASE = 'http://127.0.0.1:1420';
 const ROOT = 'C:/Users/Root/Desktop/AIGC/GameTalk';
 const SHOT = path.join(ROOT, 'dev', 'shots');
 fs.mkdirSync(SHOT, { recursive: true });

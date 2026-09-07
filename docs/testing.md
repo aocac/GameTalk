@@ -51,7 +51,7 @@ cd client/src-tauri && cargo check
 | 27 | 屏幕共享 P2P 信令（非成员拒绝发起 / 启停广播带 userId / 定向转发带 roomId 与越权拒绝） | ✅（screen.test.ts，服务端信令） | ✅ 跨网络真机验收通过（P2P + 自建 TURN 中继兜底；观看为独立系统窗口） |
 | 28 | TURN 中继凭据端点（鉴权 / 凭据绑定用户 / HMAC 数学 / 未配置返回空） | ✅（turn.test.ts，3 例） | ✅ 真机跨网走 VPS 自建 coturn（TCP 中继，UDP 被安全组拦） |
 
-当前实测：server 69 测试（10 文件）+ client 17 测试（6 集成 + 11 单测）全绿（含邀请链接 / 消息转发 / 屏幕共享信令 / TURN 凭据端点）；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
+当前实测：server 72 测试（10 文件）+ client 17 测试全绿（含晚加入屏幕共享快照、多共享收敛、邀请链接 / 消息转发 / 屏幕共享信令 / TURN 凭据端点）；lint 双工作区通过；生产模式冒烟（health/register/login）通过。
 
 ## 3. 真机验收清单
 

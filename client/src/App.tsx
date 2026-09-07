@@ -2256,7 +2256,7 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <>
             {screenShare.selfSharing && (
               <div className="screen-banner sharing">
-                <span>🖥 你正在本房间共享屏幕{screenShare.selfSharingAudio ? '（含系统声音）' : ''}</span>
+                <span>🖥 你正在本房间共享屏幕{screenShare.selfSharingAudio ? '（含共享音频）' : ''}</span>
                 <button className="btn ghost small" onClick={stopScreenShare}>
                   停止共享
                 </button>

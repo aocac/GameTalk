@@ -471,13 +471,36 @@ export const useChat = create<ChatState>()((set, get) => ({
             });
           break;
         }
-        case 'room:joined':
-          set((s) => ({
-            subscribedRoomIds: s.subscribedRoomIds.includes(msg.payload.roomId)
-              ? s.subscribedRoomIds
-              : [...s.subscribedRoomIds, msg.payload.roomId],
-            membersByRoom: { ...s.membersByRoom, [msg.payload.roomId]: msg.payload.members },
-          }));
+        case 'room:joined': {
+          const roomId = msg.payload.roomId;
+          const snapshot = msg.payload.screenShares;
+          set((s) => {
+            if (roomId !== s.activeRoomId || snapshot === undefined) {
+              return {
+                subscribedRoomIds: s.subscribedRoomIds.includes(roomId) ? s.subscribedRoomIds : [...s.subscribedRoomIds, roomId],
+                membersByRoom: { ...s.membersByRoom, [roomId]: msg.payload.members },
+              };
+            }
+            const byId = new Map(snapshot.map((share) => [share.userId, share]));
+            const current = s.screenShare.shares;
+            const shares = Object.fromEntries(
+              snapshot
+                .filter((share) => share.userId !== s.me?.id)
+                .map((share) => [
+                  share.userId,
+                  current[share.userId] ?? { name: share.username, watching: false, remoteStream: null },
+                ]),
+            );
+            for (const [userId, share] of Object.entries(current)) {
+              if (!byId.has(userId) && share.watching) screenShareManager?.stopWatching(userId);
+            }
+            const self = snapshot.some((share) => share.userId === s.me?.id);
+            return {
+              subscribedRoomIds: s.subscribedRoomIds.includes(roomId) ? s.subscribedRoomIds : [...s.subscribedRoomIds, roomId],
+              membersByRoom: { ...s.membersByRoom, [roomId]: msg.payload.members },
+              screenShare: { roomId, selfSharing: self, selfSharingAudio: self ? s.screenShare.selfSharingAudio : false, shares },
+            };
+          });
           // 订阅就绪：把排队的该房间消息按序发出（自动选房/订阅未就绪时排队的）
           {
             const ready = queuedSends.filter((q) => q.roomId === msg.payload.roomId);
@@ -487,6 +510,7 @@ export const useChat = create<ChatState>()((set, get) => ({
             }
           }
           break;
+        }
         case 'member:joined':
           set((s) => {
             const members = s.membersByRoom[msg.payload.roomId];
@@ -773,6 +797,7 @@ export const useChat = create<ChatState>()((set, get) => ({
         }
         case 'screen:started': {
           const { roomId, userId, username } = msg.payload;
+          if (roomId !== get().activeRoomId) break;
           if (userId === state.me?.id) {
             // 自己发起共享的回声：标记 selfSharing（不加入 shares）
             set((s) => ({ screenShare: { ...s.screenShare, roomId, selfSharing: true } }));
@@ -789,6 +814,7 @@ export const useChat = create<ChatState>()((set, get) => ({
           break;
         }
         case 'screen:stopped': {
+          if (msg.payload.roomId !== get().activeRoomId && msg.payload.roomId !== get().screenShare.roomId) break;
           const userId = msg.payload.userId as string | undefined;
           const cur = get().screenShare;
           if (!userId || userId === state.me?.id) {

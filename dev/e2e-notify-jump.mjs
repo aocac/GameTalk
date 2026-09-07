@@ -5,7 +5,7 @@
 import puppeteer from 'puppeteer-core';
 
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const BASE = 'http://127.0.0.1:5199';
+const BASE = 'http://127.0.0.1:1420';
 const stamp = Date.now();
 const UA = `nj_a_${stamp}`;
 const UB = `nj_b_${stamp}`;
