@@ -13,6 +13,12 @@ export interface RoomMember extends UserBrief {
   mutedUntil?: string | null;
 }
 
+/** 房间当前正在共享屏幕的成员（room:joined 快照） */
+export interface ActiveScreenShare {
+  userId: string;
+  username: string;
+}
+
 /** 好友/申请条目里的公开资料 */
 export interface FriendProfile extends UserBrief {
   bio?: string | null;
@@ -107,7 +113,7 @@ export type ClientWsMessage =
 // 服务端 -> 客户端
 export type ServerWsMessage =
   | { type: 'hello:ok'; payload: { me: UserBrief } }
-  | { type: 'room:joined'; payload: { roomId: string; members: RoomMember[] } }
+  | { type: 'room:joined'; payload: { roomId: string; members: RoomMember[]; screenShares?: ActiveScreenShare[] } }
   | { type: 'member:joined'; payload: { roomId: string; member: UserBrief } }
   | { type: 'member:left'; payload: { roomId: string; userId: string; username: string } }
   | { type: 'member:kicked'; payload: { roomId: string; userId: string; username: string } }

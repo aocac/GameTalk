@@ -138,6 +138,10 @@ interface UserRow extends QueryResultRow {
 /** roomId -> userId -> { username, avatarUrl, sockets }（同一用户可能多端连接） */
 const rooms = new Map<string, Map<string, { username: string; avatarUrl: string | null; sockets: Set<WebSocket> }>>();
 
+/** roomId -> userId -> 当前共享登记；ownerSocket 用于区分同一用户的多个 WS 连接 */
+type ActiveScreenShare = { username: string; ownerSocket: WebSocket };
+const activeScreenShares = new Map<string, Map<string, ActiveScreenShare>>();
+
 /** 全部存活连接（心跳巡检 / 踢人清理用；close 事件负责移除） */
 const connections = new Set<Conn>();
 
@@ -235,6 +239,32 @@ async function roomRosterOf(db: Db, roomId: string, httpBase: string): Promise<R
   }));
 }
 
+function activeScreenSharesFor(roomId: string): Array<{ userId: string; username: string }> {
+  return [...(activeScreenShares.get(roomId)?.entries() ?? [])].map(([userId, share]) => ({
+    userId,
+    username: share.username,
+  }));
+}
+
+/** 清理一条活跃共享；指定 ownerSocket 时只允许共享发起连接清理。 */
+function removeActiveScreenShare(roomId: string, userId: string, ownerSocket?: WebSocket, notify = true): boolean {
+  const shares = activeScreenShares.get(roomId);
+  const share = shares?.get(userId);
+  if (!share || (ownerSocket && share.ownerSocket !== ownerSocket)) return false;
+  shares!.delete(userId);
+  if (shares!.size === 0) activeScreenShares.delete(roomId);
+  if (notify) broadcastToRoom(roomId, { type: 'screen:stopped', payload: { roomId, userId } });
+  return true;
+}
+
+function removeActiveSharesOwnedBySocket(roomId: string, socket: WebSocket): void {
+  const shares = activeScreenShares.get(roomId);
+  if (!shares) return;
+  for (const [userId, share] of [...shares]) {
+    if (share.ownerSocket === socket) removeActiveScreenShare(roomId, userId, socket);
+  }
+}
+
 async function joinRoom(conn: Conn, roomId: string, db: Db, avatarUrl?: string | null): Promise<void> {
   if (!conn.userId) return;
   // 幂等：重复加入也总是回复 room:joined —— 否则客户端重试加入会被静默吞掉，
@@ -253,9 +283,10 @@ async function joinRoom(conn: Conn, roomId: string, db: Db, avatarUrl?: string |
     members.set(conn.userId, entry);
   }
   entry.sockets.add(conn.socket);
-  // 回执携带完整花名册（含离线成员与在线标记），客户端据此渲染 QQ 式成员列表
+  // 回执携带完整花名册（含离线成员与在线标记）和当前活跃共享快照
+  // 快照在 roster 查询后读取，避免与并发 screen:start 使用过期状态
   const roster = await roomRosterOf(db, roomId, conn.httpBase);
-  send(conn.socket, { type: 'room:joined', payload: { roomId, members: roster } });
+  send(conn.socket, { type: 'room:joined', payload: { roomId, members: roster, screenShares: activeScreenSharesFor(roomId) } });
   if (isNewMember) {
     broadcastToRoom(
       roomId,
@@ -267,6 +298,9 @@ async function joinRoom(conn: Conn, roomId: string, db: Db, avatarUrl?: string |
 
 function leaveRoom(conn: Conn, roomId: string): void {
   if (!conn.rooms.delete(roomId)) return;
+  // 即使成员表已先被房间删除清空，也要释放共享 registry，避免后续快照残留。
+  // 只有实际发起共享的 socket 离开才清理；同一用户的主窗/其它连接离开不影响共享。
+  removeActiveSharesOwnedBySocket(roomId, conn.socket);
   const members = rooms.get(roomId);
   if (!members) return;
   const entry = members.get(conn.userId ?? '');
@@ -450,7 +484,11 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         return;
       }
       await db.query('DELETE FROM rooms WHERE id = $1', [roomId]); // messages/room_members 级联删除
-      // 通知所有在线成员（含房主自己），并清理内存订阅
+      // 先通知观看者释放各路 P2P，再通知房间已删除并清理内存订阅
+      for (const userId of [...(activeScreenShares.get(roomId)?.keys() ?? [])]) {
+        removeActiveScreenShare(roomId, userId);
+      }
+      activeScreenShares.delete(roomId);
       const members = rooms.get(roomId);
       if (members) {
         const payload = { type: 'room:deleted', payload: { roomId } };
@@ -498,6 +536,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       for (const c of connections) {
         if (c.userId === targetId) c.rooms.delete(roomId);
       }
+      removeActiveScreenShare(roomId, targetId);
       const members = rooms.get(roomId);
       const entry = members?.get(targetId);
       const kickedName = entry?.username ?? '';
@@ -1184,6 +1223,12 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
         return;
       }
+      let shares = activeScreenShares.get(roomId);
+      if (!shares) {
+        shares = new Map();
+        activeScreenShares.set(roomId, shares);
+      }
+      shares.set(conn.userId, { username: conn.username, ownerSocket: conn.socket });
       broadcastToRoom(roomId, {
         type: 'screen:started',
         payload: { roomId, userId: conn.userId, username: conn.username },
@@ -1201,7 +1246,9 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
         return;
       }
-      // 带 userId，让各端精确移除该共享者的图块（多人同时共享场景）
+      // 主窗口与隐藏共享窗可能是不同 socket，显式停止按用户清理登记。
+      removeActiveScreenShare(roomId, conn.userId, undefined, false);
+      // 即使登记已因旧 socket 生命周期清理，也保留显式停止广播的兼容语义。
       broadcastToRoom(roomId, { type: 'screen:stopped', payload: { roomId, userId: conn.userId } });
       break;
     }

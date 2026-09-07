@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const BASE = 'http://127.0.0.1:5199';
+const BASE = 'http://127.0.0.1:1420';
 const ROOT = 'C:/Users/Root/Desktop/AIGC/GameTalk';
 const SHOT = path.join(ROOT, 'dev', 'shots');
 const STICKER_PNG = path.join(ROOT, 'dev', 'test-sticker.png');
@@ -58,7 +58,9 @@ async function apiCall(page, method, p, body) {
 }
 
 async function openEmoji(page) {
-  await page.evaluate(() => { [...document.querySelectorAll('.composer-icon')].pop()?.click(); });
+  await page.evaluate(() => {
+    [...document.querySelectorAll('.composer-icon')].find((b) => b.getAttribute('title') === '表情')?.click();
+  });
   await sleep(700);
 }
 async function clickEmojiTab(page, label) {
@@ -68,7 +70,7 @@ async function clickEmojiTab(page, label) {
   await sleep(500);
 }
 async function uploadSticker(page) {
-  const inputs = await page.$$('.composer input[type=file]');
+  const inputs = await page.$$('input[type=file]');
   for (const input of inputs) {
     const accept = await input.evaluate((el) => el.accept);
     if (accept === 'image/gif,image/png,image/jpeg,image/webp') { await input.uploadFile(STICKER_PNG); break; }

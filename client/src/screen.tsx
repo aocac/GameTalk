@@ -41,6 +41,7 @@ function ScreenWindow() {
   const [status, setStatus] = useState<Status>('connecting');
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [ice, setIce] = useState<string | undefined>(undefined);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const byeRef = useRef<(() => void) | null>(null);
   const statusRef = useRef<Status>('connecting');
   statusRef.current = status;
@@ -165,7 +166,35 @@ function ScreenWindow() {
     } catch {
       return undefined; // 浏览器环境无 Tauri
     }
-  }, []);
+  }, [sharer]);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !stream) return;
+    v.muted = true;
+    v.playsInline = true;
+    v.srcObject = stream;
+    void v.play().catch(() => {});
+    // 流里有音频轨时解除自动播放静音，观看端才能听到共享的系统声音；
+    // 音频轨可能晚于视频轨到达，补一个 addtrack 监听
+    const unmute = () => {
+      if (stream.getAudioTracks().length > 0) {
+        v.muted = false;
+        void v.play().catch(() => {});
+      }
+    };
+    unmute();
+    stream.addEventListener('addtrack', unmute);
+    return () => {
+      stream.removeEventListener('addtrack', unmute);
+      try {
+        v.pause();
+      } catch {
+        /* ignore */
+      }
+      v.srcObject = null;
+    };
+  }, [stream]);
 
   const failed = ice === 'failed' || ice === 'disconnected' || ice === 'closed';
   const statusText =
@@ -185,14 +214,7 @@ function ScreenWindow() {
       </div>
       <div className="screen-stage">
         <video
-          ref={(el) => {
-            if (el && stream && el.srcObject !== stream) {
-              el.muted = true;
-              el.playsInline = true;
-              el.srcObject = stream;
-              void el.play().catch(() => {});
-            }
-          }}
+          ref={videoRef}
           autoPlay
           playsInline
           muted
@@ -200,7 +222,7 @@ function ScreenWindow() {
           style={{ background: status === 'live' ? '#000' : '#101318' }}
           onClick={(e) => {
             const el = e.target as HTMLVideoElement;
-            el.muted = true;
+            if (stream && stream.getAudioTracks().length > 0) el.muted = false;
             void el.play().catch(() => {});
           }}
         />

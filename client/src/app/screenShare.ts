@@ -24,6 +24,12 @@ const STUN_SERVERS: RTCIceServer[] = [
  */
 const TURN_SECRET = 'openrelayprojectsecret';
 const TURN_HOST = 'staticauth.openrelay.metered.ca';
+
+type DisplayMediaOptionsWithAudioHints = DisplayMediaStreamOptions & {
+  systemAudio?: 'include' | 'exclude';
+  windowAudio?: 'exclude' | 'window' | 'system';
+};
+
 let cachedTurn: RTCIceServer | null = null;
 let turnPromise: Promise<void> | null = null;
 
@@ -107,9 +113,9 @@ export class ScreenShareManager {
     this.extraIceServers = list;
   }
 
-  /** 发起共享：请求屏幕 + 系统声音（audio 带 restrictOwnAudio——本应用提示音不进共享流，本地照常可响；
-   *  选择器内可关掉声音）。用户取消选择器时静默返回（isSharing 保持 false）。
-   *  预留：单独共享某个程序的声音 Chromium/getDisplayMedia 尚未开放，待上游支持后在此接入。 */
+  /** 发起共享：请求屏幕 + 系统声音；最终是否有音轨由 WebView2 原生选择器决定。
+   *  用户取消选择器时静默返回（isSharing 保持 false）。windowAudio 是 Chromium/WebView2
+   *  的提示字段，是否支持窗口源音频取决于运行时，不能替代 getAudioTracks() 实测。 */
   async start(roomId: string, signalSender: SignalSender, onSelfStop: () => void): Promise<void> {
     this.signalSender = signalSender;
     this.onSelfStop = onSelfStop;
@@ -120,10 +126,12 @@ export class ScreenShareManager {
     try {
       this.localStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: { ideal: 30, max: 60 } },
-        // restrictOwnAudio（WebView2/Chrome 123+）：共享系统声音时剔除本应用自己的提示音——
-        // 本地照常可听，但对方听不到（即「屏蔽提示音」而非「给软件静音」）
-        audio: { restrictOwnAudio: true } as MediaTrackConstraints,
-      });
+        // WebView2：audio:true 请求音频轨，systemAudio:'include' 让整屏选择提供系统音频；
+        // windowAudio:'window' 是窗口源的实验性提示，旧 runtime 会忽略它，选择器仍是最终裁决。
+        audio: true,
+        systemAudio: 'include',
+        windowAudio: 'window',
+      } as DisplayMediaOptionsWithAudioHints);
     } catch (e) {
       const name = (e as DOMException)?.name ?? '';
       if (name === 'NotAllowedError') {

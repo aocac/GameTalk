@@ -213,7 +213,7 @@ cd client && npm install && npm run tauri dev
 npm test && npm run lint && npm run typecheck
 ```
 
-测试基线：服务端 **69** 例（PGlite 内存库 + 真实 WebSocket 集成测试）、客户端 **17** 例。仓库里另有 12 个双账号浏览器回归脚本（`dev/e2e-*.mjs`），覆盖私聊、编辑、表情、通知跳转、邀请链接、屏幕共享这些核心流程。CI 每次推送跑四道门禁：服务端测试、客户端构建、Rust 编译、Docker 镜像。
+测试基线：服务端 **72** 例（PGlite 内存库 + 真实 WebSocket 集成测试）、客户端 **17** 例。仓库里另有 12 个双账号浏览器回归脚本（`dev/e2e-*.mjs`），覆盖私聊、编辑、表情、通知跳转、邀请链接、屏幕共享这些核心流程。CI 每次推送跑四道门禁：服务端测试、客户端构建、Rust 编译、Docker 镜像。
 
 数据库结构演进是 15 个纯 SQL 迁移文件（`server/migrations/`），启动时自动应用——PGlite 和生产 PostgreSQL 跑的是同一份 SQL。
 

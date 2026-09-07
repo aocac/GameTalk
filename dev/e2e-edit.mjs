@@ -4,7 +4,7 @@
 import puppeteer from 'puppeteer-core';
 
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const BASE = 'http://127.0.0.1:5199';
+const BASE = 'http://127.0.0.1:1420';
 const SHOT_DIR = 'C:/Users/Root/Desktop/AIGC/GameTalk/docs';
 const stamp = Date.now();
 const UA = `edit_a_${stamp}`;

@@ -5,7 +5,7 @@ import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const BASE = 'http://127.0.0.1:5199';
+const BASE = 'http://127.0.0.1:1420';
 const API = 'http://127.0.0.1:8787';
 const SHOT_DIR = 'C:/Users/Root/Desktop/AIGC/GameTalk/docs';
 const stamp = Date.now();

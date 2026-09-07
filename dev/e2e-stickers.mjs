@@ -33,14 +33,14 @@ async function register(page, username) {
 
 async function openEmoji(page) {
   await page.evaluate(() => {
-    [...document.querySelectorAll('.composer-icon')].pop()?.click();
+    [...document.querySelectorAll('.composer-icon')].find((b) => b.getAttribute('title') === '表情')?.click();
   });
   await sleep(700);
 }
 
 async function uploadSticker(page) {
   // 表情包 file input 的 accept 以 gif 开头且不含 webp+gif 组合顺序差异——按 accept 精确匹配
-  const inputs = await page.$$('.composer input[type=file]');
+  const inputs = await page.$$('input[type=file]');
   for (const input of inputs) {
     const accept = await input.evaluate((el) => el.accept);
     if (accept === 'image/gif,image/png,image/jpeg,image/webp') {
@@ -137,9 +137,11 @@ const run = async () => {
     const btn = await B.$('.emoji-pop .sticker-img-btn');
     if (!btn) throw new Error('sticker button not found — B 面板状态异常');
     const box = await btn.boundingBox();
-    await B.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await B.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await B.mouse.down();
+    await B.mouse.up();
   }
-  await sleep(1800);
+  await sleep(2500);
   await sleep(1300);
   const bState = await B.evaluate(() => ({
     msgs: [...document.querySelectorAll('.message.mine')].map((m) => ({
@@ -151,8 +153,9 @@ const run = async () => {
     popOpen: !!document.querySelector('.emoji-pop'),
   }));
   console.log('[B state]', JSON.stringify(bState));
-  const bMsgHasImg = await B.evaluate(() => !!document.querySelector('.message.mine .msg-image'));
-  const aSeesImg = await A.evaluate(() => !!document.querySelector('.message:not(.mine) .msg-image'));
+  console.log('[B messages]', await B.evaluate(() => ({ text: document.querySelector('.messages')?.innerText ?? '', error: document.querySelector('.banner-error')?.textContent ?? '' })));
+  const bMsgHasImg = await B.evaluate(() => !!document.querySelector('.message.mine .msg-sticker, .message.mine .msg-image'));
+  const aSeesImg = await A.evaluate(() => !!document.querySelector('.message:not(.mine) .msg-sticker, .message:not(.mine) .msg-image'));
   console.log('[B sent img]', bMsgHasImg, '| [A sees img]', aSeesImg);
 
   // A（房主）删除群表情

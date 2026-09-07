@@ -5,7 +5,7 @@ import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const BASE = 'http://127.0.0.1:5199';
+const BASE = 'http://127.0.0.1:1420';
 const API = 'http://127.0.0.1:8787';
 const SHOT_DIR = 'C:/Users/Root/Desktop/AIGC/GameTalk/dev/shots';
 const stamp = Date.now();
@@ -140,7 +140,7 @@ try {
   await sleep(1200);
 
   // A 在 R1 发消息
-  const composer = await pageA.$('input.composer-input');
+  const composer = await pageA.$('textarea.composer-input');
   if (composer) {
     await composer.type('这条消息将被转发');
     await pageA.keyboard.press('Enter');
@@ -156,6 +156,7 @@ try {
   await pageA.evaluate(() => {
     const bodies = [...document.querySelectorAll('.message-body')];
     const target = bodies.reverse().find((b) => b.textContent.includes('这条消息将被转发'));
+    if (!target) throw new Error('forward source message not rendered');
     const rect = target.getBoundingClientRect();
     target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: rect.x + 20, clientY: rect.y + 10 }));
   });
@@ -207,6 +208,7 @@ try {
   await pageB.evaluate(() => {
     const bodies = [...document.querySelectorAll('.message-body')];
     const target = bodies.reverse().find((b) => b.textContent.includes('这条消息将被转发'));
+    if (!target) throw new Error('forward source message not rendered');
     const rect = target.getBoundingClientRect();
     target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: rect.x + 20, clientY: rect.y + 10 }));
   });
