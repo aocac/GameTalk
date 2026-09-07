@@ -118,6 +118,61 @@ describe('screen share signaling', () => {
     wsO.close();
   });
 
+  it('returns active shares to late joiners and removes them from later snapshots', async () => {
+    const a = await registerUser('scr_late_a');
+    const b = await registerUser('scr_late_b');
+    const c = await registerUser('scr_late_c');
+    const room = await createRoom(a.token, '晚加入共享房');
+    await app.inject({ method: 'POST', url: '/api/rooms/join', headers: auth(b.token), payload: { inviteCode: room.inviteCode } });
+    await app.inject({ method: 'POST', url: '/api/rooms/join', headers: auth(c.token), payload: { inviteCode: room.inviteCode } });
+
+    const wsA = await connectWs(a.token);
+    const wsB = await connectWs(b.token);
+    await joinRoomWs(wsA, room.id);
+    await joinRoomWs(wsB, room.id);
+
+    const startedA = nextMessage(wsA, (m) => m.type === 'screen:started' && m.payload.userId === a.userId);
+    const startedB = nextMessage(wsB, (m) => m.type === 'screen:started' && m.payload.userId === a.userId);
+    wsA.send(JSON.stringify({ type: 'screen:start', payload: { roomId: room.id } }));
+    await Promise.all([startedA, startedB]);
+
+    const startedByBAtA = nextMessage(wsA, (m) => m.type === 'screen:started' && m.payload.userId === b.userId);
+    const startedByBAtB = nextMessage(wsB, (m) => m.type === 'screen:started' && m.payload.userId === b.userId);
+    wsB.send(JSON.stringify({ type: 'screen:start', payload: { roomId: room.id } }));
+    await Promise.all([startedByBAtA, startedByBAtB]);
+
+    const wsC = await connectWs(c.token);
+    const joinedC = nextMessage(wsC, (m) => m.type === 'room:joined' && m.payload.roomId === room.id);
+    wsC.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    const snapshot = await joinedC;
+    expect(snapshot.payload.screenShares).toEqual(
+      expect.arrayContaining([
+        { userId: a.userId, username: 'scr_late_a' },
+        { userId: b.userId, username: 'scr_late_b' },
+      ]),
+    );
+
+    const stoppedA = nextMessage(wsC, (m) => m.type === 'screen:stopped' && m.payload.userId === a.userId);
+    wsA.send(JSON.stringify({ type: 'screen:stop', payload: { roomId: room.id } }));
+    await stoppedA;
+    wsC.send(JSON.stringify({ type: 'room:leave', payload: { roomId: room.id } }));
+    const afterA = nextMessage(wsC, (m) => m.type === 'room:joined' && m.payload.roomId === room.id);
+    wsC.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    expect((await afterA).payload.screenShares).toEqual([{ userId: b.userId, username: 'scr_late_b' }]);
+
+    const stoppedB = nextMessage(wsC, (m) => m.type === 'screen:stopped' && m.payload.userId === b.userId);
+    wsB.send(JSON.stringify({ type: 'screen:stop', payload: { roomId: room.id } }));
+    await stoppedB;
+    wsC.send(JSON.stringify({ type: 'room:leave', payload: { roomId: room.id } }));
+    const afterAll = nextMessage(wsC, (m) => m.type === 'room:joined' && m.payload.roomId === room.id);
+    wsC.send(JSON.stringify({ type: 'room:join', payload: { roomId: room.id } }));
+    expect((await afterAll).payload.screenShares).toEqual([]);
+
+    wsA.close();
+    wsB.close();
+    wsC.close();
+  });
+
   it('forwards WebRTC signaling payload only to the named room member', async () => {
     const a = await registerUser('scr2_a');
     const b = await registerUser('scr2_b');
