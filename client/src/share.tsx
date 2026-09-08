@@ -8,6 +8,7 @@ import { ScreenShareManager, QUALITY_PRESETS, type ShareQuality, type ShareStats
 import { SignalSocket, wsUrlOfServerUrl } from './app/signalSocket';
 import { getTurnCredentials } from './app/api';
 import './App.css';
+import { applyStoredTheme } from './app/theme';
 
 /**
  * 屏幕共享采集窗 = 共享端全部职责所在：
@@ -274,7 +275,7 @@ function ShareWindow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 预览：控制条阶段把本地流挂到 video 上
+  // 预览：只在进入共享态时挂一次本地流（不要依赖 stats，否则每 1.5s 重挂一次会闪）
   useEffect(() => {
     const v = previewRef.current;
     const s = localStreamRef.current;
@@ -291,7 +292,7 @@ function ShareWindow() {
       }
       v.srcObject = null;
     };
-  }, [phase, stats]);
+  }, [phase]);
 
   const peer = stats?.peers[0];
   const res = peer && peer.width ? `${peer.width}×${peer.height}` : '—';
@@ -366,5 +367,7 @@ function ShareWindow() {
     </div>
   );
 }
+
+applyStoredTheme();
 
 createRoot(document.getElementById('root') as HTMLElement).render(<ShareWindow />);

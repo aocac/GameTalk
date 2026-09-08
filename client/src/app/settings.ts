@@ -2,8 +2,10 @@ import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import type { ShareQuality } from './screenShare';
+import type { ThemeSetting } from './theme';
 
 export type { ShareQuality };
+export type { ThemeSetting };
 
 export type OverlayPosition =
   | 'top-left'
@@ -49,6 +51,8 @@ export interface AppSettings {
   useProxy: boolean;
   /** 代理地址，如 127.0.0.1:7890 */
   proxyAddress: string;
+  /** 界面主题：跟随系统 / 浅色 / 深色 */
+  theme: ThemeSetting;
   /** 屏幕共享画质档位：清晰优先 / 流畅优先 / 省流量 */
   shareQuality: ShareQuality;
   /** 屏幕共享上行总预算（Mbps）：按观看人数分摊，每路有下限 */
@@ -68,6 +72,7 @@ export interface AppSettings {
   setOverlayDurationSec: (v: number) => void;
   setUseProxy: (v: boolean) => void;
   setProxyAddress: (v: string) => void;
+  setTheme: (v: ThemeSetting) => void;
   setShareQuality: (v: ShareQuality) => void;
   setShareBudgetMbps: (v: number) => void;
   setShareMuteOwnSounds: (v: boolean) => void;
@@ -122,6 +127,7 @@ export const useSettings = create<AppSettings>()(
       overlayDurationSec: 6,
       useProxy: false,
       proxyAddress: '',
+      theme: 'auto',
       shareQuality: 'balanced',
       shareBudgetMbps: 12,
       shareMuteOwnSounds: true,
@@ -138,6 +144,7 @@ export const useSettings = create<AppSettings>()(
       setOverlayDurationSec: (overlayDurationSec) => set({ overlayDurationSec: Math.min(30, Math.max(2, overlayDurationSec)) }),
       setUseProxy: (useProxy) => set({ useProxy }),
       setProxyAddress: (proxyAddress) => set({ proxyAddress: proxyAddress.trim() }),
+      setTheme: (theme) => set({ theme }),
       setShareQuality: (shareQuality) => set({ shareQuality }),
       setShareBudgetMbps: (shareBudgetMbps) => set({ shareBudgetMbps: Math.min(50, Math.max(2, shareBudgetMbps)) }),
       setShareMuteOwnSounds: (shareMuteOwnSounds) => set({ shareMuteOwnSounds }),

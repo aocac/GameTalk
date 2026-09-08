@@ -6,6 +6,7 @@ import { ScreenShareManager, type ShareStats } from './app/screenShare';
 import { SignalSocket, wsUrlOfServerUrl } from './app/signalSocket';
 import { getTurnCredentials } from './app/api';
 import './App.css';
+import { applyStoredTheme } from './app/theme';
 
 /**
  * 屏幕共享独立观看窗。
@@ -296,5 +297,7 @@ function ScreenWindow() {
     </div>
   );
 }
+
+applyStoredTheme();
 
 createRoot(document.getElementById('root') as HTMLElement).render(<ScreenWindow />);

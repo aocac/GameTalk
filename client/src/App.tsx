@@ -10,6 +10,7 @@ import type { RoomMessage } from './app/api';
 import { useAuth } from './stores/auth';
 import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
 import { setExternalMute } from './app/audio';
+import { applyTheme } from './app/theme';
 import { BUILD_ID } from './buildInfo';
 import pkg from '../package.json';
 import * as gameMode from './app/gameMode';
@@ -882,6 +883,10 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
           break;
         case 'soundVolume':
           s.setSoundVolume(Number(value));
+          break;
+        case 'theme':
+          s.setTheme(value as Parameters<typeof s.setTheme>[0]);
+          applyTheme(value as Parameters<typeof s.setTheme>[0]);
           break;
         case 'notifyLevel':
           s.setNotifyLevel(value as 'all' | 'mention' | 'none');

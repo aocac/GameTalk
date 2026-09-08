@@ -1,34 +1,92 @@
 /* ============ GameTalk 设计系统 ============
    参考现代桌面 IM（QQ NT / 微信）：克制单色、扁平、高密度、圆角方形头像 */
 :root {
-  --bg: #f2f3f7;
+  /* 表面与边框 */
+  --bg: #eef1f6;
   --surface: #ffffff;
   --surface-2: #f5f6fa;
   --surface-3: #eceef3;
-  --border: #e4e6ee;
+  --border: #e3e7ef;
   --border-strong: #d6d9e2;
+  --surface-gradient: linear-gradient(180deg, #f7f8fc 0%, #eef0f7 100%);
+  /* 文本 */
   --text: #23262f;
   --text-2: #6b7180;
   --text-3: #9ca3af;
+  /* 品牌色 */
   --accent: #3370ff;
   --accent-hover: #2b5fd9;
   --accent-soft: #e8f0fe;
   --own-bubble: #d3e3fd;
+  /* 状态色 */
   --ok: #34c77b;
+  --ok-soft: #e6f6ec;
+  --ok-strong: #1a7f37;
   --pending: #d99a2b;
   --off: #c3c8d1;
   --danger: #e5484d;
+  --danger-soft: #fdecec;
+  --danger-border: #f5c6c7;
   --unread: #fa5151;
-  /* 深色侧栏 */
-  --side-bg: #1a1d25;
+  /* 深色侧栏（两种主题下都保持深色） */
+  --side-bg: #151821;
   --side-hover: rgba(255, 255, 255, 0.05);
   --side-active: rgba(255, 255, 255, 0.09);
   --side-border: rgba(255, 255, 255, 0.06);
   --side-text: #8b93a7;
   --side-text-strong: #e8eaf2;
+  /* 阴影 */
+  --shadow-bubble: 0 1px 2px rgba(31, 41, 61, 0.07), 0 0 0 1px rgba(31, 41, 61, 0.04);
+  --shadow-bubble-own: 0 1px 2px rgba(51, 112, 255, 0.1), 0 0 0 1px rgba(51, 112, 255, 0.06);
+  --shadow-card: 0 1px 3px rgba(31, 41, 61, 0.06), 0 4px 16px rgba(31, 41, 61, 0.05);
+  --shadow-modal: 0 12px 48px rgba(18, 24, 40, 0.18), 0 2px 8px rgba(18, 24, 40, 0.08);
+  /* 形状与动效 */
+  --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 12px;
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', Roboto, sans-serif;
+}
+
+/* 深色主题：只换 token，组件规则不动 */
+[data-theme='dark'] {
+  --bg: #16181d;
+  --surface: #1e2128;
+  --surface-2: #23262e;
+  --surface-3: #2a2e37;
+  --border: #2c3039;
+  --border-strong: #3a3f4a;
+  --surface-gradient: linear-gradient(180deg, #1e2128 0%, #1a1d23 100%);
+  --text: #e6e8ee;
+  --text-2: #a2a9b8;
+  --text-3: #737a89;
+  --accent: #4d85ff;
+  --accent-hover: #6b9bff;
+  --accent-soft: #1e2b45;
+  --own-bubble: #24405f;
+  --ok: #3ecf8e;
+  --ok-soft: #1c3328;
+  --ok-strong: #4ed08a;
+  --pending: #e0a53a;
+  --off: #4a505c;
+  --danger: #ff6b70;
+  --danger-soft: #3a2224;
+  --danger-border: #5c2f33;
+  --unread: #ff5c5c;
+  --side-bg: #101217;
+  --side-hover: rgba(255, 255, 255, 0.06);
+  --side-active: rgba(255, 255, 255, 0.1);
+  --side-border: rgba(255, 255, 255, 0.07);
+  --side-text: #8f97a8;
+  --side-text-strong: #e8eaf2;
+  --shadow-bubble: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --shadow-bubble-own: 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(77, 133, 255, 0.12);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-modal: 0 12px 48px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
 }
 
 * {
@@ -933,8 +991,8 @@ body {
 }
 
 .auth-error {
-  background: #fdecec;
-  border: 1px solid #f5c6c7;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-border);
   color: var(--danger);
   border-radius: var(--radius);
   padding: 8px 12px;
@@ -1031,8 +1089,8 @@ body {
   gap: 12px;
   margin: 10px 20px 0;
   padding: 8px 14px;
-  background: #fdecec;
-  border: 1px solid #f5c6c7;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-border);
   color: var(--danger);
   border-radius: var(--radius);
   font-size: 12.5px;
@@ -1898,7 +1956,7 @@ body {
 /* 整体底色：微妙渐变增强层次 */
 .auth-wrap,
 .app {
-  background: linear-gradient(180deg, #f7f8fc 0%, #eef0f7 100%);
+  background: var(--surface-gradient);
 }
 
 /* 消息气泡：大圆角 + 非对称角 + 轻投影 */
@@ -2585,7 +2643,7 @@ body {
 }
 
 .dm-online-tag.ok {
-  color: #1a7f37;
+  color: var(--ok-strong);
   background: #e8f5ee;
 }
 
@@ -2721,16 +2779,7 @@ body {
    精细化 hover/focus/滚动条。只覆盖视觉属性，不改组件结构。
    ================================================================ */
 
-:root {
-  --bg: #eef1f6;
-  --surface: #ffffff;
-  --border: #e3e7ef;
-  --shadow-bubble: 0 1px 2px rgba(31, 41, 61, 0.07), 0 0 0 1px rgba(31, 41, 61, 0.04);
-  --shadow-bubble-own: 0 1px 2px rgba(51, 112, 255, 0.10), 0 0 0 1px rgba(51, 112, 255, 0.06);
-  --shadow-card: 0 1px 3px rgba(31, 41, 61, 0.06), 0 4px 16px rgba(31, 41, 61, 0.05);
-  --shadow-modal: 0 12px 48px rgba(18, 24, 40, 0.18), 0 2px 8px rgba(18, 24, 40, 0.08);
-  --side-bg: #151821;
-}
+/* token 已收敛到文件顶部的 :root，此处不再重复定义 */
 
 /* ---- 主区：去掉「灰底嵌白卡」，整体浅灰底，元素各自浮起 ---- */
 .main {
@@ -3196,7 +3245,7 @@ body {
 .listbar {
   width: 230px;
   min-width: 230px;
-  background: #f7f8fc;
+  background: var(--surface-2);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -3339,8 +3388,8 @@ body {
 .listbar .friends-add input::placeholder { color: var(--text-3); }
 .listbar .friends-add input:focus { border-color: var(--accent); }
 .listbar .friends-add button { border-radius: 8px; }
-.listbar .friends-notice.ok { background: #e6f6ec; color: #1a7f37; border-radius: 8px; padding: 6px 10px; }
-.listbar .friends-notice.err { background: #fdecec; color: var(--danger); border-radius: 8px; padding: 6px 10px; }
+.listbar .friends-notice.ok { background: var(--ok-soft); color: var(--ok-strong); border-radius: 8px; padding: 6px 10px; }
+.listbar .friends-notice.err { background: var(--danger-soft); color: var(--danger); border-radius: 8px; padding: 6px 10px; }
 .listbar .friends-section-title { color: var(--text-3); }
 .listbar .friend-item .member-name { color: var(--text); }
 .listbar .friend-item.offline .member-name { color: var(--text-3); }
@@ -3478,7 +3527,7 @@ body {
   flex-shrink: 0;
 }
 .danger-text {
-  color: var(--danger, #c0392b);
+  color: var(--danger);
 }
 .invite-empty {
   font-size: 12.5px;
@@ -3503,7 +3552,7 @@ body {
 }
 .invite-error {
   font-size: 13px;
-  color: var(--danger, #c0392b);
+  color: var(--danger);
   line-height: 1.6;
 }
 
@@ -3522,7 +3571,7 @@ body {
 }
 .screen-banner.sharing {
   background: #e7f6ec;
-  color: #1a7f37;
+  color: var(--ok-strong);
 }
 /* 观看窗：浮动卡片，独立于聊天流，像一个小窗（位置/尺寸由组件内联样式控制，可拖拽） */
 .screen-viewer {
@@ -3929,4 +3978,105 @@ textarea.composer-input {
   width: 76px;
   accent-color: #3370ff;
   cursor: pointer;
+}
+
+/* ===== UI 打磨 2026-09：统一动效 / 焦点 / 排版细节（全部基于 token） ===== */
+
+/* 交互元素统一过渡：不再各写各的时长与曲线 */
+.btn,
+.composer-icon,
+.rail-item,
+.room-item,
+.friend-item,
+.member-item,
+.chip,
+.ctx-item,
+.icon-btn,
+.screen-tool,
+.share-chip {
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.btn:active,
+.composer-icon:active,
+.rail-item:active,
+.chip:active {
+  transform: scale(0.97);
+}
+
+/* 键盘可达性：统一焦点环（鼠标点击不显示） */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* 新消息入场：轻微上浮淡入，不弹跳 */
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.message {
+  animation: msg-in var(--dur) var(--ease);
+}
+
+/* 时间戳/计数统一等宽数字，避免跳动 */
+.message-time,
+.room-time,
+.preview-time,
+.about-build,
+.screen-viewer-stats,
+.share-bar-stats,
+.member-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 深色下自己气泡的文字再亮一档，保证对比度 */
+[data-theme='dark'] .message.mine .message-text,
+[data-theme='dark'] .message.mine .message-body {
+  color: #eef3fb;
+}
+
+/* 空态统一：图标 + 标题 + 说明的节奏 */
+.empty {
+  gap: 6px;
+}
+.empty-title {
+  letter-spacing: 0.01em;
+}
+
+/* 弹窗/浮层统一入场 */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.modal,
+.ctx-menu,
+.emoji-pop,
+.mention-pop {
+  animation: pop-in var(--dur) var(--ease);
+}
+
+/* 侧栏会话项 hover 更轻，active 更明确 */
+.room-item,
+.friend-item {
+  border-radius: var(--radius);
 }

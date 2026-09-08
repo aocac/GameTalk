@@ -4,6 +4,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { useSettings, applyProxySetting, type OverlayPosition, type ShareQuality } from './app/settings';
 import { QUALITY_PRESETS } from './app/screenShare';
 import { previewSound } from './app/audio';
+import { applyTheme } from './app/theme';
 import HotkeyRecorder from './components/HotkeyRecorder';
 import appIcon from './assets/app-icon.png';
 import { BUILD_ID } from './buildInfo';
@@ -47,7 +48,8 @@ function change(
     | 'overlayReset'
     | 'shareQuality'
     | 'shareBudgetMbps'
-    | 'shareMuteOwnSounds',
+    | 'shareMuteOwnSounds'
+    | 'theme',
   value: unknown,
 ): void {
   const s = useSettings.getState() as unknown as Record<string, unknown>;
@@ -145,6 +147,23 @@ export default function SettingsWindow() {
       <main className="settings-content">
         {section === 'general' && (
           <>
+            <div className="field">
+              <span>界面主题</span>
+              <div className="chip-row">
+                {(['auto', 'light', 'dark'] as const).map((t) => (
+                  <button
+                    key={t}
+                    className={`chip ${settings.theme === t ? 'active' : ''}`}
+                    onClick={() => {
+                      change('theme', t);
+                      applyTheme(t);
+                    }}
+                  >
+                    {t === 'auto' ? '跟随系统' : t === 'light' ? '浅色' : '深色'}
+                  </button>
+                ))}
+              </div>
+            </div>
             <h3>通用</h3>
             <label className="field">
               <span>服务器地址（修改后需重新连接生效）</span>
