@@ -1534,6 +1534,8 @@ export const useChat = create<ChatState>()((set, get) => ({
     if (roomId !== get().screenShare.roomId) return;
     if (!screenShareManager) screenShareManager = new ScreenShareManager();
     const mgr = screenShareManager;
+    // 开发/自动化验证钩子：浏览器回落路径下把 manager 暴露出来，便于 E2E 驱动档位切换
+    if (import.meta.env?.DEV) (globalThis as Record<string, unknown>).__gtShareMgr = mgr;
     const sock: ChatSocket = socket;
     mgr.setSignalSender((to, rid, d) => sock.send({ type: 'screen:signal', payload: { roomId: rid, to, data: d } }));
     mgr.setRemoteStreamHandler((sharerId, stream) => {
@@ -1562,6 +1564,8 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
     if (!screenShareManager) screenShareManager = new ScreenShareManager();
     const mgr = screenShareManager;
+    // 开发/自动化验证钩子：浏览器回落路径下把 manager 暴露出来，便于 E2E 驱动档位切换
+    if (import.meta.env?.DEV) (globalThis as Record<string, unknown>).__gtShareMgr = mgr;
     const sock: ChatSocket = socket;
     // receiver pc 的 ICE 配置在构造时固定，必须先拿到自建 TURN 凭据再建连接
     mgr.setExtraIceServers((await ensureTurnIceServers()) as unknown as RTCIceServer[]);

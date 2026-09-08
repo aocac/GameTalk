@@ -53,7 +53,7 @@ export interface AppSettings {
   proxyAddress: string;
   /** 界面主题：跟随系统 / 浅色 / 深色 */
   theme: ThemeSetting;
-  /** 屏幕共享画质档位：清晰优先 / 流畅优先 / 省流量 */
+  /** 屏幕共享画质档位：自动 / 清晰优先 / 流畅优先 / 省流量 */
   shareQuality: ShareQuality;
   /** 屏幕共享上行总预算（Mbps）：按观看人数分摊，每路有下限 */
   shareBudgetMbps: number;
@@ -128,7 +128,7 @@ export const useSettings = create<AppSettings>()(
       useProxy: false,
       proxyAddress: '',
       theme: 'auto',
-      shareQuality: 'balanced',
+      shareQuality: 'auto',
       shareBudgetMbps: 12,
       shareMuteOwnSounds: true,
       setServerUrl: (serverUrl) => set({ serverUrl: serverUrl.trim().replace(/\/+$/, '') }),

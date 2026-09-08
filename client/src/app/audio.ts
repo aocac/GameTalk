@@ -53,7 +53,10 @@ interface Tone {
   type?: OscillatorType;
 }
 
-/** 统一的发声管线：主音 + 失谐副音 → 低通 → 输出 */
+/** 总增益：单音峰值只有 0.08~0.16，100% 音量时也偏小；放大后由限幅器兜住瞬时叠加 */
+const MASTER_GAIN = 3;
+
+/** 统一的发声管线：主音 + 失谐副音 → 低通 → 主增益 → 限幅 → 输出 */
 function playTones(tones: Tone[], lowpass = 3200): void {
   const ac = getCtx();
   if (!ac) return;
@@ -65,7 +68,21 @@ function playTones(tones: Tone[], lowpass = 3200): void {
   lp.type = 'lowpass';
   lp.frequency.value = lowpass;
   lp.Q.value = 0.6;
-  lp.connect(ac.destination);
+
+  const master = ac.createGain();
+  master.gain.value = MASTER_GAIN;
+
+  // 限幅器：多音叠加/音量拉满时不削顶，同时把整体听感抬起来
+  const limiter = ac.createDynamicsCompressor();
+  limiter.threshold.value = -3;
+  limiter.knee.value = 4;
+  limiter.ratio.value = 8;
+  limiter.attack.value = 0.003;
+  limiter.release.value = 0.12;
+
+  lp.connect(master);
+  master.connect(limiter);
+  limiter.connect(ac.destination);
 
   for (const t of tones) {
     const start = now + t.at;
@@ -103,8 +120,8 @@ function ready(enabled: boolean): boolean {
 export function playMessageSound(enabled: boolean): void {
   if (!ready(enabled)) return;
   playTones([
-    { freq: 1318.5, at: 0, dur: 0.18, gain: 0.1, detune: 6 },
-    { freq: 1760, at: 0.085, dur: 0.24, gain: 0.085, detune: -5 },
+    { freq: 1318.5, at: 0, dur: 0.18, gain: 0.16, detune: 6 },
+    { freq: 1760, at: 0.085, dur: 0.24, gain: 0.14, detune: -5 },
   ]);
 }
 
@@ -112,24 +129,24 @@ export function playMessageSound(enabled: boolean): void {
 export function playMentionSound(enabled: boolean): void {
   if (!ready(enabled)) return;
   playTones([
-    { freq: 1318.5, at: 0, dur: 0.12, gain: 0.085, detune: 5 },
-    { freq: 1661.2, at: 0.075, dur: 0.12, gain: 0.08, detune: 5 },
-    { freq: 2093, at: 0.15, dur: 0.2, gain: 0.07, detune: -4 },
+    { freq: 1318.5, at: 0, dur: 0.12, gain: 0.13, detune: 5 },
+    { freq: 1661.2, at: 0.075, dur: 0.12, gain: 0.12, detune: 5 },
+    { freq: 2093, at: 0.15, dur: 0.2, gain: 0.11, detune: -4 },
   ]);
 }
 
 /** 发送确认：极轻的单音短点，只用来确认「发出去了」 */
 export function playSendSound(enabled: boolean): void {
   if (!ready(enabled)) return;
-  playTones([{ freq: 1174.7, at: 0, dur: 0.09, gain: 0.05, detune: 4 }], 2600);
+  playTones([{ freq: 1174.7, at: 0, dur: 0.09, gain: 0.08, detune: 4 }], 2600);
 }
 
 /** 操作失败：下行小三度，提示但不惊吓 */
 export function playErrorSound(enabled: boolean): void {
   if (!ready(enabled)) return;
   playTones([
-    { freq: 784, at: 0, dur: 0.16, gain: 0.075, detune: 5 },
-    { freq: 622.3, at: 0.09, dur: 0.26, gain: 0.07, detune: -5 },
+    { freq: 784, at: 0, dur: 0.16, gain: 0.12, detune: 5 },
+    { freq: 622.3, at: 0.09, dur: 0.26, gain: 0.11, detune: -5 },
   ]);
 }
 

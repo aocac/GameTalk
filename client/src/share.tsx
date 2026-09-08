@@ -4,7 +4,7 @@ import { getCurrentWindow, primaryMonitor } from '@tauri-apps/api/window';
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
-import { ScreenShareManager, QUALITY_PRESETS, type ShareQuality, type ShareStats } from './app/screenShare';
+import { ScreenShareManager, QUALITY_OPTIONS, QUALITY_PRESETS, qualityLabel, type ShareQuality, type ShareStats } from './app/screenShare';
 import { SignalSocket, wsUrlOfServerUrl } from './app/signalSocket';
 import { getTurnCredentials } from './app/api';
 import './App.css';
@@ -39,7 +39,7 @@ function readSettings(): { serverUrl: string; quality: ShareQuality; budgetMbps:
     const s = raw ? (JSON.parse(raw)?.state ?? {}) : {};
     return {
       serverUrl: String(s.serverUrl || 'http://127.0.0.1:8787').replace(/\/+$/, ''),
-      quality: (s.shareQuality as ShareQuality) || 'balanced',
+      quality: (s.shareQuality as ShareQuality) || 'auto',
       budgetMbps: Number(s.shareBudgetMbps ?? 12) || 12,
       muteOwn: s.shareMuteOwnSounds !== false,
     };
@@ -240,7 +240,7 @@ function ShareWindow() {
       // 主窗口设置里改了画质 → 同步到控制条
       void listen<{ quality?: ShareQuality; budgetMbps?: number }>('share:config', (e) => {
         const q = e.payload?.quality;
-        if (q && QUALITY_PRESETS[q]) changeQuality(q);
+        if (q && QUALITY_OPTIONS.includes(q)) changeQuality(q);
         if (e.payload?.budgetMbps) mgrRef.current?.setBudgetBps(e.payload.budgetMbps * 1_000_000);
       }).then((f) => (disposed ? f() : (offQuality = f)));
     } catch {
@@ -314,17 +314,23 @@ function ShareWindow() {
           </div>
           <div className="share-bar-stats">
             {res} · {kbps} · {fps}
+            {stats ? ` · ${QUALITY_PRESETS[stats.effectiveQuality].label}` : ''}
             {stats?.audio ? ' · 含音频' : ''}
+            {stats?.paramError ? ` · ⚠ 参数下发失败(${stats.paramError})` : ''}
           </div>
           <div className="share-bar-actions">
-            {(Object.keys(QUALITY_PRESETS) as ShareQuality[]).map((q) => (
+            {QUALITY_OPTIONS.map((q) => (
               <button
                 key={q}
                 className={`share-chip${quality === q ? ' active' : ''}`}
-                title={`单路上限 ${(QUALITY_PRESETS[q].maxBitrate / 1_000_000).toFixed(1)}Mbps`}
+                title={
+                  q === 'auto'
+                    ? '按观看人数与带宽预算自动选档'
+                    : `${QUALITY_PRESETS[q].label}：单路上限 ${(QUALITY_PRESETS[q].maxBitrate / 1_000_000).toFixed(1)}Mbps（带宽充足时各档画面相同，紧张时才体现取舍）`
+                }
                 onClick={() => changeQuality(q)}
               >
-                {QUALITY_PRESETS[q].label}
+                {q === 'auto' && stats ? `自动·${QUALITY_PRESETS[stats.effectiveQuality].label.replace('优先', '')}` : qualityLabel(q)}
               </button>
             ))}
             {stats?.audio && (
@@ -369,5 +375,7 @@ function ShareWindow() {
 }
 
 applyStoredTheme();
+// 透明窗口：让页面背景也透明，圆角由卡片自己负责（否则四角有白边）
+document.documentElement.dataset.window = 'share';
 
 createRoot(document.getElementById('root') as HTMLElement).render(<ShareWindow />);

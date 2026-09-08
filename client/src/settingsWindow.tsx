@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { emit, listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { useSettings, applyProxySetting, type OverlayPosition, type ShareQuality } from './app/settings';
-import { QUALITY_PRESETS } from './app/screenShare';
+import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
+import { QUALITY_OPTIONS, QUALITY_PRESETS, qualityLabel } from './app/screenShare';
 import { previewSound } from './app/audio';
 import { applyTheme } from './app/theme';
 import HotkeyRecorder from './components/HotkeyRecorder';
@@ -275,19 +275,19 @@ export default function SettingsWindow() {
             <div className="field">
               <span>画质档位（共享中也能在右下角控制条上随时切换）</span>
               <div className="chip-row">
-                {(Object.keys(QUALITY_PRESETS) as ShareQuality[]).map((q) => (
+                {QUALITY_OPTIONS.map((q) => (
                   <button
                     key={q}
                     className={`chip ${settings.shareQuality === q ? 'active' : ''}`}
-                    title={`单路上限 ${(QUALITY_PRESETS[q].maxBitrate / 1_000_000).toFixed(1)}Mbps`}
+                    title={q === 'auto' ? '按观看人数与带宽预算自动选档' : `单路上限 ${(QUALITY_PRESETS[q].maxBitrate / 1_000_000).toFixed(1)}Mbps`}
                     onClick={() => change('shareQuality', q)}
                   >
-                    {QUALITY_PRESETS[q].label}
+                    {qualityLabel(q)}
                   </button>
                 ))}
               </div>
               <span className="field-hint">
-                清晰优先＝保分辨率、带宽不足时掉帧；流畅优先＝保帧率、带宽不足时降分辨率；省流量＝低码率并主动降分辨率。
+                自动＝按观看人数和上行预算选档（1 人清晰、2–4 人流畅、更多人省流量），并在实测丢包/延迟变差时自动降码率；也可以手动锁定某一档。清晰优先＝保分辨率、带宽不足时掉帧；流畅优先＝保帧率、带宽不足时降分辨率；省流量＝低码率并主动降分辨率。
               </span>
             </div>
             <label className="field">

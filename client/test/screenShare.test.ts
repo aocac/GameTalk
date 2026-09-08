@@ -12,11 +12,17 @@ type Signal = { to: string; roomId: string; data: unknown };
 class FakeSender {
   params = { encodings: [{}] } as unknown as RTCRtpSendParameters;
   setCalls: Array<Record<string, unknown>> = [];
+  /** 设为非 0 时，接下来 N 次 setParameters 以 InvalidModificationError 拒绝 */
+  failNext = 0;
   constructor(public track: { kind: string }) {}
   getParameters(): RTCRtpSendParameters {
     return { ...this.params, encodings: [{ ...this.params.encodings[0] }] };
   }
   setParameters(p: RTCRtpSendParameters): Promise<void> {
+    if (this.failNext > 0) {
+      this.failNext -= 1;
+      return Promise.reject(Object.assign(new Error('rejected'), { name: 'InvalidModificationError' }));
+    }
     this.params = p;
     this.setCalls.push({
       ...(p.encodings[0] as unknown as Record<string, unknown>),
@@ -176,6 +182,7 @@ describe('ScreenShareManager：码率分摊与档位', () => {
   it('按观看人数分摊总预算，单路不超过档位上限、不低于下限', async () => {
     const mgr = makeManager();
     mgr.setBudgetBps(12_000_000);
+    mgr.setQuality('balanced'); // 显式档位，验证分摊本身
     await startSharing(mgr);
 
     // 1 个观看者：12M 预算 → 受 balanced 上限 4M 限制
@@ -208,6 +215,55 @@ describe('ScreenShareManager：码率分摊与档位', () => {
     mgr.setQuality('quality');
     const last2 = sender.setCalls[sender.setCalls.length - 1] as { degradationPreference: string };
     expect(last2.degradationPreference).toBe('maintain-resolution');
+  });
+});
+
+describe('ScreenShareManager：自动档位（按观看人数选档）', () => {
+  it('auto 随观看人数在 清晰/流畅/省流 之间切换', async () => {
+    const mgr = makeManager();
+    mgr.setBudgetBps(12_000_000);
+    mgr.setQuality('auto');
+    await startSharing(mgr);
+
+    await mgr.handleSignal('v1', 'room-1', { type: 'request', cid: 'c1' });
+    expect(mgr.getEffectiveQuality()).toBe('quality'); // 12M/1 ≥ 5M
+
+    await mgr.handleSignal('v2', 'room-1', { type: 'request', cid: 'c2' });
+    await mgr.handleSignal('v3', 'room-1', { type: 'request', cid: 'c3' });
+    expect(mgr.getEffectiveQuality()).toBe('balanced'); // 12M/3 = 4M
+
+    for (let i = 4; i <= 6; i++) await mgr.handleSignal(`v${i}`, 'room-1', { type: 'request', cid: `c${i}` });
+    expect(mgr.getEffectiveQuality()).toBe('low'); // 12M/6 = 2M → 落到省流量档
+    expect(mgr.getTargetBps()).toBe(1_500_000); // 受省流量档 1.5M 上限约束
+  });
+
+  it('手动锁定档位时不再随人数变化', async () => {
+    const mgr = makeManager();
+    mgr.setBudgetBps(12_000_000);
+    mgr.setQuality('quality');
+    await startSharing(mgr);
+    for (let i = 1; i <= 6; i++) await mgr.handleSignal(`v${i}`, 'room-1', { type: 'request', cid: `c${i}` });
+    expect(mgr.getEffectiveQuality()).toBe('quality');
+  });
+});
+
+describe('ScreenShareManager：参数下发失败回退', () => {
+  it('setParameters 被拒时退回只改码率，并记录 paramError', async () => {
+    const mgr = makeManager();
+    await startSharing(mgr);
+    await mgr.handleSignal('v1', 'room-1', { type: 'request', cid: 'c1' });
+    const sender = FakePC.instances[0]!.senders[0]!;
+
+    const before = sender.setCalls.length;
+    sender.failNext = 1; // 下一次完整参数下发被拒
+    mgr.setQuality('quality');
+    await new Promise((r) => setTimeout(r, 0));
+
+    // 被拒的那次不落账，回退调用成功且只带码率
+    expect(sender.setCalls.length).toBe(before + 1);
+    const fallback = sender.setCalls[sender.setCalls.length - 1] as { maxBitrate?: number };
+    expect(fallback.maxBitrate).toBe(6_000_000);
+    expect(mgr.snapshot().paramError).toBe('InvalidModificationError');
   });
 });
 

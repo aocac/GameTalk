@@ -40,8 +40,10 @@ type DisplayMediaOptionsWithAudioHints = DisplayMediaStreamOptions & {
   windowAudio?: 'exclude' | 'window' | 'system';
 };
 
-/** 画质档位：决定单路码率上限与分辨率/帧率取舍 */
-export type ShareQuality = 'quality' | 'balanced' | 'low';
+/** 画质档位：auto = 按观看人数与预算自动选档 */
+export type ShareQuality = 'auto' | 'quality' | 'balanced' | 'low';
+/** 实际生效的具体档位（auto 会解析成其中之一） */
+export type EffectiveQuality = 'quality' | 'balanced' | 'low';
 
 export interface ShareQualityPreset {
   label: string;
@@ -53,11 +55,26 @@ export interface ShareQualityPreset {
   degradation: 'maintain-resolution' | 'balanced';
 }
 
-export const QUALITY_PRESETS: Record<ShareQuality, ShareQualityPreset> = {
+export const QUALITY_PRESETS: Record<EffectiveQuality, ShareQualityPreset> = {
   quality: { label: '清晰优先', maxBitrate: 6_000_000, scale: 1, degradation: 'maintain-resolution' },
   balanced: { label: '流畅优先', maxBitrate: 4_000_000, scale: 1, degradation: 'balanced' },
   low: { label: '省流量', maxBitrate: 1_500_000, scale: 1.5, degradation: 'balanced' },
 };
+
+export const QUALITY_OPTIONS: ShareQuality[] = ['auto', 'quality', 'balanced', 'low'];
+
+export function qualityLabel(q: ShareQuality): string {
+  return q === 'auto' ? '自动' : QUALITY_PRESETS[q].label;
+}
+
+/** auto 的选档规则：按每路能分到的预算决定清晰度与帧率取舍 */
+export function resolveEffectiveQuality(quality: ShareQuality, viewers: number, budgetBps: number): EffectiveQuality {
+  if (quality !== 'auto') return quality;
+  const perViewer = budgetBps / Math.max(1, viewers);
+  if (perViewer >= 5_000_000) return 'quality';
+  if (perViewer >= 2_500_000) return 'balanced';
+  return 'low';
+}
 
 /** 每路码率下限：低于这个值画面就没法看了，宁可不降 */
 export const MIN_PER_VIEWER_BPS = 1_200_000;
@@ -82,6 +99,10 @@ export interface ShareStats {
   role: 'sharer' | 'viewer' | 'idle';
   audio: boolean;
   quality: ShareQuality;
+  /** 实际生效的档位（auto 解析后的结果） */
+  effectiveQuality: EffectiveQuality;
+  /** 最近一次编码参数下发失败的原因（正常为 null） */
+  paramError: string | null;
   /** 总上行预算（共享端） */
   budgetBps: number;
   /** 每路当前目标码率（共享端） */
@@ -173,7 +194,8 @@ export class ScreenShareManager {
   private extraIceServers: RTCIceServer[] = [];
   /** 本次共享是否包含音频 */
   private selfAudio = false;
-  private quality: ShareQuality = 'balanced';
+  private quality: ShareQuality = 'auto';
+  private lastParamError: string | null = null;
   private budgetBps = DEFAULT_BUDGET_BPS;
   /** 自适应系数：1 = 满码率，最低 ADAPT_FLOOR */
   private adapt = 1;
@@ -211,6 +233,11 @@ export class ScreenShareManager {
     return this.quality;
   }
 
+  /** 当前实际生效的档位（auto 按观看人数与预算解析） */
+  getEffectiveQuality(): EffectiveQuality {
+    return resolveEffectiveQuality(this.quality, Math.max(1, this.senders.size), this.budgetBps);
+  }
+
   /** 总上行预算（共享端生效）：按观看人数分摊 */
   setBudgetBps(bps: number): void {
     const next = Math.max(2_000_000, Math.min(50_000_000, Math.round(bps)));
@@ -223,7 +250,7 @@ export class ScreenShareManager {
   getTargetBps(): number {
     const viewers = Math.max(1, this.senders.size);
     const share = Math.round(this.budgetBps / viewers);
-    const base = Math.max(MIN_PER_VIEWER_BPS, Math.min(QUALITY_PRESETS[this.quality].maxBitrate, share));
+    const base = Math.max(MIN_PER_VIEWER_BPS, Math.min(QUALITY_PRESETS[this.getEffectiveQuality()].maxBitrate, share));
     return Math.round(base * this.adapt);
   }
 
@@ -248,6 +275,8 @@ export class ScreenShareManager {
       role,
       audio: this.selfAudio,
       quality: this.quality,
+      effectiveQuality: this.getEffectiveQuality(),
+      paramError: this.lastParamError,
       budgetBps: this.budgetBps,
       targetBps: this.getTargetBps(),
       totalKbps: peers.reduce((sum, p) => sum + p.kbps, 0),
@@ -495,7 +524,7 @@ export class ScreenShareManager {
 
   /** 按当前档位与分摊结果，给某条 sender 的每路轨道设置编码参数 */
   private applySenderParams(sender: RTCRtpSender, kind: string): void {
-    const preset = QUALITY_PRESETS[this.quality];
+    const preset = QUALITY_PRESETS[this.getEffectiveQuality()];
     try {
       const params = sender.getParameters();
       if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
@@ -511,9 +540,27 @@ export class ScreenShareManager {
       if (kind === 'video') {
         (params as RTCRtpSendParameters & { degradationPreference?: string }).degradationPreference = preset.degradation;
       }
-      void sender.setParameters(params).catch(() => undefined);
-    } catch {
-      /* 某些环境不支持动态 setParameters，忽略 */
+      sender.setParameters(params).then(
+        () => {
+          this.lastParamError = null;
+        },
+        (err: unknown) => {
+          // 个别 Chromium/WebView2 版本会拒绝同时修改 degradationPreference 或
+          // scaleResolutionDownBy（InvalidModificationError），导致整次下发被丢弃、
+          // 表现为「切档位没反应」。这里退回只改码率，保证档位切换至少生效一半。
+          this.lastParamError = String((err as Error)?.name ?? err);
+          try {
+            const fallback = sender.getParameters();
+            if (!fallback.encodings || fallback.encodings.length === 0) fallback.encodings = [{}];
+            fallback.encodings = [{ ...fallback.encodings[0], maxBitrate: enc.maxBitrate }];
+            sender.setParameters(fallback).catch(() => undefined);
+          } catch {
+            /* 忽略 */
+          }
+        },
+      );
+    } catch (e) {
+      this.lastParamError = String((e as Error)?.name ?? e);
     }
   }
 

@@ -3781,6 +3781,18 @@ textarea.composer-input {
   background: #151821;
 }
 
+/* 采集窗是透明窗口：页面本身不能有底色，否则控制条的圆角四角会露出白边 */
+html[data-window='share'],
+html[data-window='share'] body,
+html[data-window='share'] #root {
+  background: transparent !important;
+}
+
+/* 控制条形态下容器也透明，圆角只由 .share-bar 负责 */
+html[data-window='share'] .share-window {
+  background: transparent;
+}
+
 .share-card {
   width: calc(100% - 48px);
   max-width: 340px;
