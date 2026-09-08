@@ -6,6 +6,7 @@ import type { JwtService } from '../lib/jwt.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
 import { MAX_AVATAR_BYTES, validateImageDataUrl } from '../lib/image.js';
 import { avatarHttpUrlOf, httpBaseOf } from '../lib/avatar.js';
+import { refreshUsername } from '../ws/gateway.js';
 import { makeAuthPreHandler } from '../plugins/auth.js';
 
 export interface AuthDeps {
@@ -262,6 +263,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
       await reply.code(404).send({ error: { code: 'user_not_found', message: '用户不存在' } });
       return;
     }
+    // 在线连接里的显示名是 hello 时快照的：改名后必须同步，否则广播里仍是旧名直到重连
+    if (username !== undefined) refreshUsername(user.id, user.username);
     await reply.send({ user: toPublicUser(user, httpBaseOf(req.headers)) });
   });
 }

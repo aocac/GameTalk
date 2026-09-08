@@ -22,18 +22,51 @@ export interface AppDeps {
   jwt: JwtService;
 }
 
+/** 回环/私网地址才视为可信反代（docker 内网里的 Caddy）；公网直连客户端不可伪造来源 */
+export function isTrustedProxy(address: string | undefined): boolean {
+  if (!address) return false;
+  if (address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1') return true;
+  if (/^10\./.test(address)) return true;
+  if (/^192\.168\./.test(address)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(address)) return true;
+  return /^f[cd][0-9a-f]{2}:/i.test(address); // fc00::/7 唯一本地地址
+}
+
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { config, db, jwt } = deps;
   const app = Fastify({
     logger: { level: config.logLevel },
     disableRequestLogging: config.nodeEnv === 'production',
-    // 信任反代头：compose 中仅 Caddy 能通过 127.0.0.1:8787 访问本服务，
-    // 按 X-Forwarded-For 取真实客户端 IP 做限流（不设则所有人共享 Caddy 的 IP，一个桶全服限流）
-    trustProxy: true,
+    // 只信任回环/私网来源的 X-Forwarded-For（compose 内网里的 Caddy 容器），
+    // 公网直连客户端自带的 XFF 一律忽略——否则可伪造来源绕过登录/注册限流
+    trustProxy: isTrustedProxy,
     // 用户在客户端填的服务器地址常带尾斜杠（如 http://ip:8787/），
     // 拼接后会出现 //api/... 双斜杠路径——默认会 404，这里统一容忍
     ignoreTrailingSlash: true,
     ignoreDuplicateSlashes: true,
+  });
+
+  // 统一错误出口：PG 入参/外键类错误不再变成 500（非法 id → 400，引用不存在 → 404）；
+  // 限流等插件抛出的 {statusCode, error} 负载原样透出，保持客户端错误码契约
+  app.setErrorHandler((err, req, reply) => {
+    const e = err as { statusCode?: number; code?: string; error?: unknown; message?: string };
+    if (e.error && typeof e.error === 'object') {
+      reply.code(e.statusCode ?? 400).send({ error: e.error });
+      return;
+    }
+    if (e.code === '22P02') {
+      reply.code(400).send({ error: { code: 'invalid_input', message: '无效的 id 格式' } });
+      return;
+    }
+    if (e.code === '23503') {
+      reply.code(404).send({ error: { code: 'not_found', message: '关联资源不存在' } });
+      return;
+    }
+    const status = e.statusCode ?? 500;
+    if (status >= 500) req.log.error({ err }, 'request failed');
+    reply
+      .code(status)
+      .send({ error: { code: status >= 500 ? 'internal_error' : (e.code ?? 'error'), message: status >= 500 ? '服务器内部错误' : (e.message ?? '请求失败') } });
   });
 
   await app.register(cors, { origin: config.corsOrigin === '*' ? true : config.corsOrigin.split(',') });

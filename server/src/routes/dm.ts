@@ -3,6 +3,7 @@ import type { QueryResultRow } from 'pg';
 import type { Db } from '../db/db.js';
 import type { JwtService } from '../lib/jwt.js';
 import { avatarHttpUrlOf, httpBaseOf } from '../lib/avatar.js';
+import { isUuid } from '../lib/validate.js';
 import { makeAuthPreHandler } from '../plugins/auth.js';
 
 export interface DmDeps {
@@ -127,6 +128,11 @@ export function registerDmRoutes(app: FastifyInstance, deps: DmDeps): void {
     const before = query.before ? String(query.before) : null;
     const limit = Math.min(Math.max(parseInt(query.limit ?? '50', 10) || 50, 1), 100);
 
+    if (!isUuid(peerId) || (before !== null && !isUuid(before))) {
+      await reply.code(400).send({ error: { code: 'invalid_input', message: '无效的用户或游标 id' } });
+      return;
+    }
+
     if (!(await areFriends(db, req.userId!, peerId))) {
       await reply.code(403).send({ error: { code: 'forbidden', message: '仅好友之间可以私聊' } });
       return;
@@ -141,7 +147,10 @@ export function registerDmRoutes(app: FastifyInstance, deps: DmDeps): void {
          LEFT JOIN users u ON u.id = m.sender_id
          LEFT JOIN dm_messages r ON r.id = m.reply_to
          WHERE ((m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1))
-           AND ($3::uuid IS NULL OR (m.created_at, m.id) < (SELECT created_at, id FROM dm_messages WHERE id = $3))
+           AND ($3::uuid IS NULL OR (m.created_at, m.id) < (
+                 SELECT created_at, id FROM dm_messages
+                 WHERE id = $3 AND ((sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1))
+               ))
          ORDER BY m.created_at DESC, m.id DESC
          LIMIT $4
        ) t
@@ -152,6 +161,8 @@ export function registerDmRoutes(app: FastifyInstance, deps: DmDeps): void {
     const rows = res.rows;
     const hasMore = rows.length > limit;
     const base = httpBaseOf(req.headers);
-    await reply.send({ messages: (hasMore ? rows.slice(0, limit) : rows).map((m) => toPublicDm(base, m)), hasMore });
+    // 多取一条只用于判断 hasMore：升序后应丢弃「最旧」的那条，保留最新 limit 条
+    const page = hasMore ? rows.slice(rows.length - limit) : rows;
+    await reply.send({ messages: page.map((m) => toPublicDm(base, m)), hasMore });
   });
 }

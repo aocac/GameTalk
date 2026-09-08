@@ -4,6 +4,8 @@ import type { Db } from '../db/db.js';
 import type { JwtService } from '../lib/jwt.js';
 import { generateInviteCode } from '../lib/invite.js';
 import { avatarHttpUrlOf, httpBaseOf } from '../lib/avatar.js';
+import { isUuid } from '../lib/validate.js';
+import { dropRoomSubscription } from '../ws/gateway.js';
 import { makeAuthPreHandler } from '../plugins/auth.js';
 
 export interface RoomsDeps {
@@ -149,7 +151,12 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
       return;
     }
     if (!(await isMember(db, room.id, req.userId!))) {
-      await db.query('INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)', [room.id, req.userId]);
+      // 并发重复加入由主键兜底：23505 = 已被同请求抢先插入，视作加入成功（幂等）
+      try {
+        await db.query('INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)', [room.id, req.userId]);
+      } catch (e) {
+        if ((e as { code?: string }).code !== '23505') throw e;
+      }
     }
     const full = await fetchRoomWithCount(db, room.id);
     await reply.send({ room: toPublicRoom(full!) });
@@ -192,6 +199,11 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
     const before = query.before ? String(query.before) : null;
     const limit = Math.min(Math.max(parseInt(query.limit ?? '50', 10) || 50, 1), 100);
 
+    if (!isUuid(roomId) || (before !== null && !isUuid(before))) {
+      await reply.code(400).send({ error: { code: 'invalid_input', message: '无效的房间或游标 id' } });
+      return;
+    }
+
     if (!(await isMember(db, roomId, req.userId!))) {
       await reply.code(403).send({ error: { code: 'forbidden', message: '你不在该房间中' } });
       return;
@@ -208,7 +220,7 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
          LEFT JOIN users rby ON rby.id = m.recalled_by
          LEFT JOIN messages r ON r.id = m.reply_to
          WHERE m.room_id = $1
-           AND ($2::uuid IS NULL OR (m.created_at, m.id) < (SELECT created_at, id FROM messages WHERE id = $2))
+           AND ($2::uuid IS NULL OR (m.created_at, m.id) < (SELECT created_at, id FROM messages WHERE id = $2 AND room_id = $1))
          ORDER BY m.created_at DESC, m.id DESC
          LIMIT $3
        ) t
@@ -219,7 +231,9 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
     const rows = res.rows;
     const hasMore = rows.length > limit;
     const base = httpBaseOf(req.headers);
-    const messages = (hasMore ? rows.slice(0, limit) : rows).map((m) => ({
+    // 多取一条只用于判断 hasMore：升序后应丢弃「最旧」的那条，保留最新 limit 条
+    const page = hasMore ? rows.slice(rows.length - limit) : rows;
+    const messages = page.map((m) => ({
       id: m.id,
       roomId: m.room_id,
       userId: m.user_id,
@@ -250,12 +264,23 @@ export function registerRoomsRoutes(app: FastifyInstance, deps: RoomsDeps): void
   // 离开房间（房间空后删除）
   app.post('/api/rooms/:id/leave', { preHandler: [auth] }, async (req, reply) => {
     const roomId = (req.params as { id: string }).id;
+    if (!isUuid(roomId)) {
+      await reply.code(400).send({ error: { code: 'invalid_input', message: '无效的房间 id' } });
+      return;
+    }
     const room = await fetchRoomWithCount(db, roomId);
     if (!room) {
       await reply.code(404).send({ error: { code: 'room_not_found', message: '房间不存在' } });
       return;
     }
+    // 房主退出会让房间失去管理权且无人可删（客户端本就不显示该按钮）——只允许删房
+    if (room.owner_id === req.userId) {
+      await reply.code(403).send({ error: { code: 'owner_cannot_leave', message: '房主不能退出房间，请改用删除房间' } });
+      return;
+    }
     await db.query('DELETE FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, req.userId]);
+    // 实时订阅同步失效：否则该连接的旧订阅仍能发消息/撤回（越权）
+    dropRoomSubscription(req.userId!, roomId);
     const remaining = await db.query('SELECT COUNT(*)::int AS c FROM room_members WHERE room_id = $1', [roomId]);
     if (Number(remaining.rows[0].c) === 0) {
       await db.query('DELETE FROM rooms WHERE id = $1', [roomId]);

@@ -166,22 +166,38 @@ describe('rooms REST', () => {
     expect(res2.statusCode).toBe(403);
   });
 
-  it('leaves a room; empty room is deleted', async () => {
+  it('leaves a room; owner cannot leave; room survives while owner remains', async () => {
     const owner = await registerUser('leave_owner');
     const { room } = (
       await app.inject({ method: 'POST', url: '/api/rooms', headers: auth(owner.token), payload: { name: 'Temp' } })
     ).json();
 
-    const res = await app.inject({
+    // 房主退房被拒（否则房间失去管理权且无人可删）——客户端本就不显示该按钮
+    const ownerLeave = await app.inject({
       method: 'POST',
       url: `/api/rooms/${room.id}/leave`,
       headers: auth(owner.token),
     });
+    expect(ownerLeave.statusCode).toBe(403);
+    expect(ownerLeave.json().error.code).toBe('owner_cannot_leave');
+
+    // 成员可以正常退房，房间因房主仍在而保留
+    const member = await registerUser('leave_member');
+    await app.inject({
+      method: 'POST',
+      url: '/api/rooms/join',
+      headers: auth(member.token),
+      payload: { inviteCode: room.inviteCode },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/rooms/${room.id}/leave`,
+      headers: auth(member.token),
+    });
     expect(res.statusCode).toBe(200);
 
-    // 空房间已删除
-    const res2 = await app.inject({ method: 'GET', url: `/api/rooms/${room.id}`, headers: auth(owner.token) });
-    expect(res2.statusCode).toBe(404);
+    const still = await app.inject({ method: 'GET', url: `/api/rooms/${room.id}`, headers: auth(owner.token) });
+    expect(still.statusCode).toBe(200);
   });
 });
 

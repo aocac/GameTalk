@@ -119,9 +119,14 @@ export function registerFriendsRoutes(app: FastifyInstance, deps: FriendsDeps): 
     }
 
     const inserted = await db.query<FriendshipRow>(
-      "INSERT INTO friendships (requester_id, addressee_id) VALUES ($1, $2) RETURNING *",
+      "INSERT INTO friendships (requester_id, addressee_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING *",
       [req.userId, target.id],
     );
+    if (!inserted.rows[0]) {
+      // 并发反向申请（A→B 与 B→A 同时到达）由唯一索引兜底，视作申请已存在
+      await reply.code(409).send({ error: { code: 'request_pending', message: '好友申请已发送，等待对方处理' } });
+      return;
+    }
     sendToUser(target.id, {
       type: 'friend:request',
       payload: {

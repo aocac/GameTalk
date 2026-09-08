@@ -198,7 +198,8 @@ describe('screen share signaling', () => {
     expect(ev.payload.roomId).toBe(room.id);
     expect(ev.payload.data).toEqual({ type: 'offer', sdp: 'v=0-fake-sdp' });
 
-    // 目标非本房间成员 → 拒绝（防把媒体信令发给陌生人）
+    // 目标非本房间成员 → 拒绝（防把媒体信令发给陌生人）；
+    // 错误码用 target_not_in_room 以区别于「我自己不在房间」——后者会让客户端移除自己的房间
     const err = nextMessage(wsA, (m) => m.type === 'error');
     wsA.send(
       JSON.stringify({
@@ -206,7 +207,7 @@ describe('screen share signaling', () => {
         payload: { roomId: room.id, to: stranger.userId, data: { type: 'candidate', candidate: {} } },
       }),
     );
-    expect((await err).payload.code).toBe('not_in_room');
+    expect((await err).payload.code).toBe('target_not_in_room');
 
     wsA.close();
     wsB.close();

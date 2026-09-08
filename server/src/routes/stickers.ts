@@ -65,12 +65,15 @@ export function registerStickersRoutes(app: FastifyInstance, deps: StickersDeps)
       await reply.code(404).send({ error: { code: 'media_not_found', message: '图片不存在或不属于你' } });
       return;
     }
-    const count = await db.query<{ c: string }>('SELECT COUNT(*)::text AS c FROM user_stickers WHERE owner_id = $1', [
-      req.userId,
-    ]);
-    if (Number(count.rows[0].c) >= MAX_STICKERS) {
-      await reply.code(409).send({ error: { code: 'too_many_stickers', message: `表情包最多 ${MAX_STICKERS} 个` } });
-      return;
+    const existing = await db.query('SELECT 1 FROM user_stickers WHERE owner_id = $1 AND media_id = $2', [req.userId, mediaId]);
+    if (existing.rows.length === 0) {
+      const count = await db.query<{ c: string }>('SELECT COUNT(*)::text AS c FROM user_stickers WHERE owner_id = $1', [
+        req.userId,
+      ]);
+      if (Number(count.rows[0].c) >= MAX_STICKERS) {
+        await reply.code(409).send({ error: { code: 'too_many_stickers', message: `表情包最多 ${MAX_STICKERS} 个` } });
+        return;
+      }
     }
     const inserted = await db.query<StickerRow>(
       `INSERT INTO user_stickers (owner_id, media_id) VALUES ($1, $2)
@@ -132,12 +135,28 @@ export function registerStickersRoutes(app: FastifyInstance, deps: StickersDeps)
       await reply.code(400).send({ error: { code: 'invalid_input', message: 'invalid media id' } });
       return;
     }
-    const count = await db.query<{ c: string }>('SELECT COUNT(*)::text AS c FROM room_stickers WHERE room_id = $1', [
-      roomId,
-    ]);
-    if (Number(count.rows[0].c) >= MAX_STICKERS) {
-      await reply.code(409).send({ error: { code: 'too_many_stickers', message: `群表情最多 ${MAX_STICKERS} 个` } });
+    // 媒体必须存在且属于本人：否则可把任意（含他人）媒体登记进群表情库，
+    // 绕过 message:send 的「自传媒体 OR 本房共享表情」归属校验
+    const owned = await db.query('SELECT 1 FROM media WHERE id = $1 AND owner_id = $2', [mediaId, req.userId]);
+    if (owned.rows.length === 0) {
+      const exists = await db.query('SELECT 1 FROM media WHERE id = $1', [mediaId]);
+      await reply.code(exists.rows.length === 0 ? 404 : 403).send({
+        error: {
+          code: 'media_not_found',
+          message: exists.rows.length === 0 ? '图片不存在' : '只能添加自己上传的图片',
+        },
+      });
       return;
+    }
+    const existing = await db.query('SELECT 1 FROM room_stickers WHERE room_id = $1 AND media_id = $2', [roomId, mediaId]);
+    if (existing.rows.length === 0) {
+      const count = await db.query<{ c: string }>('SELECT COUNT(*)::text AS c FROM room_stickers WHERE room_id = $1', [
+        roomId,
+      ]);
+      if (Number(count.rows[0].c) >= MAX_STICKERS) {
+        await reply.code(409).send({ error: { code: 'too_many_stickers', message: `群表情最多 ${MAX_STICKERS} 个` } });
+        return;
+      }
     }
     const inserted = await db.query<StickerRow>(
       `INSERT INTO room_stickers (room_id, media_id, added_by) VALUES ($1, $2, $3)

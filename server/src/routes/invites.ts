@@ -225,8 +225,28 @@ export function registerInvitesRoutes(app: FastifyInstance, deps: InvitesDeps): 
       req.userId,
     ]);
     if (joined.rows.length === 0) {
-      await db.query('INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)', [invite.room_id, req.userId]);
-      await db.query('UPDATE invite_links SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+      // 先占位入房（并发重复请求由主键兜底），再用带条件的原子自增判定是否真占用了名额，
+      // 否则「先查后写」在并发下会超额使用（maxUses=1 两人同时兑换都成功）
+      const ins = await db.query('INSERT INTO room_members (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
+        invite.room_id,
+        req.userId,
+      ]);
+      if ((ins.rowCount ?? 0) > 0) {
+        const bumped = await db.query(
+          `UPDATE invite_links SET used_count = used_count + 1
+           WHERE id = $1
+             AND (max_uses = 0 OR used_count < max_uses)
+             AND (expires_at IS NULL OR expires_at > now())
+           RETURNING used_count`,
+          [invite.id],
+        );
+        if (bumped.rows.length === 0) {
+          // 并发下名额刚被占满/链接刚过期：回滚刚加入的成员资格，返回与串行一致的结果
+          await db.query('DELETE FROM room_members WHERE room_id = $1 AND user_id = $2', [invite.room_id, req.userId]);
+          await reply.code(410).send({ error: { code: 'invite_exhausted', message: '邀请链接使用次数已达上限' } });
+          return;
+        }
+      }
     }
     const full = await fetchRoomWithCount(db, invite.room_id);
     await reply.send({ room: toPublicRoom(full!) });

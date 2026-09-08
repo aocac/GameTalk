@@ -5,6 +5,7 @@ import type { Config } from '../config.js';
 import type { Db } from '../db/db.js';
 import type { JwtService } from '../lib/jwt.js';
 import { avatarHttpUrlOf, httpBaseOf } from '../lib/avatar.js';
+import { isUuid } from '../lib/validate.js';
 
 /**
  * WebSocket 网关（Phase 3+）：JWT 认证 + 内存房间表。
@@ -116,7 +117,7 @@ type ClientMessage =
   | { type: 'member:unmute'; payload: { roomId: string; userId: string } }
   | { type: 'message:send'; payload: { roomId: string; text: string; mentions?: unknown; mediaUrl?: unknown; mediaUrls?: unknown; replyTo?: unknown; kind?: unknown } }
   | { type: 'message:recall'; payload: { roomId: string; messageId: string } }
-  | { type: 'message:edit'; payload: { roomId: string; messageId: string; text: string } }
+  | { type: 'message:edit'; payload: { roomId: string; messageId: string; text: string; mentions?: unknown } }
   | { type: 'dm:send'; payload: { to: string; text: string; mediaUrl?: unknown; mediaUrls?: unknown; replyTo?: unknown; kind?: unknown } }
   | { type: 'dm:recall'; payload: { messageId: string } }
   | { type: 'dm:edit'; payload: { messageId: string; text: string } }
@@ -161,12 +162,31 @@ export function onlineUserIds(): Set<string> {
   return s;
 }
 
+/**
+ * 该用户的实时订阅里移除某房间。REST 退房/删房后必须调用，
+ * 否则旧连接仍持有内存订阅，可继续 message:send / recall（越权）。
+ */
+export function dropRoomSubscription(userId: string, roomId: string): void {
+  for (const c of connections) {
+    if (c.userId === userId) c.rooms.delete(roomId);
+  }
+  removeActiveScreenShare(roomId, userId);
+}
+
+/** 改名后同步在线连接的显示名（广播里的 username 取自 conn，否则重连前一直是旧名） */
+export function refreshUsername(userId: string, username: string): void {
+  for (const c of connections) {
+    if (c.userId === userId) c.username = username;
+  }
+}
+
 function sanitizeRoomId(id: string): string {
   return id.trim().slice(0, 64);
 }
 
-function safeText(text: string): string {
-  return text.trim().slice(0, MAX_TEXT_LENGTH);
+function safeText(text: unknown): string {
+  // 客户端可发任意 JSON 类型：非字符串一律按空串处理，避免 .trim() 抛错变 internal_error
+  return typeof text === 'string' ? text.trim().slice(0, MAX_TEXT_LENGTH) : '';
 }
 
 /**
@@ -198,10 +218,16 @@ async function resolveMentions(db: Db, roomId: string, senderId: string, text: s
   return [...mentioned].map(([id, username]) => ({ id, username }));
 }
 
+/** 单连接发送缓冲上限：客户端停止读取时丢弃连接，避免服务端内存被无限积压 */
+const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+
 function send(socket: WebSocket, msg: unknown): void {
-  if (socket.readyState === socket.OPEN) {
-    socket.send(JSON.stringify(msg));
+  if (socket.readyState !== socket.OPEN) return;
+  if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+    socket.terminate();
+    return;
   }
+  socket.send(JSON.stringify(msg));
 }
 
 function broadcastToRoom(roomId: string, msg: unknown, except?: WebSocket): void {
@@ -444,6 +470,10 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         return;
       }
       const roomId = sanitizeRoomId(msg.payload.roomId);
+      if (!isUuid(roomId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid room id' } });
+        return;
+      }
       // 仅允许房间成员订阅该房间的实时消息
       const member = await db.query('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [
         roomId,
@@ -474,6 +504,10 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         return;
       }
       const roomId = sanitizeRoomId(msg.payload.roomId);
+      if (!isUuid(roomId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid room id' } });
+        return;
+      }
       const found = await db.query<{ owner_id: string }>('SELECT owner_id FROM rooms WHERE id = $1', [roomId]);
       if (found.rows.length === 0) {
         send(conn.socket, { type: 'error', payload: { code: 'room_not_found', message: 'room not found' } });
@@ -499,6 +533,10 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         }
         rooms.delete(roomId);
       }
+      // 内存订阅同步清理：否则成员在删房后仍能通过旧订阅发送，撞 FK 报 internal_error
+      for (const c of connections) {
+        if (c.rooms.delete(roomId) && c.userId) removeActiveScreenShare(roomId, c.userId, undefined, false);
+      }
       break;
     }
     case 'member:kick': {
@@ -509,6 +547,14 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       }
       const roomId = sanitizeRoomId(msg.payload.roomId);
       const targetId = String(msg.payload.userId ?? '');
+      if (!isUuid(roomId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid room id' } });
+        return;
+      }
+      if (!isUuid(targetId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid user id' } });
+        return;
+      }
       const found = await db.query<{ owner_id: string }>('SELECT owner_id FROM rooms WHERE id = $1', [roomId]);
       if (found.rows.length === 0) {
         send(conn.socket, { type: 'error', payload: { code: 'room_not_found', message: 'room not found' } });
@@ -527,7 +573,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         targetId,
       ]);
       if (isMember.rows.length === 0) {
-        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'target is not a member', roomId } });
+        send(conn.socket, { type: 'error', payload: { code: 'target_not_in_room', message: 'target is not a member', roomId } });
         return;
       }
       await db.query('DELETE FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, targetId]);
@@ -584,7 +630,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       }
       const isMember = await db.query('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, targetId]);
       if (isMember.rows.length === 0) {
-        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'target is not a member', roomId } });
+        send(conn.socket, { type: 'error', payload: { code: 'target_not_in_room', message: 'target is not a member', roomId } });
         return;
       }
       await db.query(
@@ -606,6 +652,14 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       }
       const roomId = sanitizeRoomId(msg.payload.roomId);
       const targetId = String(msg.payload.userId ?? '');
+      if (!isUuid(roomId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid room id' } });
+        return;
+      }
+      if (!isUuid(targetId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid user id' } });
+        return;
+      }
       const found = await db.query<{ owner_id: string }>('SELECT owner_id FROM rooms WHERE id = $1', [roomId]);
       if (found.rows.length === 0) {
         send(conn.socket, { type: 'error', payload: { code: 'room_not_found', message: 'room not found' } });
@@ -629,8 +683,9 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       const mediaUrl = typeof msg.payload.mediaUrl === 'string' ? msg.payload.mediaUrl : null;
       // 表情消息：客户端带 kind='sticker' 提示（仅在有媒体时生效），渲染更小且不包气泡
       const mediaKind: 'image' | 'sticker' = msg.payload.kind === 'sticker' ? 'sticker' : 'image';
-      // 图片消息允许空文本；纯文本消息仍拒绝空串（mediaUrls 视为有内容）
-      if (!text && !mediaUrl && !Array.isArray(msg.payload.mediaUrls)) {
+      // 图片消息允许空文本；纯文本消息仍拒绝空串（mediaUrls 非空才算有内容——空数组不算）
+      const hasMediaList = Array.isArray(msg.payload.mediaUrls) && msg.payload.mediaUrls.length > 0;
+      if (!text && !mediaUrl && !hasMediaList) {
         send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'message is empty' } });
         return;
       }
@@ -705,10 +760,9 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         }
         if (list.length > 0) {
           storedMediaUrls = list;
-          if (!storedMediaUrl) {
-            storedMediaUrl = list[0];
-            kind = mediaKind;
-          }
+          // media_url 恒等于首图（客户端可能同时传 mediaUrl，若不一致会导致新旧客户端渲染不同图）
+          storedMediaUrl = list[0];
+          kind = mediaKind;
         }
       }
       // 引用回复：校验同房间原消息；快照（截断 80 字，原消息已撤回则占位）随消息入库与广播
@@ -774,6 +828,10 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
         return;
       }
+      if (!isUuid(messageId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid message id', roomId } });
+        return;
+      }
       const found = await db.query<{ user_id: string }>(
         'SELECT user_id FROM messages WHERE id = $1 AND room_id = $2 AND recalled = false',
         [messageId, roomId],
@@ -813,11 +871,12 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       const text = safeText(msg.payload.text);
       const mediaUrl = typeof msg.payload.mediaUrl === 'string' ? msg.payload.mediaUrl : null;
       const mediaKind: 'image' | 'sticker' = msg.payload.kind === 'sticker' ? 'sticker' : 'image';
-      if (!text && !mediaUrl && !Array.isArray(msg.payload.mediaUrls)) {
+      const hasMediaList = Array.isArray(msg.payload.mediaUrls) && msg.payload.mediaUrls.length > 0;
+      if (!text && !mediaUrl && !hasMediaList) {
         send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'message is empty', to, from: conn.userId } });
         return;
       }
-      if (!to || to === conn.userId) {
+      if (!isUuid(to) || to === conn.userId) {
         send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid dm target', to, from: conn.userId } });
         return;
       }
@@ -893,10 +952,8 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         }
         if (list.length > 0) {
           storedMediaUrls = list;
-          if (!storedMediaUrl) {
-            storedMediaUrl = list[0];
-            kind = mediaKind;
-          }
+          storedMediaUrl = list[0];
+          kind = mediaKind;
         }
       }
       // 引用回复：原消息必须属于本会话（双向对）；快照随消息入库与广播
@@ -966,6 +1023,10 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
         return;
       }
+      if (!isUuid(messageId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid message id', roomId } });
+        return;
+      }
       const found = await db.query<{ user_id: string }>(
         'SELECT user_id FROM messages WHERE id = $1 AND room_id = $2 AND recalled = false',
         [messageId, roomId],
@@ -979,14 +1040,16 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'only_sender', message: '只有发送者可以编辑消息' } });
         return;
       }
+      // 编辑后重算提及：只改 text 会让「编辑时新增的 @」永远不生效（历史/高亮/通知全部滞后）
+      const mentions = await resolveMentions(db, roomId, conn.userId, text, msg.payload.mentions);
       const updated = await db.query<{ edited_at: string }>(
-        'UPDATE messages SET text = $2, edited_at = now() WHERE id = $1 AND recalled = false RETURNING edited_at',
-        [messageId, text],
+        'UPDATE messages SET text = $2, mentions = $3::jsonb, edited_at = now() WHERE id = $1 AND recalled = false RETURNING edited_at',
+        [messageId, text, JSON.stringify(mentions)],
       );
       if (updated.rows.length > 0) {
         broadcastToRoom(roomId, {
           type: 'message:edited',
-          payload: { roomId, messageId, text, editedAt: new Date(updated.rows[0].edited_at).toISOString() },
+          payload: { roomId, messageId, text, mentions, editedAt: new Date(updated.rows[0].edited_at).toISOString() },
         });
       }
       break;
@@ -998,6 +1061,10 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         return;
       }
       const messageId = sanitizeRoomId(msg.payload.messageId);
+      if (!isUuid(messageId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid message id' } });
+        return;
+      }
       const found = await db.query<{ sender_id: string; recipient_id: string }>(
         'SELECT sender_id, recipient_id FROM dm_messages WHERE id = $1 AND recalled = false',
         [messageId],
@@ -1012,7 +1079,7 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         return;
       }
       const updated = await db.query<{ id: string }>(
-        "UPDATE dm_messages SET recalled = true, text = '', media_url = NULL WHERE id = $1 RETURNING id",
+        "UPDATE dm_messages SET recalled = true, text = '', media_url = NULL, media_urls = NULL WHERE id = $1 RETURNING id",
         [messageId],
       );
       if (updated.rows.length > 0) {
@@ -1031,6 +1098,10 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
       const text = safeText(msg.payload.text);
       if (!text) {
         send(conn.socket, { type: 'error', payload: { code: 'empty_message', message: 'edited text is empty' } });
+        return;
+      }
+      if (!isUuid(messageId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid message id' } });
         return;
       }
       const found = await db.query<{ sender_id: string; recipient_id: string }>(
@@ -1076,6 +1147,10 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           type: 'error',
           payload: { code: 'invalid_input', message: 'forward requires exactly one target' },
         });
+        return;
+      }
+      if (!isUuid(messageId) || (targetRoomId ? !isUuid(targetRoomId) : !isUuid(targetUserId))) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid id' } });
         return;
       }
 
@@ -1218,6 +1293,10 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         return;
       }
       const roomId = sanitizeRoomId(msg.payload.roomId);
+      if (!isUuid(roomId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid room id' } });
+        return;
+      }
       const member = await db.query('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, conn.userId]);
       if (member.rows.length === 0 || !conn.rooms.has(roomId)) {
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
@@ -1265,12 +1344,17 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
         return;
       }
+      if (!isUuid(targetId)) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid signal target', roomId } });
+        return;
+      }
       const both = await db.query(
         `SELECT 1 FROM room_members WHERE room_id = $1 AND user_id IN ($2, $3) LIMIT 2`,
         [roomId, conn.userId, targetId],
       );
       if (Number(both.rows.length) !== 2) {
-        send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'target not in room', roomId } });
+        // 与「我不在房间」区分：目标已不在房间不该让发送方丢掉自己的房间
+        send(conn.socket, { type: 'error', payload: { code: 'target_not_in_room', message: 'target not in room', roomId } });
         return;
       }
       // 转发带上 roomId，观看端据此把信令路由到对应房间的共享会话
