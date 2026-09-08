@@ -3788,3 +3788,145 @@ textarea.composer-input {
   line-height: 1.6;
   margin-bottom: 14px;
 }
+
+/* ===== 屏幕共享控制条（采集窗共享中形态）===== */
+.share-bar {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  padding: 10px;
+  box-sizing: border-box;
+  background: rgba(26, 29, 37, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  color: #e8eaf2;
+  font-size: 12px;
+  user-select: none;
+  overflow: hidden;
+}
+.share-bar-preview {
+  width: 108px;
+  height: 61px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: #0f1116;
+  object-fit: cover;
+  pointer-events: none;
+}
+.share-bar-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  flex: 1;
+}
+.share-bar-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: move;
+}
+.share-bar-dot {
+  color: #ff5a5f;
+  font-size: 10px;
+  animation: share-pulse 1.6s ease-in-out infinite;
+}
+@keyframes share-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.share-bar-live {
+  font-weight: 600;
+}
+.share-bar-viewers {
+  color: #9aa2b4;
+  margin-left: auto;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+.share-bar-close {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(229, 72, 77, 0.18);
+  color: #ff8a8f;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+.share-bar-close:hover {
+  background: rgba(229, 72, 77, 0.34);
+}
+.share-bar-stats {
+  color: #9aa2b4;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.share-bar-actions {
+  display: flex;
+  gap: 5px;
+  flex-wrap: nowrap;
+}
+.share-chip {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: #b9c0cf;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+.share-chip:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+.share-chip.active {
+  background: rgba(51, 112, 255, 0.22);
+  border-color: rgba(51, 112, 255, 0.55);
+  color: #dbe6ff;
+}
+
+/* ===== 观看窗工具条 ===== */
+.screen-viewer-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.screen-viewer-stats {
+  color: #8d94a6;
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.screen-viewer-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.screen-tool {
+  border: none;
+  background: rgba(255, 255, 255, 0.07);
+  color: #dfe3ee;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+.screen-tool:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+.screen-volume {
+  width: 76px;
+  accent-color: #3370ff;
+  cursor: pointer;
+}

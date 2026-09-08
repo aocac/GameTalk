@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
+import type { ShareQuality } from './screenShare';
+
+export type { ShareQuality };
 
 export type OverlayPosition =
   | 'top-left'
@@ -24,6 +27,8 @@ export interface AppSettings {
   serverUrl: string;
   /** 消息提示音开关 */
   soundEnabled: boolean;
+  /** 提示音音量（0-100） */
+  soundVolume: number;
   /** Windows 系统通知档位 */
   notifyLevel: NotifyLevel;
   /** 游戏模式开关 */
@@ -44,8 +49,15 @@ export interface AppSettings {
   useProxy: boolean;
   /** 代理地址，如 127.0.0.1:7890 */
   proxyAddress: string;
+  /** 屏幕共享画质档位：清晰优先 / 流畅优先 / 省流量 */
+  shareQuality: ShareQuality;
+  /** 屏幕共享上行总预算（Mbps）：按观看人数分摊，每路有下限 */
+  shareBudgetMbps: number;
+  /** 共享包含系统声音时，静音本应用的提示音（避免自己的提示音被采进共享流） */
+  shareMuteOwnSounds: boolean;
   setServerUrl: (url: string) => void;
   setSoundEnabled: (v: boolean) => void;
+  setSoundVolume: (v: number) => void;
   setNotifyLevel: (v: NotifyLevel) => void;
   setGameModeEnabled: (v: boolean) => void;
   setHotkey: (v: string) => void;
@@ -56,6 +68,9 @@ export interface AppSettings {
   setOverlayDurationSec: (v: number) => void;
   setUseProxy: (v: boolean) => void;
   setProxyAddress: (v: string) => void;
+  setShareQuality: (v: ShareQuality) => void;
+  setShareBudgetMbps: (v: number) => void;
+  setShareMuteOwnSounds: (v: boolean) => void;
 }
 
 export const DEFAULT_SERVER_URL = 'http://127.0.0.1:8787';
@@ -96,6 +111,7 @@ export const useSettings = create<AppSettings>()(
     (set) => ({
       serverUrl: DEFAULT_SERVER_URL,
       soundEnabled: true,
+      soundVolume: 70,
       notifyLevel: 'mention',
       gameModeEnabled: true,
       hotkey: DEFAULT_HOTKEY,
@@ -106,8 +122,12 @@ export const useSettings = create<AppSettings>()(
       overlayDurationSec: 6,
       useProxy: false,
       proxyAddress: '',
+      shareQuality: 'balanced',
+      shareBudgetMbps: 12,
+      shareMuteOwnSounds: true,
       setServerUrl: (serverUrl) => set({ serverUrl: serverUrl.trim().replace(/\/+$/, '') }),
       setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
+      setSoundVolume: (soundVolume) => set({ soundVolume: Math.min(100, Math.max(0, Math.round(soundVolume))) }),
       setNotifyLevel: (notifyLevel) => set({ notifyLevel }),
       setGameModeEnabled: (gameModeEnabled) => set({ gameModeEnabled }),
       setHotkey: (hotkey) => set({ hotkey: hotkey.trim() || DEFAULT_HOTKEY }),
@@ -118,6 +138,9 @@ export const useSettings = create<AppSettings>()(
       setOverlayDurationSec: (overlayDurationSec) => set({ overlayDurationSec: Math.min(30, Math.max(2, overlayDurationSec)) }),
       setUseProxy: (useProxy) => set({ useProxy }),
       setProxyAddress: (proxyAddress) => set({ proxyAddress: proxyAddress.trim() }),
+      setShareQuality: (shareQuality) => set({ shareQuality }),
+      setShareBudgetMbps: (shareBudgetMbps) => set({ shareBudgetMbps: Math.min(50, Math.max(2, shareBudgetMbps)) }),
+      setShareMuteOwnSounds: (shareMuteOwnSounds) => set({ shareMuteOwnSounds }),
     }),
     {
       name: 'gametalk-settings',

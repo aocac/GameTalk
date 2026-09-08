@@ -468,6 +468,39 @@ describe('入参校验（修复：非法 id/类型 → 500）', () => {
   });
 });
 
+describe('信令体校验（修复：畸形 data 会被原样转发给对端）', () => {
+  it('非法类型 / 超长 SDP / 非对象 data 一律拒绝', async () => {
+    const owner = await registerUser('reg_sig_owner2');
+    const peer = await registerUser('reg_sig_peer2');
+    const room = await createRoom(owner.token, '信令校验房');
+    await app.inject({ method: 'POST', url: '/api/rooms/join', headers: auth(peer.token), payload: { inviteCode: room.inviteCode } });
+
+    const ws = await connectWs(owner.token);
+    await joinWs(ws, room.id);
+
+    const cases: Array<Record<string, unknown>> = [
+      { roomId: room.id, to: peer.userId, data: { type: 'evil' } },
+      { roomId: room.id, to: peer.userId, data: 'not-an-object' },
+      { roomId: room.id, to: peer.userId, data: { type: 'offer', sdp: 'x'.repeat(20_000) } },
+      { roomId: room.id, to: peer.userId, data: { type: 'request', cid: 'x'.repeat(80) } },
+    ];
+    for (const payload of cases) {
+      const err = nextMessage(ws, (m) => m.type === 'error');
+      sendWs(ws, 'screen:signal', payload);
+      expect((await err).payload.code).toBe('invalid_input');
+    }
+
+    // 合法信令仍然透传
+    const wsPeer = await connectWs(peer.token);
+    await joinWs(wsPeer, room.id);
+    const atPeer = nextMessage(wsPeer, (m) => m.type === 'screen:signal');
+    sendWs(ws, 'screen:signal', { roomId: room.id, to: peer.userId, data: { type: 'request', cid: 'c1' } });
+    expect((await atPeer).payload.data).toMatchObject({ type: 'request', cid: 'c1' });
+    ws.close();
+    wsPeer.close();
+  });
+});
+
 describe('代理信任（修复：公网可伪造 X-Forwarded-For）', () => {
   it('只有回环/私网来源才信任 XFF', () => {
     expect(isTrustedProxy('127.0.0.1')).toBe(true);

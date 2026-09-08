@@ -189,6 +189,20 @@ function safeText(text: unknown): string {
   return typeof text === 'string' ? text.trim().slice(0, MAX_TEXT_LENGTH) : '';
 }
 
+/** WebRTC 信令体白名单：类型受限、SDP/候选大小受限，其余字段不解析原样透传 */
+const SIGNAL_TYPES = new Set(['request', 'offer', 'answer', 'candidate', 'bye']);
+const MAX_SDP_CHARS = 16 * 1024;
+
+function sanitizeSignalData(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const data = raw as Record<string, unknown>;
+  if (typeof data.type !== 'string' || !SIGNAL_TYPES.has(data.type)) return null;
+  if (data.cid !== undefined && (typeof data.cid !== 'string' || data.cid.length > 64)) return null;
+  if (data.sdp !== undefined && (typeof data.sdp !== 'string' || data.sdp.length > MAX_SDP_CHARS)) return null;
+  if (data.candidate !== undefined && (typeof data.candidate !== 'object' || data.candidate === null || Array.isArray(data.candidate))) return null;
+  return data;
+}
+
 /**
  * 解析消息提及：客户端显式选择的 ids ∪ 文本中 @用户名 的兜底解析，均须为房间成员；
  * 提及自己无意义，自动剔除。用户名唯一，按名精确匹配可靠。
@@ -1357,8 +1371,14 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'target_not_in_room', message: 'target not in room', roomId } });
         return;
       }
+      // 信令体校验（服务端不解析 SDP，但必须挡掉畸形/超大的 data，避免把垃圾转发给对端）
+      const signal = sanitizeSignalData(msg.payload.data);
+      if (!signal) {
+        send(conn.socket, { type: 'error', payload: { code: 'invalid_input', message: 'invalid signal payload', roomId } });
+        return;
+      }
       // 转发带上 roomId，观看端据此把信令路由到对应房间的共享会话
-      sendToUser(targetId, { type: 'screen:signal', payload: { from: conn.userId, roomId, data: msg.payload.data } });
+      sendToUser(targetId, { type: 'screen:signal', payload: { from: conn.userId, roomId, data: signal } });
       break;
     }
 

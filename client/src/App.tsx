@@ -1,7 +1,7 @@
 import { Fragment, useLayoutEffect, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useChat } from './stores/chat';
 import { useFriends } from './stores/friends';
 import * as api from './app/api';
@@ -9,6 +9,7 @@ import type { MentionRef, RoomMember, UserBrief } from './app/types';
 import type { RoomMessage } from './app/api';
 import { useAuth } from './stores/auth';
 import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
+import { setExternalMute } from './app/audio';
 import { BUILD_ID } from './buildInfo';
 import pkg from '../package.json';
 import * as gameMode from './app/gameMode';
@@ -493,12 +494,16 @@ async function openShareWindow(roomId: string): Promise<void> {
     new WebviewWindow(label, {
       title: 'GameTalk 屏幕共享',
       url: `share.html?room=${encodeURIComponent(roomId)}`,
+      // 选择器需要 ≥600px 高度（WebView2 已知限制），共享开始后本窗口会缩成右下角控制条
       width: 1020,
       height: 720,
-      minWidth: 900,
-      minHeight: 640,
       center: true,
-      resizable: true,
+      resizable: false,
+      decorations: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      shadow: false,
     });
   } catch {
     void useChat.getState().startScreenShare();
@@ -875,6 +880,9 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
         case 'soundEnabled':
           s.setSoundEnabled(!!value);
           break;
+        case 'soundVolume':
+          s.setSoundVolume(Number(value));
+          break;
         case 'notifyLevel':
           s.setNotifyLevel(value as 'all' | 'mention' | 'none');
           break;
@@ -1064,6 +1072,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   const gameTargetRef = useRef<gameMode.InputTarget | null>(null);
   // 输入草稿按会话（房间/私聊）独立保存：切换会话互不串扰，回来还在
   const [draftMap, setDraftMap] = useState<Record<string, string>>({});
+  /** 共享中由采集窗推送的实时状态（观看人数 / 实测码率），显示在主窗口横幅上 */
+  const [shareLive, setShareLive] = useState<{ viewers: number; kbps: number } | null>(null);
   const convKey = activeDmPeerId ? `dm:${activeDmPeerId}` : `room:${activeRoomId ?? 'none'}`;
   const draft = draftMap[convKey] ?? '';
   const setDraft = (v: string) => setDraftMap((m) => ({ ...m, [convKey]: v }));
@@ -1589,6 +1599,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
   useEffect(() => {
     let offChanged: UnlistenFn | undefined;
     let offAdjust: UnlistenFn | undefined;
+    let offShareStats: UnlistenFn | undefined;
+    let offShareMute: UnlistenFn | undefined;
     void listen<{ key?: string; value?: unknown }>('settings:changed', (e) => {
       const { key, value } = e.payload ?? {};
       if (!key) return;
@@ -1641,10 +1653,29 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           s.setProxyAddress(String(value));
           void applyProxySetting(s.useProxy, String(value));
           break;
+        case 'shareQuality':
+          s.setShareQuality(value as Parameters<typeof s.setShareQuality>[0]);
+          void emit('share:config', { quality: value }).catch(() => undefined);
+          break;
+        case 'shareBudgetMbps':
+          s.setShareBudgetMbps(Number(value));
+          void emit('share:config', { budgetMbps: Number(value) }).catch(() => undefined);
+          break;
+        case 'shareMuteOwnSounds':
+          s.setShareMuteOwnSounds(!!value);
+          break;
         default:
           break;
       }
     }).then((fn) => (offChanged = fn));
+    // 采集窗控制条推送的实时状态（观看人数 / 码率）→ 主窗口横幅
+    void listen<{ viewers?: number; kbps?: number }>('share:stats', (e) => {
+      setShareLive({ viewers: Number(e.payload?.viewers ?? 0), kbps: Number(e.payload?.kbps ?? 0) });
+    }).then((fn) => (offShareStats = fn));
+    // 采集窗的「静音提示音」开关 → 主窗口音频模块（共享带音频时本应用声音不进共享流）
+    void listen<{ muted?: boolean }>('share:audio-mute', (e) => {
+      setExternalMute(!!e.payload?.muted);
+    }).then((fn) => (offShareMute = fn));
     void listen<{ active?: boolean }>('settings:adjust-overlay', (e) => {
       if (e.payload?.active) {
         void gameMode.stopOverlayAdjust();
@@ -1658,6 +1689,8 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     return () => {
       offChanged?.();
       offAdjust?.();
+      offShareStats?.();
+      offShareMute?.();
     };
   }, []);
 
@@ -2297,7 +2330,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <>
             {screenShare.selfSharing && (
               <div className="screen-banner sharing">
-                <span>🖥 你正在本房间共享屏幕{screenShare.selfSharingAudio ? '（含共享音频）' : ''}</span>
+                <span>
+                  🖥 你正在本房间共享屏幕{screenShare.selfSharingAudio ? '（含共享音频）' : ''}
+                  {shareLive && shareLive.viewers > 0 ? ` · ${shareLive.viewers} 人观看 · ${shareLive.kbps >= 1000 ? `${(shareLive.kbps / 1000).toFixed(1)} Mbps` : `${shareLive.kbps} kbps`}` : ''}
+                </span>
                 <button className="btn ghost small" onClick={stopScreenShare}>
                   停止共享
                 </button>

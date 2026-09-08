@@ -4,6 +4,16 @@
  * - 每条观看连接用独立的 cid 标识：同一用户多台设备 / 多个窗口同时观看互不干扰。
  * - 一个客户端可同时是共享者（senders）和观看者（receivers）。
  * - SDP / ICE 经服务端 screen:signal 定向透传，媒体流不经服务器。
+ *
+ * 码率策略（v0.8 起）：
+ * - 上行是 mesh 的瓶颈：每多一个观看者就多一路编码。因此按「总预算 / 观看人数」分摊，
+ *   每路有下限（低于下限就不再降，转而提示用户少拉人或降画质档位）。
+ * - 画质档位决定单路上限与分辨率/帧率的取舍：
+ *     quality（清晰优先）  保分辨率，带宽不足时掉帧
+ *     balanced（流畅优先） 保帧率，带宽不足时降分辨率（游戏画面默认）
+ *     low（省流量）       低码率 + 主动降分辨率
+ * - 每 2s 读 getStats 自适应：丢包/延迟高就下调（最低到下限的 60%），恢复后再升回去。
+ * - ICE 断开自动 restartIce（退避 2/4/8s，连上即复位），网络抖动不再直接断流。
  */
 
 const STUN_SERVERS: RTCIceServer[] = [
@@ -29,6 +39,85 @@ type DisplayMediaOptionsWithAudioHints = DisplayMediaStreamOptions & {
   systemAudio?: 'include' | 'exclude';
   windowAudio?: 'exclude' | 'window' | 'system';
 };
+
+/** 画质档位：决定单路码率上限与分辨率/帧率取舍 */
+export type ShareQuality = 'quality' | 'balanced' | 'low';
+
+export interface ShareQualityPreset {
+  label: string;
+  /** 单路码率上限（bps） */
+  maxBitrate: number;
+  /** 分辨率降采样倍数（1 = 原始） */
+  scale: number;
+  /** 编码器降级偏好：保分辨率（掉帧）还是保帧率（降分辨率） */
+  degradation: 'maintain-resolution' | 'balanced';
+}
+
+export const QUALITY_PRESETS: Record<ShareQuality, ShareQualityPreset> = {
+  quality: { label: '清晰优先', maxBitrate: 6_000_000, scale: 1, degradation: 'maintain-resolution' },
+  balanced: { label: '流畅优先', maxBitrate: 4_000_000, scale: 1, degradation: 'balanced' },
+  low: { label: '省流量', maxBitrate: 1_500_000, scale: 1.5, degradation: 'balanced' },
+};
+
+/** 每路码率下限：低于这个值画面就没法看了，宁可不降 */
+export const MIN_PER_VIEWER_BPS = 1_200_000;
+/** 自适应下限系数（相对分摊目标） */
+const ADAPT_FLOOR = 0.6;
+/** 默认总上行预算（bps） */
+export const DEFAULT_BUDGET_BPS = 12_000_000;
+
+export interface SharePeerStats {
+  cid: string;
+  /** ICE 连接状态（connected 时带链路类型，如 connected·srflx↔host） */
+  state: string;
+  kbps: number;
+  fps: number;
+  width: number;
+  height: number;
+  rttMs: number;
+  lossPct: number;
+}
+
+export interface ShareStats {
+  role: 'sharer' | 'viewer' | 'idle';
+  audio: boolean;
+  quality: ShareQuality;
+  /** 总上行预算（共享端） */
+  budgetBps: number;
+  /** 每路当前目标码率（共享端） */
+  targetBps: number;
+  /** 实测合计码率 */
+  totalKbps: number;
+  peers: SharePeerStats[];
+}
+
+export type SignalSender = (to: string, roomId: string, data: unknown) => void;
+
+type SignalPayload = {
+  type: 'request' | 'offer' | 'answer' | 'candidate' | 'bye';
+  /** 连接 ID：同一用户的多端 / 多窗口各自一条观看连接 */
+  cid?: string;
+  sdp?: string;
+  candidate?: RTCIceCandidateInit;
+};
+
+/** 每条连接的统计与自愈状态 */
+interface PeerMeta {
+  /** 上一次采样时的累计字节与时间戳（算码率用） */
+  lastBytes: number;
+  lastTs: number;
+  kbps: number;
+  fps: number;
+  width: number;
+  height: number;
+  rttMs: number;
+  lossPct: number;
+  /** 链路类型（host/srflx/relay），连上后从 candidate-pair 读取 */
+  transport: string;
+  /** ICE 断开后的重启计时器与次数 */
+  restartTimer: ReturnType<typeof setTimeout> | null;
+  restarts: number;
+}
 
 let cachedTurn: RTCIceServer | null = null;
 let turnPromise: Promise<void> | null = null;
@@ -62,16 +151,6 @@ function iceServers(extra: RTCIceServer[] = []): RTCIceServer[] {
 // 模块加载即预热 TURN 凭据（用户点共享/观看时通常已就绪）
 ensureTurnCredential();
 
-export type SignalSender = (to: string, roomId: string, data: unknown) => void;
-
-type SignalPayload = {
-  type: 'request' | 'offer' | 'answer' | 'candidate' | 'bye';
-  /** 连接 ID：同一用户的多端 / 多窗口各自一条观看连接 */
-  cid?: string;
-  sdp?: string;
-  candidate?: RTCIceCandidateInit;
-};
-
 export class ScreenShareManager {
   private localStream: MediaStream | null = null;
   /** 我作为共享者：cid -> sender pc */
@@ -84,6 +163,8 @@ export class ScreenShareManager {
   private roomOfCid = new Map<string, string>();
   /** 观看端：共享者 ID -> 我当前观看它的 cid */
   private cidOfPeer = new Map<string, string>();
+  /** 每条连接的统计与自愈状态 */
+  private meta = new Map<string, PeerMeta>();
   private signalSender: SignalSender | null = null;
   private onRemoteStream: ((sharerId: string, stream: MediaStream) => void) | null = null;
   private onSelfStop: (() => void) | null = null;
@@ -92,6 +173,12 @@ export class ScreenShareManager {
   private extraIceServers: RTCIceServer[] = [];
   /** 本次共享是否包含音频 */
   private selfAudio = false;
+  private quality: ShareQuality = 'balanced';
+  private budgetBps = DEFAULT_BUDGET_BPS;
+  /** 自适应系数：1 = 满码率，最低 ADAPT_FLOOR */
+  private adapt = 1;
+  private statsTimer: ReturnType<typeof setInterval> | null = null;
+  private lastAdaptAt = 0;
 
   get isSharing(): boolean {
     return this.localStream !== null;
@@ -111,6 +198,61 @@ export class ScreenShareManager {
 
   setExtraIceServers(list: RTCIceServer[]): void {
     this.extraIceServers = list;
+  }
+
+  /** 画质档位（共享端生效；观看端也会记录，用于界面显示） */
+  setQuality(q: ShareQuality): void {
+    if (this.quality === q) return;
+    this.quality = q;
+    this.applyAllSenderParams();
+  }
+
+  getQuality(): ShareQuality {
+    return this.quality;
+  }
+
+  /** 总上行预算（共享端生效）：按观看人数分摊 */
+  setBudgetBps(bps: number): void {
+    const next = Math.max(2_000_000, Math.min(50_000_000, Math.round(bps)));
+    if (this.budgetBps === next) return;
+    this.budgetBps = next;
+    this.applyAllSenderParams();
+  }
+
+  /** 每路当前目标码率（分摊结果 × 自适应系数） */
+  getTargetBps(): number {
+    const viewers = Math.max(1, this.senders.size);
+    const share = Math.round(this.budgetBps / viewers);
+    const base = Math.max(MIN_PER_VIEWER_BPS, Math.min(QUALITY_PRESETS[this.quality].maxBitrate, share));
+    return Math.round(base * this.adapt);
+  }
+
+  /** 统计快照（UI 每 1~2s 轮询；内部采样定时器负责刷新） */
+  snapshot(): ShareStats {
+    const peers: SharePeerStats[] = [];
+    for (const [cid, pc] of [...this.senders, ...this.receivers]) {
+      const m = this.meta.get(cid);
+      peers.push({
+        cid,
+        state: m ? `${pc.iceConnectionState}${m.transport ? `·${m.transport}` : ''}` : pc.iceConnectionState,
+        kbps: m?.kbps ?? 0,
+        fps: m?.fps ?? 0,
+        width: m?.width ?? 0,
+        height: m?.height ?? 0,
+        rttMs: m?.rttMs ?? 0,
+        lossPct: m?.lossPct ?? 0,
+      });
+    }
+    const role: ShareStats['role'] = this.localStream ? 'sharer' : this.receivers.size > 0 ? 'viewer' : 'idle';
+    return {
+      role,
+      audio: this.selfAudio,
+      quality: this.quality,
+      budgetBps: this.budgetBps,
+      targetBps: this.getTargetBps(),
+      totalKbps: peers.reduce((sum, p) => sum + p.kbps, 0),
+      peers,
+    };
   }
 
   /** 发起共享：请求屏幕 + 系统声音；最终是否有音轨由 WebView2 原生选择器决定。
@@ -147,12 +289,19 @@ export class ScreenShareManager {
     if (track) track.contentHint = 'motion';
     this.selfAudio = this.localStream.getAudioTracks().length > 0;
     this.roomOfCid.set('__self__', roomId);
+    this.adapt = 1;
     this.localStream.getVideoTracks()[0]?.addEventListener('ended', () => this.stopLocal());
+    this.startStats();
   }
 
   /** 本次共享是否包含音频（系统声音）；供主窗口抑制本地提示音（避免回流进共享流） */
   get hasAudio(): boolean {
     return this.selfAudio;
+  }
+
+  /** 本地采集流（采集窗控制条预览用；只读，调用方不要 stop 它） */
+  localStreamForPreview(): MediaStream | null {
+    return this.localStream;
   }
 
   /** 我作为观看者，主动请求观看 sharerId 的共享（晚加入靠这个触发共享者重新 offer） */
@@ -167,6 +316,7 @@ export class ScreenShareManager {
     this.roomOfCid.set(cid, roomId);
     this.receivers.set(cid, this.createPeerConnection(cid, false));
     this.signalSender?.(sharerId, roomId, { type: 'request', cid });
+    this.startStats();
   }
 
   /** 停止观看某个共享者：释放本地连接并通知共享者释放对应的那一路 */
@@ -176,6 +326,14 @@ export class ScreenShareManager {
     const roomId = this.roomOfCid.get(cid) ?? '';
     this.signalSender?.(sharerId, roomId, { type: 'bye', cid });
     this.dropReceiver(cid);
+  }
+
+  /** 信令通道重连后重发观看请求（带原 cid）：共享端对已连通的连接保持不动，媒体不中断 */
+  resendRequests(): void {
+    for (const [sharerId, cid] of this.cidOfPeer) {
+      const roomId = this.roomOfCid.get(cid) ?? '';
+      this.signalSender?.(sharerId, roomId, { type: 'request', cid });
+    }
   }
 
   /** 处理收到的信令（from 为对端用户 ID，roomId 为该共享所属房间） */
@@ -203,20 +361,24 @@ export class ScreenShareManager {
       this.peerOfCid.set(key, from);
       this.roomOfCid.set(key, roomId);
       const existing = this.senders.get(key);
-      if (existing) existing.close();
+      if (existing) {
+        const st = existing.iceConnectionState;
+        // 重复 request（观看端信令重连后重发，带同一个 cid）：连接还活着就保持不动，
+        // 否则会把正在跑的媒体连接拆掉重建——这是重连场景最容易踩的坑
+        if (st === 'connected' || st === 'completed' || st === 'checking' || st === 'new') {
+          this.applyAllSenderParams();
+          return;
+        }
+        existing.close();
+      }
       this.senders.set(key, this.createPeerConnection(key, true));
       for (const track of this.localStream.getTracks()) {
         const sender = this.senders.get(key)!.addTrack(track, this.localStream);
-        // 保分辨率优先（8Mbps 上限下清晰度不再妥协；带宽不足时表现为降帧而非降分辨率）
-        try {
-          const params = sender.getParameters();
-          params.encodings = [{ ...(params.encodings?.[0] ?? {}), maxBitrate: 8_000_000, scaleResolutionDownBy: 1 }];
-          (params as RTCRtpSendParameters & { degradationPreference?: string }).degradationPreference = 'maintain-resolution';
-          void sender.setParameters(params);
-        } catch {
-          /* 某些环境不支持动态 setParameters，忽略 */
-        }
+        this.applySenderParams(sender, track.kind);
       }
+      // 观看人数变了 → 重新分摊码率
+      this.applyAllSenderParams();
+      this.startStats();
       return;
     }
 
@@ -259,6 +421,8 @@ export class ScreenShareManager {
     this.localStream?.getTracks().forEach((t) => t.stop());
     this.localStream = null;
     for (const cid of [...this.senders.keys()]) this.dropConnection(cid);
+    this.adapt = 1;
+    this.maybeStopStats();
     const cb = this.onSelfStop;
     this.onSelfStop = null;
     cb?.();
@@ -270,6 +434,8 @@ export class ScreenShareManager {
     this.localStream = null;
     for (const cid of [...this.senders.keys(), ...this.receivers.keys()]) this.dropConnection(cid);
     this.onSelfStop = null;
+    this.adapt = 1;
+    this.maybeStopStats();
   }
 
   /** 释放我作为观看者的某一路（不发 bye） */
@@ -280,6 +446,8 @@ export class ScreenShareManager {
     if (peer && this.cidOfPeer.get(peer) === cid) this.cidOfPeer.delete(peer);
     this.peerOfCid.delete(cid);
     this.roomOfCid.delete(cid);
+    this.clearMeta(cid);
+    this.maybeStopStats();
   }
 
   /** 按 cid 释放任意一侧连接与映射 */
@@ -292,12 +460,193 @@ export class ScreenShareManager {
     if (peer && this.cidOfPeer.get(peer) === cid) this.cidOfPeer.delete(peer);
     this.peerOfCid.delete(cid);
     this.roomOfCid.delete(cid);
+    this.clearMeta(cid);
+    // 观看人数减少 → 剩余各路可以多分一点带宽
+    this.applyAllSenderParams();
+    this.maybeStopStats();
+  }
+
+  private clearMeta(cid: string): void {
+    const m = this.meta.get(cid);
+    if (m?.restartTimer) clearTimeout(m.restartTimer);
+    this.meta.delete(cid);
+  }
+
+  private ensureMeta(cid: string): PeerMeta {
+    let m = this.meta.get(cid);
+    if (!m) {
+      m = {
+        lastBytes: 0,
+        lastTs: 0,
+        kbps: 0,
+        fps: 0,
+        width: 0,
+        height: 0,
+        rttMs: 0,
+        lossPct: 0,
+        transport: '',
+        restartTimer: null,
+        restarts: 0,
+      };
+      this.meta.set(cid, m);
+    }
+    return m;
+  }
+
+  /** 按当前档位与分摊结果，给某条 sender 的每路轨道设置编码参数 */
+  private applySenderParams(sender: RTCRtpSender, kind: string): void {
+    const preset = QUALITY_PRESETS[this.quality];
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+      const enc = { ...params.encodings[0] };
+      if (kind === 'audio') {
+        // 系统声音默认 Opus 码率偏低，显式提到 128k，音乐/游戏音效不至于糊
+        enc.maxBitrate = 128_000;
+      } else {
+        enc.maxBitrate = this.getTargetBps();
+        enc.scaleResolutionDownBy = preset.scale;
+      }
+      params.encodings = [enc];
+      if (kind === 'video') {
+        (params as RTCRtpSendParameters & { degradationPreference?: string }).degradationPreference = preset.degradation;
+      }
+      void sender.setParameters(params).catch(() => undefined);
+    } catch {
+      /* 某些环境不支持动态 setParameters，忽略 */
+    }
+  }
+
+  /** 重算所有 sender 的码率（观看人数 / 档位 / 预算 / 自适应变化时调用） */
+  private applyAllSenderParams(): void {
+    for (const pc of this.senders.values()) {
+      for (const sender of pc.getSenders()) {
+        const kind = sender.track?.kind;
+        if (!kind) continue;
+        this.applySenderParams(sender, kind);
+      }
+    }
+  }
+
+  private startStats(): void {
+    if (this.statsTimer) return;
+    this.statsTimer = setInterval(() => void this.sampleStats(), 2000);
+  }
+
+  private maybeStopStats(): void {
+    if (this.statsTimer && this.senders.size === 0 && this.receivers.size === 0) {
+      clearInterval(this.statsTimer);
+      this.statsTimer = null;
+    }
+  }
+
+  /** 采样所有连接的统计，并按丢包/延迟做码率自适应 */
+  private async sampleStats(): Promise<void> {
+    const now = performance.now();
+    let worstLoss = 0;
+    let worstRtt = 0;
+    for (const [cid, pc] of [...this.senders, ...this.receivers]) {
+      const m = this.ensureMeta(cid);
+      let bytes = 0;
+      let fps = 0;
+      let width = 0;
+      let height = 0;
+      let rtt = 0;
+      let lost = 0;
+      let sent = 0;
+      try {
+        const stats = await pc.getStats();
+        stats.forEach((r) => {
+          const rr = r as Record<string, unknown>;
+          const isSender = this.senders.has(cid);
+          if (isSender && rr.type === 'outbound-rtp' && rr.kind === 'video') {
+            bytes = Number(rr.bytesSent ?? 0);
+            fps = Number(rr.framesPerSecond ?? 0);
+            width = Number(rr.frameWidth ?? 0);
+            height = Number(rr.frameHeight ?? 0);
+          } else if (!isSender && rr.type === 'inbound-rtp' && rr.kind === 'video') {
+            bytes = Number(rr.bytesReceived ?? 0);
+            fps = Number(rr.framesPerSecond ?? 0);
+            width = Number(rr.frameWidth ?? 0);
+            height = Number(rr.frameHeight ?? 0);
+            lost = Number(rr.packetsLost ?? 0);
+            sent = Number(rr.packetsReceived ?? 0) + lost;
+          } else if (rr.type === 'remote-inbound-rtp' && rr.kind === 'video') {
+            // 共享端可见的「对端反馈」：丢包与往返延迟
+            lost = Number(rr.packetsLost ?? 0);
+            sent = Number(rr.packetsSent ?? 0) + lost;
+            rtt = Math.round(Number(rr.roundTripTime ?? 0) * 1000);
+          } else if (rr.type === 'candidate-pair' && (rr.selected === true || (rr.state === 'succeeded' && rr.nominated === true))) {
+            const local = (stats.get(rr.localCandidateId as string) as Record<string, unknown> | undefined)?.candidateType ?? '';
+            const remote = (stats.get(rr.remoteCandidateId as string) as Record<string, unknown> | undefined)?.candidateType ?? '';
+            if (local || remote) m.transport = `${local}↔${remote}`;
+          }
+        });
+      } catch {
+        continue;
+      }
+      if (m.lastTs > 0 && now > m.lastTs) {
+        const deltaBytes = Math.max(0, bytes - m.lastBytes);
+        m.kbps = Math.round((deltaBytes * 8) / (now - m.lastTs));
+      }
+      m.lastBytes = bytes;
+      m.lastTs = now;
+      if (fps) m.fps = fps;
+      if (width) m.width = width;
+      if (height) m.height = height;
+      if (rtt) m.rttMs = rtt;
+      if (sent > 0) m.lossPct = Math.min(100, Math.round((lost / sent) * 1000) / 10);
+      if (this.senders.has(cid)) {
+        worstLoss = Math.max(worstLoss, m.lossPct);
+        worstRtt = Math.max(worstRtt, m.rttMs);
+      }
+    }
+    // 自适应：只由共享端驱动（观看端改了也没用）
+    if (this.senders.size > 0) this.adaptBitrate(worstLoss, worstRtt, now);
+  }
+
+  private adaptBitrate(lossPct: number, rttMs: number, now: number): void {
+    // 两次调整至少间隔 4s，避免抖动
+    if (now - this.lastAdaptAt < 4000) return;
+    const before = this.adapt;
+    if (lossPct > 5 || rttMs > 400) {
+      this.adapt = Math.max(ADAPT_FLOOR, this.adapt * 0.75);
+    } else if (lossPct < 1 && rttMs < 200) {
+      this.adapt = Math.min(1, this.adapt * 1.15);
+    }
+    if (Math.abs(this.adapt - before) > 0.01) {
+      this.lastAdaptAt = now;
+      this.applyAllSenderParams();
+    }
+  }
+
+  /** ICE 断线自愈：disconnected 等 2s 再重启，failed 立即重启；退避 2/4/8s，最多 4 次 */
+  private scheduleIceRestart(cid: string, pc: RTCPeerConnection, delayMs: number): void {
+    const m = this.ensureMeta(cid);
+    if (m.restartTimer) return;
+    if (m.restarts >= 4) return;
+    m.restartTimer = setTimeout(() => {
+      m.restartTimer = null;
+      const state = pc.iceConnectionState;
+      if (state === 'connected' || state === 'completed' || state === 'closed') return;
+      m.restarts += 1;
+      try {
+        pc.restartIce();
+      } catch {
+        /* 不支持则等下一次尝试 */
+      }
+      const peer = this.peerOfCid.get(cid) ?? '';
+      this.onIceState?.(peer, `restarting#${m.restarts}`);
+      // 下一次重启用更长的退避
+      if (m.restarts < 4) this.scheduleIceRestart(cid, pc, Math.min(8000, delayMs * 2));
+    }, delayMs);
   }
 
   private createPeerConnection(cid: string, isSender: boolean): RTCPeerConnection {
     const pc = new RTCPeerConnection({ iceServers: iceServers(this.extraIceServers) });
     const room = this.roomOfCid.get(cid) ?? '';
     const peer = this.peerOfCid.get(cid) ?? '';
+    this.ensureMeta(cid);
     pc.onicecandidate = (ev) => {
       if (ev.candidate) this.signalSender?.(peer, room, { type: 'candidate', cid, candidate: ev.candidate.toJSON() });
     };
@@ -309,24 +658,22 @@ export class ScreenShareManager {
     };
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
-      this.onIceState?.(peer, state);
-      // 连上后补报选中链路的候选类型（host=同网直连 / srflx=STUN 打洞 / relay=TURN 中继），
-      // 让「画面卡/糊/断」的实测反馈能直接读出传输路径
+      const m = this.ensureMeta(cid);
       if (state === 'connected' || state === 'completed') {
-        void pc
-          .getStats()
-          .then((stats) => {
-            let pair: Record<string, unknown> | undefined;
-            stats.forEach((r) => {
-              const rr = r as Record<string, unknown>;
-              if (rr.type === 'candidate-pair' && (rr.selected === true || (rr.state === 'succeeded' && rr.nominated === true))) pair = rr;
-            });
-            if (!pair) return;
-            const local = (stats.get(pair.localCandidateId as string) as Record<string, unknown> | undefined)?.candidateType ?? '';
-            const remote = (stats.get(pair.remoteCandidateId as string) as Record<string, unknown> | undefined)?.candidateType ?? '';
-            this.onIceState?.(peer, `${state}·${local}↔${remote}`);
-          })
-          .catch(() => undefined);
+        m.restarts = 0;
+        if (m.restartTimer) {
+          clearTimeout(m.restartTimer);
+          m.restartTimer = null;
+        }
+        this.onIceState?.(peer, `${state}${m.transport ? `·${m.transport}` : ''}`);
+      } else if (state === 'disconnected') {
+        this.onIceState?.(peer, state);
+        this.scheduleIceRestart(cid, pc, 2000);
+      } else if (state === 'failed') {
+        this.onIceState?.(peer, state);
+        this.scheduleIceRestart(cid, pc, 500);
+      } else if (state === 'closed') {
+        this.onIceState?.(peer, state);
       }
     };
     pc.onnegotiationneeded = async () => {

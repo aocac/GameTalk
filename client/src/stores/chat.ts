@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { ChatSocket } from '../app/ws';
-import { playMessageSound, playSendSound } from '../app/audio';
+import { playMessageSound, playMentionSound, playSendSound } from '../app/audio';
 import { useSettings, DEFAULT_HOTKEY } from '../app/settings';
 import { useAuth } from './auth';
 import { useFriends } from './friends';
@@ -678,7 +678,9 @@ export const useChat = create<ChatState>()((set, get) => ({
                 },
               }));
             }
-            playMessageSound(useSettings.getState().soundEnabled);
+            // @我 用更亮的提示音，和普通消息区分开
+            if (mentionedMe) playMentionSound(useSettings.getState().soundEnabled);
+            else playMessageSound(useSettings.getState().soundEnabled);
             // Windows 系统通知：按设置档位（仅@我 / 全部；当前正打开的房间不弹，消息就在眼前）
             const level = useSettings.getState().notifyLevel;
             if (!viewing && (level === 'all' || (level === 'mention' && mentionedMe))) {

@@ -2,17 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { emit } from '@tauri-apps/api/event';
-import { ScreenShareManager } from './app/screenShare';
+import { ScreenShareManager, type ShareStats } from './app/screenShare';
+import { SignalSocket, wsUrlOfServerUrl } from './app/signalSocket';
 import { getTurnCredentials } from './app/api';
 import './App.css';
 
 /**
  * 屏幕共享独立观看窗。
- * MediaStream 不能跨 webview 传递，因此本窗口自持一条 WebSocket 信令连接（同源共享 localStorage 的 token）
+ * MediaStream 不能跨 webview 传递，因此本窗口自持一条可自动重连的 WS 信令连接（同源共享 localStorage 的 token）
  * 并建立自己的 RTCPeerConnection；观看结束/关窗时发 `bye` 让共享者释放对应连接，并通知主窗口更新状态。
+ * 信令重连后带原 cid 重发 request——共享端对已连通的连接保持不动，媒体不中断。
  */
 
-type Status = 'connecting' | 'live' | 'ended' | 'closed' | 'error';
+type Status = 'connecting' | 'live' | 'ended' | 'error';
 
 function readToken(): string {
   try {
@@ -41,8 +43,14 @@ function ScreenWindow() {
   const [status, setStatus] = useState<Status>('connecting');
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [ice, setIce] = useState<string | undefined>(undefined);
+  const [stats, setStats] = useState<ShareStats | null>(null);
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const byeRef = useRef<(() => void) | null>(null);
+  const sockRef = useRef<SignalSocket | null>(null);
+  const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const statusRef = useRef<Status>('connecting');
   statusRef.current = status;
 
@@ -53,80 +61,67 @@ function ScreenWindow() {
       return;
     }
     const mgr = new ScreenShareManager();
-    let ws: WebSocket | null = null;
-    let pingTimer: ReturnType<typeof setInterval> | null = null;
     let disposed = false;
+    let watching = false;
 
-    const send = (payload: object) => {
-      try {
-        ws?.send(JSON.stringify(payload));
-      } catch {
-        /* 连接已断 */
-      }
-    };
-    byeRef.current = () => send({ type: 'screen:signal', payload: { roomId: room, to: sharer, data: { type: 'bye' } } });
+    const sock = new SignalSocket({
+      url: wsUrlOfServerUrl(readServerUrl()),
+      token,
+      roomId: room,
+      onMessage: (msg) => {
+        switch (msg.type) {
+          case 'screen:signal':
+            void mgr.handleSignal(String(msg.payload?.from ?? ''), String(msg.payload?.roomId ?? room), msg.payload?.data);
+            break;
+          case 'screen:stopped':
+            setStatus('ended');
+            setStream(null);
+            window.setTimeout(() => void closeWindow(), 2500);
+            break;
+          case 'error':
+            setStatus('error');
+            break;
+          default:
+            break;
+        }
+      },
+      onJoined: () => {
+        // 首次连上：拿自建 TURN 凭据（receiver 的 ICE 配置构造时固定）后请求观看；
+        // 重连：带原 cid 重发 request，已连通的媒体连接不受影响
+        void getTurnCredentials(token)
+          .then(({ iceServers }) => mgr.setExtraIceServers(iceServers as unknown as RTCIceServer[]))
+          .catch(() => undefined)
+          .then(() => {
+            if (disposed) return;
+            if (watching) mgr.resendRequests();
+            else {
+              mgr.watch(sharer, room);
+              watching = true;
+            }
+          });
+      },
+    });
+    sockRef.current = sock;
+    byeRef.current = () => sock.send({ type: 'screen:signal', payload: { roomId: room, to: sharer, data: { type: 'bye' } } });
 
-    mgr.setSignalSender((to, rid, data) => send({ type: 'screen:signal', payload: { roomId: rid, to, data } }));
+    mgr.setSignalSender((to, rid, data) => sock.send({ type: 'screen:signal', payload: { roomId: rid, to, data } }));
     mgr.setRemoteStreamHandler((_id, s) => {
       setStream(s);
       setStatus('live');
     });
     mgr.setIceStateHandler((_id, st) => setIce(st));
+    sock.connect();
 
-    ws = new WebSocket(readServerUrl().replace(/^http/, 'ws') + '/ws');
-    ws.onopen = () => send({ type: 'hello', payload: { token } });
-    ws.onmessage = (ev) => {
-      if (disposed) return;
-      let msg: { type: string; payload?: Record<string, unknown> };
-      try {
-        msg = JSON.parse(String(ev.data));
-      } catch {
-        return;
-      }
-      switch (msg.type) {
-        case 'hello:ok':
-          send({ type: 'room:join', payload: { roomId: room } });
-          break;
-        case 'room:joined':
-          // 先拿自建 TURN 凭据再请求观看（receiver 的 ICE 配置构造时固定）
-          void getTurnCredentials(token)
-            .then(({ iceServers }) => mgr.setExtraIceServers(iceServers as unknown as RTCIceServer[]))
-            .catch(() => undefined)
-            .then(() => {
-              if (!disposed) mgr.watch(sharer, room);
-            });
-          break;
-        case 'screen:signal':
-          void mgr.handleSignal(String(msg.payload?.from ?? ''), String(msg.payload?.roomId ?? room), msg.payload?.data);
-          break;
-        case 'screen:stopped':
-          setStatus('ended');
-          setStream(null);
-          window.setTimeout(() => void closeWindow(), 2500);
-          break;
-        case 'error':
-          setStatus('error');
-          break;
-        default:
-          break;
-      }
-    };
-    ws.onclose = () => {
-      if (!disposed && statusRef.current !== 'ended') setStatus('closed');
-    };
-    pingTimer = setInterval(() => send({ type: 'ping' }), 15000);
+    statsTimerRef.current = setInterval(() => setStats(mgr.snapshot()), 1500);
 
     return () => {
       disposed = true;
-      if (pingTimer) clearInterval(pingTimer);
+      if (statsTimerRef.current) clearInterval(statsTimerRef.current);
       byeRef.current?.();
       void emit('screen-window-closed', { sharer }).catch(() => undefined);
       mgr.stopAll();
-      try {
-        ws?.close();
-      } catch {
-        /* ignore */
-      }
+      sock.close();
+      sockRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -171,22 +166,12 @@ function ScreenWindow() {
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !stream) return;
+    // 先静音起播（绕过自动播放策略），随后由下面的音量/静音 effect 按用户状态同步
     v.muted = true;
     v.playsInline = true;
     v.srcObject = stream;
     void v.play().catch(() => {});
-    // 流里有音频轨时解除自动播放静音，观看端才能听到共享的系统声音；
-    // 音频轨可能晚于视频轨到达，补一个 addtrack 监听
-    const unmute = () => {
-      if (stream.getAudioTracks().length > 0) {
-        v.muted = false;
-        void v.play().catch(() => {});
-      }
-    };
-    unmute();
-    stream.addEventListener('addtrack', unmute);
     return () => {
-      stream.removeEventListener('addtrack', unmute);
       try {
         v.pause();
       } catch {
@@ -196,21 +181,90 @@ function ScreenWindow() {
     };
   }, [stream]);
 
-  const failed = ice === 'failed' || ice === 'disconnected' || ice === 'closed';
+  // 音量/静音的唯一来源：起播后（含音频轨晚到的情况）都以此为准
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.volume = volume;
+    v.muted = muted;
+    if (!muted) void v.play().catch(() => {});
+  }, [volume, muted, stream]);
+
+  const hasAudio = !!stream && stream.getAudioTracks().length > 0;
+  const peer = stats?.peers[0];
+  const res = peer && peer.width ? `${peer.width}×${peer.height}` : '';
+  const kbps = peer && peer.kbps ? (peer.kbps >= 1000 ? `${(peer.kbps / 1000).toFixed(1)} Mbps` : `${peer.kbps} kbps`) : '';
+  const fps = peer && peer.fps ? `${peer.fps} fps` : '';
+  const qualityLine = [res, kbps, fps].filter(Boolean).join(' · ');
+
+  const toggleFullscreen = async () => {
+    try {
+      const next = !fullscreen;
+      await getCurrentWindow().setFullscreen(next);
+      setFullscreen(next);
+    } catch {
+      // 浏览器环境回落 DOM 全屏
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await videoRef.current?.requestFullscreen();
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const togglePip = async () => {
+    try {
+      const v = videoRef.current as (HTMLVideoElement & { requestPictureInPicture?: () => Promise<unknown> }) | null;
+      if (!v?.requestPictureInPicture) return;
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await v.requestPictureInPicture();
+    } catch {
+      /* 不支持画中画时忽略 */
+    }
+  };
+
+  const failed = ice?.includes('failed') || ice?.includes('disconnected');
   const statusText =
     status === 'live'
       ? `正在观看 ${name} 的屏幕共享`
       : status === 'ended'
         ? '共享已结束，窗口即将关闭'
-        : status === 'closed'
-          ? '连接已断开（关闭窗口后可重新观看）'
-          : status === 'error'
-            ? '无法建立观看连接'
-            : `正在建立连接…${ice ? `（${ice}）` : ''}`;
+        : status === 'error'
+          ? '无法建立观看连接'
+          : `正在建立连接…${ice ? `（${ice}）` : ''}`;
   return (
     <div className="screen-viewer" style={{ left: 0, top: 0, width: '100%', height: '100%', borderRadius: 0, border: 'none' }}>
       <div className="screen-viewer-head" style={{ cursor: 'default' }}>
-        <span>{statusText}</span>
+        <span className="screen-viewer-title">{statusText}</span>
+        {status === 'live' && qualityLine && <span className="screen-viewer-stats">{qualityLine}</span>}
+        <span className="screen-viewer-tools">
+          {hasAudio && (
+            <>
+              <button className="screen-tool" title={muted ? '取消静音' : '静音'} onClick={() => setMuted((m) => !m)}>
+                {muted ? '🔇' : '🔊'}
+              </button>
+              <input
+                className="screen-volume"
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round(volume * 100)}
+                title={`音量 ${Math.round(volume * 100)}%`}
+                onChange={(e) => {
+                  setVolume(Number(e.target.value) / 100);
+                  if (Number(e.target.value) > 0) setMuted(false);
+                }}
+              />
+            </>
+          )}
+          <button className="screen-tool" title="画中画" onClick={() => void togglePip()}>
+            ⧉
+          </button>
+          <button className="screen-tool" title={fullscreen ? '退出全屏' : '全屏'} onClick={() => void toggleFullscreen()}>
+            {fullscreen ? '⤡' : '⤢'}
+          </button>
+        </span>
       </div>
       <div className="screen-stage">
         <video
@@ -222,14 +276,17 @@ function ScreenWindow() {
           style={{ background: status === 'live' ? '#000' : '#101318' }}
           onClick={(e) => {
             const el = e.target as HTMLVideoElement;
-            if (stream && stream.getAudioTracks().length > 0) el.muted = false;
+            if (stream && stream.getAudioTracks().length > 0) {
+              el.muted = false;
+              setMuted(false);
+            }
             void el.play().catch(() => {});
           }}
         />
         {status !== 'live' && (
           <div className="screen-wait">
             {status === 'connecting' && failed
-              ? `连接失败（${ice}）——双方网络可能受限，请稍后重试`
+              ? `连接中断（${ice}），正在自动重连…`
               : status === 'connecting'
                 ? '正在与共享者建立 P2P 连接…'
                 : statusText}

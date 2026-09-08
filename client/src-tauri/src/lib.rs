@@ -109,12 +109,18 @@ fn set_proxy(window: tauri::WebviewWindow, enabled: bool, addr: Option<String>) 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        .plugin(tauri_plugin_dialog::init());
+    // 单实例限制在开发/自动化验收时用 GT_ALLOW_MULTI_INSTANCE=1 关掉：
+    // 屏幕共享等双端场景需要在同一台机器上同时跑两个客户端（配合 WEBVIEW2_USER_DATA_FOLDER 隔离数据）
+    let multi_instance = std::env::var("GT_ALLOW_MULTI_INSTANCE").map(|v| v == "1").unwrap_or(false);
+    let builder = if multi_instance {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // 单实例：Windows 上运行中点击 gametalk:// 链接会启动第二实例，
             // 邀请链接 URL 在第二实例的 argv 里，这里转发给主实例前端处理
             if let Some(url) = args.iter().find(|a| a.starts_with("gametalk://")) {
@@ -126,6 +132,8 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
+    };
+    builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![quit_app, set_proxy, write_file_bytes, hide_webview2_capture_bar])
         .setup(|app| {

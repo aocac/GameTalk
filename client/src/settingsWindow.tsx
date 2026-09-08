@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { emit, listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
+import { useSettings, applyProxySetting, type OverlayPosition, type ShareQuality } from './app/settings';
+import { QUALITY_PRESETS } from './app/screenShare';
+import { previewSound } from './app/audio';
 import HotkeyRecorder from './components/HotkeyRecorder';
 import appIcon from './assets/app-icon.png';
 import { BUILD_ID } from './buildInfo';
@@ -40,8 +42,12 @@ function change(
     | 'useProxy'
     | 'proxyAddress'
     | 'notifyLevel'
+    | 'soundVolume'
     | 'overlayEnabled'
-    | 'overlayReset',
+    | 'overlayReset'
+    | 'shareQuality'
+    | 'shareBudgetMbps'
+    | 'shareMuteOwnSounds',
   value: unknown,
 ): void {
   const s = useSettings.getState() as unknown as Record<string, unknown>;
@@ -49,10 +55,10 @@ function change(
   void emit('settings:changed', { key, value }).catch(() => undefined);
 }
 
-type Section = 'general' | 'notify' | 'game' | 'overlay' | 'about';
+type Section = 'general' | 'notify' | 'game' | 'overlay' | 'screen' | 'about';
 
 /** 初始分类：主窗口打开时可用 ?section= 指定 */
-const VALID_SECTIONS: Section[] = ['general', 'notify', 'game', 'overlay', 'about'];
+const VALID_SECTIONS: Section[] = ['general', 'notify', 'game', 'overlay', 'screen', 'about'];
 
 function initialSection(): Section {
   const q = new URLSearchParams(window.location.search).get('section');
@@ -110,6 +116,7 @@ export default function SettingsWindow() {
     { key: 'notify', label: '通知' },
     { key: 'game', label: '游戏模式' },
     { key: 'overlay', label: '屏幕覆盖' },
+    { key: 'screen', label: '屏幕共享' },
     { key: 'about', label: '关于 GameTalk' },
   ];
 
@@ -211,6 +218,83 @@ export default function SettingsWindow() {
                 <input type="checkbox" checked={settings.soundEnabled} onChange={(e) => change('soundEnabled', e.target.checked)} />
                 {settings.soundEnabled ? '已开启' : '已关闭'}
               </div>
+            </label>
+            <label className="field">
+              <span>音量：{settings.soundVolume}%</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={settings.soundVolume}
+                disabled={!settings.soundEnabled}
+                onChange={(e) => change('soundVolume', Number(e.target.value))}
+              />
+            </label>
+            <div className="field">
+              <span>试听</span>
+              <div className="chip-row">
+                <button className="chip" disabled={!settings.soundEnabled} onClick={() => previewSound('message')}>
+                  收到消息
+                </button>
+                <button className="chip" disabled={!settings.soundEnabled} onClick={() => previewSound('mention')}>
+                  被 @
+                </button>
+                <button className="chip" disabled={!settings.soundEnabled} onClick={() => previewSound('send')}>
+                  发送确认
+                </button>
+                <button className="chip" disabled={!settings.soundEnabled} onClick={() => previewSound('error')}>
+                  失败提示
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {section === 'screen' && (
+          <>
+            <h3>屏幕共享</h3>
+            <div className="field">
+              <span>画质档位（共享中也能在右下角控制条上随时切换）</span>
+              <div className="chip-row">
+                {(Object.keys(QUALITY_PRESETS) as ShareQuality[]).map((q) => (
+                  <button
+                    key={q}
+                    className={`chip ${settings.shareQuality === q ? 'active' : ''}`}
+                    title={`单路上限 ${(QUALITY_PRESETS[q].maxBitrate / 1_000_000).toFixed(1)}Mbps`}
+                    onClick={() => change('shareQuality', q)}
+                  >
+                    {QUALITY_PRESETS[q].label}
+                  </button>
+                ))}
+              </div>
+              <span className="field-hint">
+                清晰优先＝保分辨率、带宽不足时掉帧；流畅优先＝保帧率、带宽不足时降分辨率；省流量＝低码率并主动降分辨率。
+              </span>
+            </div>
+            <label className="field">
+              <span>上行总带宽预算（Mbps）</span>
+              <input
+                type="number"
+                min={2}
+                max={50}
+                value={settings.shareBudgetMbps}
+                onChange={(e) => change('shareBudgetMbps', Number(e.target.value))}
+              />
+              <span className="field-hint">
+                按观看人数分摊：2 人观看时每路各占一半，人多时每路自动降低但有下限（约 1.2Mbps）。家用宽带上传通常 20–50Mbps，共享给 3 人建议不超过 12。
+              </span>
+            </label>
+            <label className="field">
+              <span>共享系统声音时，静音本应用提示音</span>
+              <div className="switch-row">
+                <input
+                  type="checkbox"
+                  checked={settings.shareMuteOwnSounds}
+                  onChange={(e) => change('shareMuteOwnSounds', e.target.checked)}
+                />
+                {settings.shareMuteOwnSounds ? '已开启' : '已关闭'}
+              </div>
+              <span className="field-hint">WebView2 无法做进程级音频隔离，开启后共享期间你听不到自己的提示音，但对方也不会被它吵到。</span>
             </label>
           </>
         )}
