@@ -334,6 +334,13 @@ async function unregisterEsc(): Promise<void> {
   });
 }
 
+/** 重发当前覆盖层配置（缩放/时长）。Overlay 窗口可能比主窗口晚挂载，
+ *  启动时的那次 overlay:config 会丢——每次推送前补发一次即可自愈 */
+async function emitOverlayConfig(): Promise<void> {
+  const { overlayScale, overlayDurationSec } = useSettings.getState();
+  await emit('overlay:config', { scale: overlayScale, durationSec: overlayDurationSec });
+}
+
 /** 新消息到达时推给 Overlay 显示（由 chat store 调用）；roomName 标注来源房间，isSelf 标记自己发送 */
 export async function pushOverlayMessage(message: ChatMessage, roomName?: string, isSelf?: boolean): Promise<void> {
   // 屏幕覆盖关闭：不显示、不创建窗口
@@ -351,6 +358,9 @@ export async function pushOverlayMessage(message: ChatMessage, roomName?: string
       return;
     }
     await applyOverlayConfig();
+  } else {
+    // 窗口已存在但可能晚于启动配置事件挂载：推送前补发配置，避免缩放/时长停留在默认值
+    await emitOverlayConfig();
   }
   await emit('overlay:append', { ...message, roomName, isSelf });
 }
@@ -390,6 +400,16 @@ async function registerHotkey(): Promise<void> {
       }
     });
     registeredHotkey = hotkey;
+    // 注册期间被 stopGameMode 打断：stop 的注销先于本次注册完成，会漏掉这把键 →
+    // 立即自行注销，否则游戏模式已关但热键仍全局生效
+    if (!started) {
+      registeredHotkey = null;
+      try {
+        if (await isRegistered(hotkey)) await unregister(hotkey);
+      } catch {
+        // 忽略注销失败
+      }
+    }
   } catch (e) {
     console.error('register hotkey failed:', e);
   }

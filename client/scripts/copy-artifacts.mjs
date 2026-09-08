@@ -1,8 +1,10 @@
 // tauri build 完成后把安装包复制到项目根目录，方便取用。
-// 保留版本号与架构信息（不简化文件名），如 GameTalk-0.1.0-x64-Setup.exe
+// 文件名 = 版本号 + 构建唯一标识 + 架构，同名版本的不同构建可区分：
+// 如 GameTalk-0.7.0-build.20260909.0231.a621819-x64-Setup.exe
 import { copyFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveBuildId } from './build-id.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url)); // client/scripts
 const root = join(here, '..', '..');
@@ -44,6 +46,8 @@ const arch = archMatch ? archMatch[1].toLowerCase() : 'x64';
 const isMsi = /\.msi$/i.test(src);
 const ext = isMsi ? 'msi' : 'Setup';
 
-const dst = join(root, `GameTalk-${version}-${arch}-${ext}${isMsi ? '' : '.exe'}`);
+// 复用本次构建已生成的 build id（与关于页显示的一致）
+const buildId = resolveBuildId();
+const dst = join(root, `GameTalk-${version}-${buildId}-${arch}-${ext}${isMsi ? '' : '.exe'}`);
 copyFileSync(src, dst);
 console.log(`[copy-artifacts] 已复制到项目根目录: ${dst}`);

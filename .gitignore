@@ -37,9 +37,11 @@ Thumbs.db
 data/
 backups/
 
-# --- 构建产物（根目录安装包副本，含版本/架构） ---
+# --- 构建产物（根目录安装包副本，含版本/构建号/架构） ---
 /GameTalk-*-Setup.exe
 /GameTalk-*-setup.exe
+# 本次构建的唯一标识（每次构建重新生成，不入库）
+client/.build-id
 
 # --- Docs generated ---
 *.tmp

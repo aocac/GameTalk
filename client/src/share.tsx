@@ -45,6 +45,8 @@ function ShareWindow() {
   const mgrRef = useRef<ScreenShareManager | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const sharingRef = useRef(false);
+  /** 开始共享的进行中标记（防双击起两套采集/信令） */
+  const startingRef = useRef(false);
   const offscreenRef = useRef(false);
   const barTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -68,8 +70,13 @@ function ShareWindow() {
   };
 
   const beginShare = async () => {
+    // 进行中守卫：beginShare 里有 400ms 布局等待 + 系统选择器，期间 phase 仍是 ready，
+    // 双击会起两套采集与两条信令连接（前一套的流再也不会被停止）
+    if (startingRef.current) return;
+    startingRef.current = true;
     const token = readToken();
     if (!room || !token) {
+      startingRef.current = false;
       setError('缺少房间或登录信息，请从主窗口重新打开');
       return;
     }
@@ -101,10 +108,15 @@ function ShareWindow() {
         },
       );
     } catch (e) {
+      startingRef.current = false;
       setError(e instanceof Error ? e.message : '无法获取屏幕');
       return;
     }
-    if (!mgr.isSharing) return; // 用户在系统选择器取消
+    if (!mgr.isSharing) {
+      // 用户在系统选择器取消
+      startingRef.current = false;
+      return;
+    }
 
     // 连接信令：hello → room:join → screen:start
     ws = new WebSocket(readServerUrl().replace(/^http/, 'ws') + '/ws');
@@ -168,6 +180,7 @@ function ShareWindow() {
     // 共享已建立：隐藏采集窗（浮条所在的 WebView2 置顶条由 Rust 命令隐藏）
     await new Promise((r) => setTimeout(r, 300));
     hideSelf();
+    startingRef.current = false;
     try {
       void invoke('hide_webview2_capture_bar').catch(() => undefined);
       window.setTimeout(() => void invoke('hide_webview2_capture_bar').catch(() => undefined), 800);

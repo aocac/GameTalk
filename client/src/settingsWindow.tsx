@@ -4,6 +4,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
 import HotkeyRecorder from './components/HotkeyRecorder';
 import appIcon from './assets/app-icon.png';
+import { BUILD_ID } from './buildInfo';
 import pkg from '../package.json';
 
 /**
@@ -150,7 +151,7 @@ export default function SettingsWindow() {
             <div className="settings-section">
               <span className="section-title">网络代理</span>
               <label className="field">
-                <span>启用代理（默认关闭 = 直连，不走系统代理）</span>
+                <span>启用代理（默认关闭 = 跟随系统代理）</span>
                 <div className="switch-row">
                   <input
                     type="checkbox"
@@ -176,7 +177,7 @@ export default function SettingsWindow() {
                   />
                 </label>
               )}
-              <span className="field-hint">连接国内/自建服务器建议保持关闭（直连最快）；仅当服务器需要经代理访问时再开启。</span>
+              <span className="field-hint">连接国内/自建服务器建议保持关闭（跟随系统代理）；仅当服务器需要经指定代理访问时再开启。</span>
             </div>
           </>
         )}
@@ -301,6 +302,9 @@ export default function SettingsWindow() {
               <div>
                 <div className="about-name">GameTalk</div>
                 <div className="about-version">版本 v{pkg.version}</div>
+                <div className="about-build" title="每次构建唯一，用于区分同名版本的不同包">
+                  {BUILD_ID}
+                </div>
               </div>
             </div>
             <div className="about-rows">

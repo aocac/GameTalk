@@ -9,6 +9,8 @@ import type { MentionRef, RoomMember, UserBrief } from './app/types';
 import type { RoomMessage } from './app/api';
 import { useAuth } from './stores/auth';
 import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
+import { BUILD_ID } from './buildInfo';
+import pkg from '../package.json';
 import * as gameMode from './app/gameMode';
 import appIcon from './assets/app-icon.png';
 
@@ -28,16 +30,17 @@ function normalizeResourceUrl(u: string | null | undefined): string {
 }
 
 function Avatar({ name, url, size = 28 }: { name: string; url?: string | null; size?: number }) {
-  if (url) {
+  // 加载失败回落到首字母头像；URL 变化（换头像）时重置——直接改 DOM style 会永久隐藏后续有效头像
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [url]);
+  if (url && !failed) {
     return (
       <img
         className="avatar-img"
         src={normalizeResourceUrl(url)}
         alt={name}
         style={{ width: size, height: size }}
-        onError={(e) => {
-          (e.target as HTMLImageElement).style.display = 'none';
-        }}
+        onError={() => setFailed(true)}
       />
     );
   }
@@ -857,6 +860,39 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
   const [serverMsg, setServerMsg] = useState<string | null>(null);
   const serverMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 登录页同样要接收设置窗口的变更：否则在设置里改了服务器地址，登录页仍在用旧地址（连不上且看不出原因）
+  useEffect(() => {
+    let off: UnlistenFn | undefined;
+    void listen<{ key?: string; value?: unknown }>('settings:changed', (e) => {
+      const { key, value } = e.payload ?? {};
+      if (!key) return;
+      const s = useSettings.getState();
+      switch (key) {
+        case 'serverUrl':
+          s.setServerUrl(String(value));
+          setServerDraft(String(value));
+          break;
+        case 'soundEnabled':
+          s.setSoundEnabled(!!value);
+          break;
+        case 'notifyLevel':
+          s.setNotifyLevel(value as 'all' | 'mention' | 'none');
+          break;
+        case 'useProxy':
+          s.setUseProxy(!!value);
+          void applyProxySetting(!!value, s.proxyAddress);
+          break;
+        case 'proxyAddress':
+          s.setProxyAddress(String(value));
+          void applyProxySetting(s.useProxy, String(value));
+          break;
+        default:
+          break;
+      }
+    }).then((fn) => (off = fn));
+    return () => off?.();
+  }, []);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username.trim() || !password) return;
@@ -969,6 +1005,7 @@ function LoginView({ onOffline }: { onOffline: () => void }) {
         <button type="button" className="btn ghost block" onClick={onOffline} title="不连接服务器，仅体验界面与设置">
           离线试用
         </button>
+        <div className="auth-build">v{pkg.version} · {BUILD_ID}</div>
       </form>
     </div>
   );
@@ -1291,9 +1328,10 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
       if (activeDm) sendDm(text, opts);
       else if (activeRoom) sendMessage(text, opts);
     };
-    // 只保留文本中确实还带着 @昵称 的提及（用户可能删掉了部分）
+    // 只保留文本中确实还带着 @昵称 的提及（用户可能删掉了部分）。
+    // 必须按边界匹配：@张三 不能命中 @张三丰（否则会把张三也一并 @ 上）
     const picks = [...pickedMentions.current.entries()]
-      .filter(([, name]) => draft.includes(`@${name}`))
+      .filter(([, name]) => new RegExp(`@${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w\\u4e00-\\u9fa5-])`).test(draft))
       .map(([id]) => id);
     if (pendingImages.length) {
       // 多图合并为一条消息（可带文字；服务端落 media_urls，旧客户端渲染首图）
@@ -1752,6 +1790,9 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     try {
       void getCurrentWindow()
         .onFocusChanged(({ payload }) => {
+          // 窗口是否在前台决定「当前房间的消息算不算已读」：
+          // 最小化/托盘时即使选中该房间也要计未读并弹通知，否则用户会静默漏消息
+          useChat.getState().setMainWindowFocused(!!payload);
           if (!payload) return;
           const { pendingNotifyTarget } = useChat.getState();
           if (!pendingNotifyTarget) return;

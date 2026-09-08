@@ -81,21 +81,19 @@ fn hide_webview2_capture_bar() {}
 
 /// 运行时设置 WebView 代理（立即生效，无需重启）：
 /// - enabled=true 且 addr 非空 → Network.setProxyOverride 走指定代理
-/// - enabled=false → 不干预（保持 WebView2 默认行为 = 跟随系统代理）
+/// - enabled=false → 清空覆盖（回到 WebView2 默认行为 = 跟随系统代理）；
+///   必须显式下发空规则，否则上次设置的代理会在本次会话内一直生效
 /// 注意：绝不能用 proxyBypassList:["*"] 之类全局破坏性参数，会导致共享的
 /// WebView2 浏览器进程异常、overlay/input 窗口内容加载失败。
 #[tauri::command]
 fn set_proxy(window: tauri::WebviewWindow, enabled: bool, addr: Option<String>) {
-    if !enabled {
-        return;
-    }
+    let rules = if enabled { addr.unwrap_or_default() } else { String::new() };
     let _ = window.with_webview(move |webview| {
         #[cfg(windows)]
         {
             use windows_core::{w, HSTRING, PCWSTR};
             let controller = webview.controller();
             if let Ok(core) = unsafe { controller.CoreWebView2() } {
-                let rules = addr.unwrap_or_default();
                 let params = format!(r#"{{"proxyRules":"{}","proxyBypassList":[]}}"#, rules);
                 let params_h = HSTRING::from(params);
                 let params_pcw = PCWSTR(params_h.as_ptr());
@@ -104,7 +102,7 @@ fn set_proxy(window: tauri::WebviewWindow, enabled: bool, addr: Option<String>) 
         }
         #[cfg(not(windows))]
         {
-            let _ = webview;
+            let _ = (webview, rules);
         }
     });
 }

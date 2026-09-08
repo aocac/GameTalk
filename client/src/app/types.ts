@@ -121,7 +121,7 @@ export type ServerWsMessage =
   | { type: 'member:unmuted'; payload: { roomId: string; userId: string } }
   | { type: 'message:new'; payload: { roomId: string; message: ChatMessage } }
   | { type: 'message:recalled'; payload: { roomId: string; messageId: string; operatorId?: string; operatorUsername?: string } }
-  | { type: 'message:edited'; payload: { roomId: string; messageId: string; text: string; editedAt: string } }
+  | { type: 'message:edited'; payload: { roomId: string; messageId: string; text: string; editedAt: string; mentions?: { id: string; username: string }[] } }
   | { type: 'room:deleted'; payload: { roomId: string } }
   | { type: 'friend:request'; payload: { requestId: string; from: FriendProfile } }
   | { type: 'dm:new'; payload: { message: DmMessage } }

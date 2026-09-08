@@ -1157,6 +1157,15 @@ body {
   color: var(--text-3);
 }
 
+/* 登录页构建标识：区分同名版本的不同包 */
+.auth-build {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
 .profile-row {
   display: flex;
   align-items: center;
@@ -2304,6 +2313,13 @@ body {
   font-size: 13px;
   color: var(--text-2);
   margin-top: 2px;
+}
+
+.about-build {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
 }
 
 .about-rows {

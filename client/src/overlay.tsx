@@ -44,16 +44,17 @@ async function pullIntoView(
 }
 
 function MiniAvatar({ name, url, size = 20 }: { name: string; url?: string | null; size?: number }) {
-  if (url) {
+  // 失败回落到首字母：直接改 style.display 会永久隐藏该节点，URL 变化后也不会恢复
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [url]);
+  if (url && !failed) {
     return (
       <img
         className="overlay-avatar-img"
         src={url}
         alt=""
         style={{ width: size, height: size }}
-        onError={(e) => {
-          (e.target as HTMLImageElement).style.display = 'none';
-        }}
+        onError={() => setFailed(true)}
       />
     );
   }

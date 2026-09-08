@@ -1,13 +1,21 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
+import { resolveBuildId } from "./scripts/build-id.mjs";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+// 本次构建的唯一标识（build.<时间戳>.<短sha>）：注入前端供关于页展示
+const buildId = resolveBuildId();
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+
+  define: {
+    __BUILD_ID__: JSON.stringify(buildId),
+  },
 
   // 多页面：主窗口 + 输入 Overlay + 消息 Overlay + 设置 + 屏幕共享观看窗
   build: {
