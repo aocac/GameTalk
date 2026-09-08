@@ -61,7 +61,7 @@ cd client/src-tauri && cargo check
 | 34 | 屏幕共享真实媒体链路（合成采集流 → 真实 P2P → 画面推进 + 音频 RMS） | ✅（dev/e2e-screen-share-media.mjs，7/7） | ✅ 双实例真机：整屏+系统音频共享，控制条与观看窗数据正常（2026-09-09） |
 | 35 | 码率分摊与画质档位（12M 预算下 1/4/12 人分别 4M/3M/下限；自动档按人数选档；参数下发被拒时回退） | ✅（screenShare.test.ts，11 例） | ✅ 真机自适应 + 档位切换实测：省流量 1280×720/1.3Mbps → 流畅优先 2560×1440/4.1Mbps·29fps |
 
-当前实测：server **90** 测试（11 文件）+ client **37** 测试（4 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。VPS 生产环境 2026-09-09 已更新至 0.7.1 并验证（`/health`、`/api/turn` 匿名 401、WS 无效 token、compose 与备份逐字节一致、postgres/coturn 未动）。
+当前实测：server **90** 测试（11 文件）+ client **38** 测试（4 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。VPS 生产环境 2026-09-09 已更新至 0.7.1 并验证（`/health`、`/api/turn` 匿名 401、WS 无效 token、compose 与备份逐字节一致、postgres/coturn 未动）。
 
 ## 3. 真机验收清单
 

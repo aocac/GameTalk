@@ -204,6 +204,17 @@ docker run -d --name coturn --network host --restart unless-stopped \
 cd docker && docker compose up -d --build server
 ```
 
+### 带宽保护（强烈建议）
+
+中继的媒体流会**经过服务器出口**：服务器上行/下行各消耗一份码率（例如 1.2Mbps × 观看人数）。国内云服务器出口常见只有几 Mbps，因此除了客户端会检测到中继后自动压码率外，建议在 `turnserver.conf` 里加两道服务端硬限（单位是**字节/秒**，上下行分别计算）：
+
+```
+max-bps=150000          # 单会话上限 ≈1.2Mbps
+bps-capacity=375000     # 全服上限 ≈3Mbps（给应用自身的 HTTP/WS 留出余量）
+```
+
+改完重启 coturn 生效（会中断当前正在中继的会话，建议在没人共享时操作）。实测一台 4Mbps 出口的服务器，中继最多同时支撑 2–3 路 1.2Mbps 的观看。
+
 ### 检查清单
 
 - 防火墙 / 云安全组放行：**3478 UDP+TCP**、**49160-49200 TCP**（中继端口段）。云厂商安全组常默认只放 TCP，UDP 被拦时 TCP 中继仍可工作（实测路径）。

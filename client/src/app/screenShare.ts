@@ -78,6 +78,11 @@ export function resolveEffectiveQuality(quality: ShareQuality, viewers: number, 
 
 /** 每路码率下限：低于这个值画面就没法看了，宁可不降 */
 export const MIN_PER_VIEWER_BPS = 1_200_000;
+/**
+ * 走 TURN 中继时的单路上限。中继会消耗服务器公网出口（国内云常见只有几 Mbps），
+ * 不压住的话一路 1080p 就能吃满整台服务器的上行、连聊天一起拖死。
+ */
+export const RELAY_MAX_BPS = 1_200_000;
 /** 自适应下限系数（相对分摊目标） */
 const ADAPT_FLOOR = 0.6;
 /** 默认总上行预算（bps） */
@@ -103,6 +108,8 @@ export interface ShareStats {
   effectiveQuality: EffectiveQuality;
   /** 最近一次编码参数下发失败的原因（正常为 null） */
   paramError: string | null;
+  /** 是否至少有一路在走服务器中继（此时码率被压到 RELAY_MAX_BPS） */
+  relayed: boolean;
   /** 总上行预算（共享端） */
   budgetBps: number;
   /** 每路当前目标码率（共享端） */
@@ -135,6 +142,8 @@ interface PeerMeta {
   lossPct: number;
   /** 链路类型（host/srflx/relay），连上后从 candidate-pair 读取 */
   transport: string;
+  /** 该连接是否经过 TURN 中继（本地或对端候选为 relay） */
+  relayed: boolean;
   /** ICE 断开后的重启计时器与次数 */
   restartTimer: ReturnType<typeof setTimeout> | null;
   restarts: number;
@@ -246,11 +255,20 @@ export class ScreenShareManager {
     this.applyAllSenderParams();
   }
 
-  /** 每路当前目标码率（分摊结果 × 自适应系数） */
+  /** 是否至少有一路 sender 在走 TURN 中继 */
+  isRelaying(): boolean {
+    for (const [cid, m] of this.meta) {
+      if (this.senders.has(cid) && m.relayed) return true;
+    }
+    return false;
+  }
+
+  /** 每路当前目标码率（分摊结果 × 自适应系数；走中继时受服务器出口上限约束） */
   getTargetBps(): number {
     const viewers = Math.max(1, this.senders.size);
     const share = Math.round(this.budgetBps / viewers);
-    const base = Math.max(MIN_PER_VIEWER_BPS, Math.min(QUALITY_PRESETS[this.getEffectiveQuality()].maxBitrate, share));
+    const cap = this.isRelaying() ? RELAY_MAX_BPS : QUALITY_PRESETS[this.getEffectiveQuality()].maxBitrate;
+    const base = Math.max(MIN_PER_VIEWER_BPS, Math.min(cap, share));
     return Math.round(base * this.adapt);
   }
 
@@ -277,6 +295,7 @@ export class ScreenShareManager {
       quality: this.quality,
       effectiveQuality: this.getEffectiveQuality(),
       paramError: this.lastParamError,
+      relayed: this.isRelaying(),
       budgetBps: this.budgetBps,
       targetBps: this.getTargetBps(),
       totalKbps: peers.reduce((sum, p) => sum + p.kbps, 0),
@@ -514,6 +533,7 @@ export class ScreenShareManager {
         rttMs: 0,
         lossPct: 0,
         transport: '',
+        relayed: false,
         restartTimer: null,
         restarts: 0,
       };
@@ -626,7 +646,10 @@ export class ScreenShareManager {
           } else if (rr.type === 'candidate-pair' && (rr.selected === true || (rr.state === 'succeeded' && rr.nominated === true))) {
             const local = (stats.get(rr.localCandidateId as string) as Record<string, unknown> | undefined)?.candidateType ?? '';
             const remote = (stats.get(rr.remoteCandidateId as string) as Record<string, unknown> | undefined)?.candidateType ?? '';
-            if (local || remote) m.transport = `${local}↔${remote}`;
+            if (local || remote) {
+              m.transport = `${local}↔${remote}`;
+              m.relayed = local === 'relay' || remote === 'relay';
+            }
           }
         });
       } catch {

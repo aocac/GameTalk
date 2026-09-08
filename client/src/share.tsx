@@ -315,6 +315,7 @@ function ShareWindow() {
           <div className="share-bar-stats">
             {res} · {kbps} · {fps}
             {stats ? ` · ${QUALITY_PRESETS[stats.effectiveQuality].label}` : ''}
+            {stats?.relayed ? ' · ⚠ 服务器中转（已限码率）' : ''}
             {stats?.audio ? ' · 含音频' : ''}
             {stats?.paramError ? ` · ⚠ 参数下发失败(${stats.paramError})` : ''}
           </div>

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ScreenShareManager, QUALITY_PRESETS, MIN_PER_VIEWER_BPS } from '../src/app/screenShare';
+import { ScreenShareManager, QUALITY_PRESETS, MIN_PER_VIEWER_BPS, RELAY_MAX_BPS } from '../src/app/screenShare';
 
 /**
  * ScreenShareManager 单元测试：用假的 RTCPeerConnection 覆盖连接生命周期、
@@ -79,7 +79,16 @@ class FakePC {
   restartIce(): void {
     this.restartIceCalls += 1;
   }
+  /** 测试注入：模拟 getStats 的候选对与候选类型 */
+  statsMode: 'empty' | 'relay' = 'empty';
   getStats(): Promise<Map<string, unknown>> {
+    if (this.statsMode === 'relay') {
+      const m = new Map<string, unknown>();
+      m.set('cp1', { type: 'candidate-pair', selected: true, state: 'succeeded', nominated: true, localCandidateId: 'lc1', remoteCandidateId: 'rc1' });
+      m.set('lc1', { candidateType: 'srflx' });
+      m.set('rc1', { candidateType: 'relay' });
+      return Promise.resolve(m);
+    }
     return Promise.resolve(new Map());
   }
   setIce(state: RTCIceConnectionState): void {
@@ -264,6 +273,29 @@ describe('ScreenShareManager：参数下发失败回退', () => {
     const fallback = sender.setCalls[sender.setCalls.length - 1] as { maxBitrate?: number };
     expect(fallback.maxBitrate).toBe(6_000_000);
     expect(mgr.snapshot().paramError).toBe('InvalidModificationError');
+  });
+});
+
+describe('ScreenShareManager：中继路径限码率', () => {
+  it('检测到 relay 候选后，单路码率压到 RELAY_MAX_BPS', async () => {
+    vi.useFakeTimers();
+    const mgr = makeManager();
+    mgr.setBudgetBps(12_000_000);
+    await startSharing(mgr);
+    await mgr.handleSignal('v1', 'room-1', { type: 'request', cid: 'c1' });
+    const pc = FakePC.instances[0]!;
+    pc.setIce('connected');
+
+    expect(mgr.isRelaying()).toBe(false);
+    const before = mgr.getTargetBps();
+    expect(before).toBeGreaterThan(RELAY_MAX_BPS);
+
+    pc.statsMode = 'relay'; // 下一次采样发现走中继
+    await vi.advanceTimersByTimeAsync(2100);
+
+    expect(mgr.isRelaying()).toBe(true);
+    expect(mgr.snapshot().relayed).toBe(true);
+    expect(mgr.getTargetBps()).toBe(RELAY_MAX_BPS);
   });
 });
 

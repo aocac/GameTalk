@@ -150,6 +150,8 @@ gametalk/
 
 **码率策略（v0.8）**：mesh 下每增加一个观看者就多一路编码，所以按「总预算 ÷ 观看人数」分摊（默认 12Mbps，设置可改），单路下限 1.2Mbps；画质档位决定单路上限与取舍——清晰优先（`maxBitrate` 6M / `maintain-resolution`，带宽不足掉帧）、流畅优先（4M / `balanced`，带宽不足降分辨率，默认）、省流量（1.5M / `scaleResolutionDownBy=1.5` / `balanced`）；系统声音轨固定 128kbps。每 2s 读 `getStats()`（outbound/inbound-rtp 字节增量、`remote-inbound-rtp` 的丢包与 RTT）驱动自适应系数（丢包 >5% 或 RTT >400ms 下调 25%，最低 60%；恢复后每 4s 上调 15%），变化超过 1% 时重设所有 sender 参数。
 
+**中继限码率**：TURN 中继会占用服务器公网出口（媒体先到服务器再转发）。客户端每 2s 的采样会读取选中候选对的类型，一旦本地或对端为 `relay`，单路目标码率被压到 `RELAY_MAX_BPS`（1.2Mbps）并在控制条显示「服务器中转」——避免一路 1080p 吃满服务器出口、连带影响聊天流量。服务端建议同时给 coturn 配 `max-bps`（单会话）与 `bps-capacity`（全服，单位字节/秒、上下行分别计）做兜底。
+
 **断线自愈**：ICE `disconnected` 等 2s、`failed` 等 0.5s 触发 `restartIce()`，退避 2/4/8s 最多 4 次，`connected` 后复位。采集窗与观看窗的信令改用 `app/signalSocket.ts`（退避重连 + 心跳 + 半开检测）：重连后采集端重新 `screen:start`、观看端**带原 cid 重发 `request`**——共享端对 `connected/completed/checking/new` 的既有 sender 保持不动，只有已 failed 的才重建，因此信令抖动期间媒体不中断。
 
 **控制条与诊断**：共享建立后采集窗从 1020×720 缩成右下角 384×138 的常驻控制条（无边框、置顶、不进任务栏），内含本地预览（同一 MediaStream）、观看人数、实测分辨率/码率/帧率、画质档位与停止按钮；数据来自 `ScreenShareManager.snapshot()`，并经 `share:stats` 事件同步给主窗口横幅。观看窗同样显示分辨率/码率/帧率。**已知限制**：无 SFU，上行随观看人数线性增长；无进程级音频隔离。
