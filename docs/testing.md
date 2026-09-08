@@ -7,6 +7,7 @@
 | 服务端单测/集成 | vitest | REST 路由、WS 网关（双客户端实时收发、房主删房、幂等 join、花名册/在线状态）、好友（申请/互加/删除 + 实时事件 + 在线广播）、好友私聊（非好友拒绝/双方广播/历史分页/会话聚合/撤回权限/图片与引用校验）、@提及（解析/成员校验/入库/编辑重算）、图片消息（上传校验/归属/绝对 URL/多图）、禁言（仅房主/到期/解除）、WS 加固（限流 / 超大帧断连）、REST 限流（登录 429）、头像端点（data URL → HTTP 端点）、邀请链接（创建/资格/过期 410/耗尽 410/幂等入房不计数/吊销权限/并发兑换）、消息转发（源可见性/目标唯一/代复制 media/来源标注；转发进房复用禁言校验）、屏幕共享信令（非成员拒绝 / 启停广播 / 定向转发与越权拒绝 / 晚加入快照）、migration 幂等、输入校验与错误映射 |
 | 服务端回归 | vitest | `test/regressions.test.ts`：历史分页保留最新一条、空 mediaUrls 不算内容、退房/删房后订阅失效、房主不可退房、目标不在房间用 `target_not_in_room`、私聊撤回清 media_urls、编辑重算提及、改名同步广播、群表情媒体归属、邀请并发兑换、非法 id 不 500、代理信任判定（17 例） |
 | 客户端逻辑 | vitest | gameMode 管理器（mock Tauri，含换键后旧键注销、启动途中关闭的热键清理）、真实 server 集成测试（双端聊天 / not_in_room / 断线重连 / 花名册离线保留 / 好友私聊收发与历史 / 编辑往返） |
+| 屏幕共享逻辑 | vitest | `test/screenShare.test.ts`：连接生命周期、重复 request 非破坏性、码率分摊与档位、ICE 断线重启（8 例，mock RTCPeerConnection） |
 | 客户端回归 | vitest | `test/store.regressions.test.ts`：纯图无文字发送、踢已退房成员不移除自己的房间、退房重进重载历史、加载失败可重试、历史重载合并新消息、断线排队消息不被清空、私聊翻页 loading、窗口失焦计未读、换账号丢弃在途响应（9 例） |
 | Lint | ESLint（双工作区） | `npm run lint` |
 | 前端构建 | `npm run build`（tsc + vite） | 类型安全 + 产物可构建 |
@@ -56,8 +57,11 @@ cd client/src-tauri && cargo check
 | 30 | 纯图消息（无文字）发送 | ✅（store.regressions.test.ts） | ✅ 真机实测发送成功（2026-09-09，修复前静默丢弃） |
 | 31 | 踢「已退房成员」不移除操作者自己的房间 | ✅（regressions.test.ts + store 回归） | — |
 | 32 | 窗口失焦（最小化/托盘）时当前会话计未读并弹通知 | ✅（store 回归） | ✅ 真机 Alt+G 呼出/ESC 关闭、失焦态行为正常（2026-09-09） |
+| 33 | ScreenShareManager 生命周期（watch/offer/answer/bye、重复 request 非破坏性、ICE 重启） | ✅（screenShare.test.ts，8 例，mock RTCPeerConnection） | — |
+| 34 | 屏幕共享真实媒体链路（合成采集流 → 真实 P2P → 画面推进 + 音频 RMS） | ✅（dev/e2e-screen-share-media.mjs，7/7） | ✅ 双实例真机：整屏+系统音频共享，控制条与观看窗数据正常（2026-09-09） |
+| 35 | 码率分摊与画质档位（12M 预算下 1/4/12 人分别 4M/3M/下限） | ✅（screenShare.test.ts） | ✅ 真机自适应：640×360/281kbps → 1920×1080/2.3Mbps·29fps |
 
-当前实测：server **89** 测试（11 文件）+ client **26** 测试（3 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。VPS 生产环境 2026-09-09 已更新至 0.7.1 并验证（`/health`、`/api/turn` 匿名 401、WS 无效 token、compose 与备份逐字节一致、postgres/coturn 未动）。
+当前实测：server **90** 测试（11 文件）+ client **34** 测试（4 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。VPS 生产环境 2026-09-09 已更新至 0.7.1 并验证（`/health`、`/api/turn` 匿名 401、WS 无效 token、compose 与备份逐字节一致、postgres/coturn 未动）。
 
 ## 3. 真机验收清单
 

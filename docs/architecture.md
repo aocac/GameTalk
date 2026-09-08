@@ -146,7 +146,13 @@ gametalk/
 
 **消息转发**：`message:forward` 由服务端校验源消息可见性后**代为复制**到新会话，客户端拿不到也不伪造内容——房间消息须为源房间成员、私聊须为对话双方（不可见回 `not_in_room`；撤回消息不可转发）。目标为房间（`targetRoomId`）或好友（`targetUserId`），二者恰好其一（否则 `invalid_input`）；转发进房间复用成员资格 + 禁言校验（等价一条新 `message:send`），转发给好友复用 `dm:send` 的好友校验。文本 / 图片原样带走，**引用与提及不带走**；服务端写 `forwarded_from_label` 展示快照（房间「来自 群A · 张三」/ 私聊「来自 张三 的私聊」），随 `message:new` / `dm:new` 与历史接口透传，客户端渲染「转发」角标。媒体归属：服务端复制 `media_url` 天然绕过发送归属校验（入库时已校验过）。
 
-**屏幕共享**：房间内 1 对 N（支持多人同时共享）的 WebRTC 共享，**媒体流不经服务器**，服务端只做信令透传。WS：`screen:start`（仅房间成员发起，向全房间广播 `screen:started{roomId,userId,username}`）、`screen:stop`（广播 `screen:stopped{roomId,userId}`，各端按 userId 精确移除）、`screen:signal`（按 `to` 定向转发 `{from,roomId,data}`，服务端校验收发双方均为同房间成员——防把媒体信令发给陌生人，且**不解析 data**）。`room:joined` 除完整花名册外返回 `screenShares:[{userId,username}]` 当前快照，晚加入成员据此显示可选的「观看」入口，不自动观看；服务端按 owner socket 清理断开的共享并广播 `screen:stopped`，显式停止按用户清理，支持多人并行共享。信令协议（data 内容，客户端约定）：观看端 `request` → 共享者为其建 sender 连接并回 `offer`（晚加入靠观看端主动请求触发，不做预建 mesh）→ 观看端 `answer` → 双向 `candidate`；观看端关窗发 `bye`，共享者立即释放该路连接。**观看为独立系统窗口**（`screen.html` 入口）：MediaStream 不能跨 webview，故观看窗自持一条 WS 信令连接（同源共享 localStorage token）并建立自己的 RTCPeerConnection；关窗（含原生标题栏 X，经 onCloseRequested）先发 `bye` 再关闭。**跨网络兜底（自建 TURN）**：服务器管理员部署 coturn（`use-auth-secret` 模式），服务端经 `GET /api/turn`（登录态）按用户签发限时 1 小时凭据（`username='<到期时间戳>:<userId>'`，`credential=base64(hmac-sha1(TURN_SECRET, username))`）；客户端缓存 55 分钟并作为首选 ICE——密钥不进客户端，中继不会变成无鉴权的开放代理。未配置 `TURN_SECRET`/`TURN_URL` 时接口返回空、客户端仅用 STUN（同网直连可用，跨网对称 NAT 受限）。采集端请求 `audio:true + systemAudio:'include'`，窗口源额外提示 `windowAudio:'window'`（均为 WebView2/Chromium 实验性 hint，最终以原生选择器和返回音轨为准）；`contentHint='motion'`、单路 `maxBitrate=8Mbps`、`scaleResolutionDownBy=1`、`degradationPreference='maintain-resolution'`（优先保分辨率，带宽不足时掉帧）；WebView2 采集要求窗口高度 ≥600px。**已知限制**：每增加一个观看者就多一路上行（mesh，无 SFU/中继），共享者上传带宽随观看人数线性增长；采集窗与观看窗各自持有 WS，断线后不自动重连（共享/观看会直接结束）。
+**屏幕共享**：房间内 1 对 N（支持多人同时共享）的 WebRTC 共享，**媒体流不经服务器**，服务端只做信令透传。WS：`screen:start`（仅房间成员发起，向全房间广播 `screen:started{roomId,userId,username}`）、`screen:stop`（广播 `screen:stopped{roomId,userId}`，各端按 userId 精确移除）、`screen:signal`（按 `to` 定向转发 `{from,roomId,data}`，服务端校验收发双方均为同房间成员——防把媒体信令发给陌生人，且**不解析 data**）。`room:joined` 除完整花名册外返回 `screenShares:[{userId,username}]` 当前快照，晚加入成员据此显示可选的「观看」入口，不自动观看；服务端按 owner socket 清理断开的共享并广播 `screen:stopped`，显式停止按用户清理，支持多人并行共享。信令协议（data 内容，客户端约定）：观看端 `request` → 共享者为其建 sender 连接并回 `offer`（晚加入靠观看端主动请求触发，不做预建 mesh）→ 观看端 `answer` → 双向 `candidate`；观看端关窗发 `bye`，共享者立即释放该路连接。**观看为独立系统窗口**（`screen.html` 入口）：MediaStream 不能跨 webview，故观看窗自持一条 WS 信令连接（同源共享 localStorage token）并建立自己的 RTCPeerConnection；关窗（含原生标题栏 X，经 onCloseRequested）先发 `bye` 再关闭。**跨网络兜底（自建 TURN）**：服务器管理员部署 coturn（`use-auth-secret` 模式），服务端经 `GET /api/turn`（登录态）按用户签发限时 1 小时凭据（`username='<到期时间戳>:<userId>'`，`credential=base64(hmac-sha1(TURN_SECRET, username))`）；客户端缓存 55 分钟并作为首选 ICE——密钥不进客户端，中继不会变成无鉴权的开放代理。未配置 `TURN_SECRET`/`TURN_URL` 时接口返回空、客户端仅用 STUN（同网直连可用，跨网对称 NAT 受限）。采集端请求 `audio:true + systemAudio:'include'`，窗口源额外提示 `windowAudio:'window'`（均为 WebView2/Chromium 实验性 hint，最终以原生选择器和返回音轨为准）；`contentHint='motion'`；WebView2 采集要求窗口高度 ≥600px。
+
+**码率策略（v0.8）**：mesh 下每增加一个观看者就多一路编码，所以按「总预算 ÷ 观看人数」分摊（默认 12Mbps，设置可改），单路下限 1.2Mbps；画质档位决定单路上限与取舍——清晰优先（`maxBitrate` 6M / `maintain-resolution`，带宽不足掉帧）、流畅优先（4M / `balanced`，带宽不足降分辨率，默认）、省流量（1.5M / `scaleResolutionDownBy=1.5` / `balanced`）；系统声音轨固定 128kbps。每 2s 读 `getStats()`（outbound/inbound-rtp 字节增量、`remote-inbound-rtp` 的丢包与 RTT）驱动自适应系数（丢包 >5% 或 RTT >400ms 下调 25%，最低 60%；恢复后每 4s 上调 15%），变化超过 1% 时重设所有 sender 参数。
+
+**断线自愈**：ICE `disconnected` 等 2s、`failed` 等 0.5s 触发 `restartIce()`，退避 2/4/8s 最多 4 次，`connected` 后复位。采集窗与观看窗的信令改用 `app/signalSocket.ts`（退避重连 + 心跳 + 半开检测）：重连后采集端重新 `screen:start`、观看端**带原 cid 重发 `request`**——共享端对 `connected/completed/checking/new` 的既有 sender 保持不动，只有已 failed 的才重建，因此信令抖动期间媒体不中断。
+
+**控制条与诊断**：共享建立后采集窗从 1020×720 缩成右下角 384×138 的常驻控制条（无边框、置顶、不进任务栏），内含本地预览（同一 MediaStream）、观看人数、实测分辨率/码率/帧率、画质档位与停止按钮；数据来自 `ScreenShareManager.snapshot()`，并经 `share:stats` 事件同步给主窗口横幅。观看窗同样显示分辨率/码率/帧率。**已知限制**：无 SFU，上行随观看人数线性增长；无进程级音频隔离。
 
 **用户资料**：`users` 含个性签名 `bio`（≤100 字，PATCH /api/auth/me 维护）；成员卡片经
 `GET /api/users/:id`（登录态、UUID 不可枚举）读取公开资料。
@@ -191,6 +197,12 @@ gametalk/
 - **screen-\*** / **share-\***：屏幕共享的观看窗与采集窗，各自持有独立的 WS 信令连接（见第 4 节屏幕共享）。
 
 **焦点恢复**：输入窗发送后隐藏，Windows 将焦点还给先前的前台窗口（即游戏）。**前提**：目标用户在游戏中采用**无边框窗口化**模式（覆盖式窗口在独占全屏下无效）。
+
+## 6.1 主题与提示音
+
+**主题**：`App.css` 顶部一份 `:root` 定义全部设计 token（表面/边框/文本/品牌色/状态色/侧栏/阴影/圆角/动效），`[data-theme='dark']` 只覆盖 token，组件规则不含主题判断。`app/theme.ts` 提供 `applyTheme/applyStoredTheme`，主窗口、设置、观看窗、采集窗各自在启动时调用；设置项 `theme = auto|light|dark`，跟随系统时监听 `prefers-color-scheme` 变化。
+
+**提示音**：`app/audio.ts` 用 WebAudio 合成（零音频资源）。每个音是「正弦主音 + 失谐副音」经 8ms 起音、指数衰减、低通滤波（3.2kHz）后的叠加；四种事件音色——收到消息（E6→A6）、被 @（E6→G#6→C7）、发送确认（D6 极轻）、失败（G5→D5）。音量取自设置 `soundVolume`，共享带音频时由 `setExternalMute(true)` 全局静音（采集窗控制条触发，经 `share:audio-mute` 事件通知主窗口）。
 
 ## 7. 断线重连与可靠性
 
