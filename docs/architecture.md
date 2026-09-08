@@ -24,7 +24,7 @@
 
 | 层 | 选型 | 理由 |
 |---|---|---|
-| 客户端 | Tauri 2 + React 19 + TS + Vite | 安装包 ~10MB；系统级全局快捷键、透明置顶窗口原生支持；Rust 侧极小 |
+| 客户端 | Tauri 2 + React 19 + TS + Vite | 安装包 ~2.4MB；系统级全局快捷键、透明置顶窗口原生支持；Rust 侧极小 |
 | 服务端 | Node 22 + Fastify 5 + @fastify/websocket | 轻量、WebSocket 一等公民、TS 全栈类型统一 |
 | 数据库 | PostgreSQL 16 | 稳定；`pg` 直连 + 纯 SQL migration，无 ORM 心智负担 |
 | 开发/测试库 | PGlite (WASM PostgreSQL) | 本机无 PG/Docker 时的真实 SQL 环境；与生产同源 migration |
@@ -37,21 +37,27 @@
 gametalk/
 ├── client/                  # Tauri 2 桌面客户端
 │   ├── src/                 # React 前端
-│   │   ├── app/             # 基础能力：types / ws / api / settings / gameMode / audio
-│   │   ├── stores/          # zustand 状态（auth / chat / friends / notifications）
-│   │   ├── App.tsx          # 主窗口 UI（登录 / 图标导航 rail + 会话列表列 / 聊天区 / 设置）
-│   │   ├── input.tsx        # 输入 Overlay 窗口入口
-│   │   └── overlay.tsx      # 消息 Overlay 窗口入口
-│   └── src-tauri/           # Rust 壳（托盘 / 单实例 / quit_app / set_proxy）
+│   │   ├── app/             # 基础能力：types / ws / api / settings / gameMode / audio / screenShare
+│   │   ├── stores/          # zustand 状态（auth / chat / friends）
+│   │   ├── App.tsx          # 主窗口 UI（登录 / 图标导航 rail + 会话列表列 / 聊天区 / 成员面板）
+│   │   ├── input.tsx        # 快捷输入框窗口入口（游戏模式）
+│   │   ├── overlay.tsx      # 消息浮层窗口入口
+│   │   ├── settings.tsx     # 设置窗口入口
+│   │   ├── screen.tsx       # 屏幕共享观看窗入口
+│   │   ├── share.tsx        # 屏幕采集窗入口
+│   │   └── buildInfo.ts     # 构建标识（vite define 注入）
+│   ├── scripts/             # build-id.mjs（构建唯一标识）/ copy-artifacts.mjs
+│   └── src-tauri/           # Rust 壳（托盘 / 单实例 / quit_app / set_proxy / 采集条隐藏）
 ├── server/                  # Fastify 服务端
 │   ├── src/
-│   │   ├── routes/          # REST 路由（health / auth / rooms / friends / media）
-│   │   ├── ws/              # WS 网关（认证 + 房间广播 + 花名册/在线状态 + 限流 + 心跳清理）
+│   │   ├── routes/          # REST 路由（health / auth / rooms / invites / friends / dm / stickers / media / turn）
+│   │   ├── ws/              # WS 网关（认证 + 房间广播 + 花名册/在线状态 + 信令透传 + 限流 + 心跳清理）
 │   │   ├── db/              # pg/PGlite 抽象 + migration 执行器
-│   │   └── lib/             # jwt / password / image / invite / envfile
+│   │   └── lib/             # jwt / password / image / invite / avatar / validate / envfile
 │   ├── migrations/          # 纯 SQL migration（生产与 PGlite 同源）
 │   └── test/                # vitest 单测 + 集成测试
-├── docker/                  # 生产部署 compose 与配置
+├── docker/                  # 生产部署 compose、Caddyfile、部署/备份/coturn 脚本
+├── dev/                     # 浏览器回归脚本（e2e-*.mjs）与截图脚本
 └── docs/                    # 本文档 / 部署 / 测试
 ```
 
@@ -110,7 +116,11 @@ gametalk/
 {"type":"pong"}
 ```
 
-**房间模型**：服务端内存 `roomId -> userId -> {sockets}`（同一用户可多端连接）。消息先持久化再广播；`joinRoom` 幂等（重复 join 也回 `room:joined`，客户端有 2s 订阅看门狗自愈）；`room:delete` 仅房主可调用，级联删除并广播 `room:deleted`；`member:kick` 仅房主可调用，把成员移出房间（DB 删除 + 全员通知 `member:kicked` + 被踢者订阅清理），被踢者客户端自动移除房间并切换。**客户端订阅其全部房间**（非活跃房间也能实时收消息，UI 显示未读角标，Overlay 标注来源房间）。
+**房间模型**：服务端内存 `roomId -> userId -> {sockets}`（同一用户可多端连接）。消息先持久化再广播；`joinRoom` 幂等（重复 join 也回 `room:joined`，客户端有 2s 订阅看门狗自愈）；`room:delete` 仅房主可调用，级联删除、广播 `room:deleted` 并清掉所有连接的该房间订阅；`member:kick` 仅房主可调用，把成员移出房间（DB 删除 + 全员通知 `member:kicked` + 被踢者订阅清理），被踢者客户端自动移除房间并切换。**REST 退房同样会清实时订阅**（`dropRoomSubscription`），否则旧连接还能继续发送/撤回。**房主不能退房**（回 `owner_cannot_leave`），只能删房，避免房间失去管理权。**客户端订阅其全部房间**（非活跃房间也能实时收消息，UI 显示未读角标，浮层标注来源房间）。
+
+**错误码语义**：`not_in_room` 专指「你自己不在该房间」，客户端据此把房间从本地移除；「操作目标不在房间」（踢人/禁言/信令对端）用独立的 `target_not_in_room`，客户端只提示、不动自己的房间列表。PG 入参/外键类错误由全局错误处理映射：`22P02`（非法 UUID）→ 400、`23503`（外键不存在）→ 404，不再变成 500。
+
+**历史分页**：`GET /api/rooms/:id/messages` 与 `GET /api/dm/:peerId/messages` 都是游标分页（`before` + `limit`，默认 50、上限 100）。实现上多取一条用于判断 `hasMore`，**保留最新的 limit 条**（丢弃最旧的那条多取项）；游标子查询限定在本房间/本会话内。客户端首屏加载与「加载更早」都依赖这个语义。
 
 **花名册与在线状态**：房间成员关系持久于 DB（`room_members`），`room:joined` 回执返回**完整花名册**（含离线成员）+ 实时 `online` 标记（由内存连接表推导）。`member:joined` = 新成员进房或离线成员上线；`member:left` = 该用户最后一个连接断开（语义为「离线」而非移除，客户端置灰保留）。好友上/下线额外广播 `presence:friend` 给其在线好友。
 
@@ -118,7 +128,7 @@ gametalk/
 
 **禁言**：`member:mute`（仅房主、1 分钟–30 天、不能禁言自己/房主）写 `room_mutes` 并广播 `member:muted`；`message:send` 对生效中的禁言回 `error(code=muted, mutedUntil)`；到期自动失效（惰性判断），`member:unmute` 提前解除。花名册携带 `mutedUntil` 供全员展示禁言标签。
 
-**图片消息**：客户端先 `POST /api/media`（data URL，≤5MB，魔数校验）取得 `/api/media/<uuid>`，再随 `message:send(kind=image)` 发送；服务端校验该媒体必须存在且属于发送者，**或已登记为共享表情**（本房间群表情 / DM 双方任一收藏，支撑「成员贡献、全群使用」的群表情场景；其余引用仍严格拒绝）。读取端点免认证（`<img>` 带不了 Authorization 头），与头像同策略：UUID 不可枚举 + immutable 缓存。
+**图片消息**：客户端先 `POST /api/media`（data URL，≤5MB，魔数校验）取得 `/api/media/<uuid>`，再随 `message:send(kind=image)` 发送。单图走 `mediaUrl`，多图（≤9 张）走 `mediaUrls[]`，服务端把首图同时写进 `media_url` 以兼容旧客户端，完整列表写 `media_urls` JSONB。服务端校验每张媒体必须存在且属于发送者，**或已登记为共享表情**（本房间群表情 / DM 双方任一收藏，支撑「成员贡献、全群使用」的群表情场景；其余引用仍严格拒绝）；空数组不算内容。撤回时 `media_url` 与 `media_urls` 一并清空。读取端点免认证（`<img>` 带不了 Authorization 头），与头像同策略：UUID 不可枚举 + immutable 缓存。
 
 **通知与跳转**：Windows 系统通知按用户档位触发；桌面端通知无点击回调（插件 onAction 仅移动端），等价方案为「通知到达时记录会话定位（pendingNotifyTarget）→ 应用窗口获得焦点时消费并切换会话」，用户输入中不打断。
 
@@ -130,7 +140,7 @@ gametalk/
 
 **撤回操作者**：`message:recalled` 广播与 REST 历史均携带 `recalledBy`（房主代撤时 ≠ 消息作者）；客户端撤回行据此刻画——自己撤「你撤回了一条消息」、作者撤「XX撤回了一条消息」、房主代撤「房主撤回了 XX 的消息」；侧栏预览同步操作者。旧数据 recalled_by 为空回落作者。
 
-**消息编辑**：`message:edit` / `dm:edit`（仅发送者本人、未撤回、文本非空；他人编辑回 `only_sender`，撤回后不可编辑回 `message_not_found`）。编辑只更新 `text` 并记 `edited_at`（原版本不保留，微信/QQ 式），广播 `message:edited` / `dm:edited` 携带新文本与时间；REST 历史与广播均带 `editedAt` 供客户端展示「已编辑」小标。房间与私聊语义一致。
+**消息编辑**：`message:edit` / `dm:edit`（仅发送者本人、未撤回、文本非空；他人编辑回 `only_sender`，撤回后不可编辑回 `message_not_found`）。编辑只更新 `text` 并记 `edited_at`（原版本不保留，微信/QQ 式），同时**重算提及**并随 `message:edited` 下发 `mentions`（否则编辑时新增的 @ 永远不生效）；REST 历史与广播均带 `editedAt` 供客户端展示「已编辑」小标。房间与私聊语义一致。
 
 **邀请链接**：区别于 8 位房间邀请码（房间语境内部使用），邀请链接是 16 位长码（熵更高，防脱离房间语境公开传播后被猜测），存 `invite_links`（`expires_at` NULL = 永久、`max_uses` 0 = 不限、`used_count` 计数）。REST：`POST /api/rooms/:id/invites`（成员即可创建，有效期 0–720 小时、次数 0–500）、`GET /api/rooms/:id/invites`（房主看全部、成员看自己）、`DELETE /api/invites/:code`（创建者或房主吊销）、`GET /api/invites/:code`（加入前预览房间名/邀请人/剩余资格）、`POST /api/invites/:code/redeem`（过期/次数耗尽回 410；已是成员则幂等入房且不计数）。客户端注册 `gametalk://` 深链协议（tauri-plugin-deep-link + capabilities）：运行中点击链接走单实例回调 → Rust emit `deep-link-url` → 前端解析 code 弹确认入房；未登录时代码暂存 localStorage，登录后补处理。
 
@@ -168,14 +178,17 @@ gametalk/
 - `013_stickers`：`user_stickers`（个人云表情，跨设备同步）/ `room_stickers`（房间共享表情库，成员贡献）
 - `014_invite_links`：`invite_links`（16 位长码，可过期 `expires_at` / 可限次数 `max_uses` / `used_count` 计数，随房间级联删除）
 - `015_forwarded_label`：`messages.forwarded_from_label` / `dm_messages.forwarded_from_label`（转发来源展示快照，纯展示不参与权限判断）
+- `016_media_urls`：`messages.media_urls` / `dm_messages.media_urls`（多图消息的完整 URL 列表 JSONB，首图仍写 `media_url` 兼容旧客户端）
 
 ## 6. 游戏 Overlay（透明置顶窗口方案）
 
-不做 Direct3D/OpenGL 挂钩、不做 DLL 注入。使用 Tauri 原生能力，三窗口架构（Vite 多页入口：index/input/overlay）：
+不做 Direct3D/OpenGL 挂钩、不做 DLL 注入。使用 Tauri 原生能力，六个窗口入口（Vite 多页：index / input / overlay / settings / screen / share）：
 
 - **main**：聊天主窗口（React 全量 UI）
-- **input**（输入 Overlay）：`decorations:false, transparent:true, alwaysOnTop:true, skipTaskbar:true, focus:true`；全局快捷键（默认 `Alt+G`，设置可改；再按一次关闭）呼出 → 定位主屏底部居中 → 聚焦；Enter 发送（emit `game-input-send` → 主窗口走 WS）→ 自动隐藏；Esc 或再次按呼出键取消（emit `game-input-cancel`）。
-- **overlay**（消息 Overlay）：同参数 + `focus:false` + `setIgnoreCursorEvents(true)`（点击穿透）；背景**绝对透明**（CSS `background: transparent`）；位置 6 预设（左上/上中/右上/左下/下中/右下）+ 缩放 0.5–2.0 + 自动隐藏时长 2–15s，设置实时生效（`applyOverlayConfig` → setPosition/setSize + emit config → CSS zoom）。
+- **input**（快捷输入框）：`decorations:false, transparent:true, alwaysOnTop:true, skipTaskbar:true, focus:true`；全局快捷键（默认 `Alt+G`，设置可改；再按一次关闭）呼出 → 定位主屏底部居中 → 聚焦；Enter 发送（emit `game-input-send` → 主窗口走 WS）→ 自动隐藏；Esc 或再次按呼出键取消（emit `game-input-cancel`）。
+- **overlay**（消息浮层）：同参数 + `focus:false` + `setIgnoreCursorEvents(true)`（点击穿透）；背景**绝对透明**（CSS `background: transparent`）；位置 6 预设（左上/上中/右上/左下/下中/右下）+ 缩放 0.5–2.0 + 自动隐藏时长 2–15s，设置实时生效（`applyOverlayConfig` → setPosition/setSize + emit config → CSS zoom）。浮层可能比主窗口晚挂载，因此每次推送消息前都会补发一次配置，避免缩放/时长停留在默认值。
+- **settings**：独立设置窗口，与主窗口共享 localStorage，变更经 `settings:changed` 事件回流主窗口执行本地副作用（快捷键、浮层位置、代理）。
+- **screen-\*** / **share-\***：屏幕共享的观看窗与采集窗，各自持有独立的 WS 信令连接（见第 4 节屏幕共享）。
 
 **焦点恢复**：输入窗发送后隐藏，Windows 将焦点还给先前的前台窗口（即游戏）。**前提**：目标用户在游戏中采用**无边框窗口化**模式（覆盖式窗口在独占全屏下无效）。
 
@@ -184,9 +197,11 @@ gametalk/
 **客户端**（ChatSocket + chat store）：
 - 快速退避重连：1s → 1s → 2s → 3s → 5s（封顶 5s），另有 8s 握手超时。
 - 应用层心跳：15s 一次 ping；35s 无 pong 判定半开连接，强制重连。
-- 发送自愈：消息发出 5s 未被确认（有未决乐观消息）判定连接假活，强制重连。
+- 发送自愈：消息**真正发出**后 5s 未被确认判定连接假活，强制重连；仍在排队（订阅未就绪）的消息不计入，避免重连刚开就被误判清空队列。
 - 订阅看门狗：连接已开但活跃房间未订阅时，每 2s 补发 `room:join`。
-- 重连成功后强制重载活跃房间历史，补回断开期间已入库的消息。
+- 重连成功后强制重载活跃房间历史，补回断开期间已入库的消息；重载时**合并**拉取期间经 WS 到达的新消息，不会被旧快照覆盖。开着私聊时不会重载房间（避免被拽出私聊）。
+- 历史加载失败不标记为「已加载」，重新选中会话会重试；换账号时用世代令牌丢弃在途的旧账号响应。
+- 私聊与房间互斥表达活跃会话：打开私聊后，房间消息照常计未读并弹通知；窗口最小化或隐藏到托盘时，当前会话的消息同样计未读并弹通知。
 
 **服务端**：
 - SIGINT/SIGTERM 优雅关闭（关 WS、关连接池）；协议层心跳巡检（见第 4 节）。
@@ -196,14 +211,16 @@ gametalk/
 
 - 密码 argon2 哈希；JWT HS256，`JWT_SECRET` 生产必配（默认值启动即报错）。
 - 输入长度/内容校验（消息 ≤2000 字符、房间 id ≤64、用户名 3-24 位白名单、签名 ≤100）；WS 消息类型白名单。
+- 入参校验：所有直接进 SQL 的 UUID 先过 `lib/validate.isUuid`，非字符串文本统一归零；PG 错误由全局处理映射为 400/404（见第 4 节错误码语义）。
 - 限流：REST 全局每 IP 每分钟 300 次（`RATE_LIMIT_MAX`），注册/登录加严到每分钟 10 次
   （`RATE_LIMIT_AUTH_MAX`，防爆破），WS 单连接每 5s 25 条；超限统一回 `rate_limited`/HTTP 429。
-  反代后按 X-Forwarded-For 取真实 IP（`trustProxy`，8787 端口仅绑 127.0.0.1）。
-- WS 加固：单帧 64KB 上限（见第 4 节）。
+  反代后按 X-Forwarded-For 取真实 IP，但**只信任回环/私有网段来源**的转发头——公网直连客户端伪造的 XFF 会被忽略，不能借此绕过限流。
+- WS 加固：单帧 64KB 上限（见第 4 节）；单连接发送缓冲超过 8MB（客户端不读数据）直接断开，防内存积压。
+- 邀请码/邀请链接用 `crypto.randomInt` 生成（CSPRNG），不用 `Math.random`。
 - 头像：上传 data URL 类型/大小（≤3MB）/魔数三重校验；分发走 `/api/avatars/:id`（公开端点，
   id 为不可枚举 UUID），带 5 分钟缓存头。
 - 消息图片：`POST /api/media` 需登录，类型/大小（≤5MB）/魔数三重校验；读取 `/api/media/:id`
-  公开（`<img>` 无法附带认证头），id 为不可枚举 UUID + immutable 缓存；发送时校验媒体归属。
-- 注册并发竞态由用户名唯一索引兜底（冲突返回 409）。
+  公开（`<img>` 无法附带认证头），id 为不可枚举 UUID + immutable 缓存；发送时校验媒体归属，群表情入库时同样校验归属。
+- 注册并发竞态由用户名唯一索引兜底（冲突返回 409）；邀请兑换用「占位入房 + 条件原子自增」防超额，并发下不会 500。
 - CORS 可配置：compose 默认 `*`（桌面客户端不受浏览器同源限制），可经 `CORS_ORIGIN` 收紧。
 - 无硬编码 secret；`.env.example` 提供模板；忘记密码由服务器主人用 `npm run reset-password` 重置。

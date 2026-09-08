@@ -18,7 +18,7 @@ cd client && npm test
 # 客户端（Tauri 桌面，需要 Rust + MSVC）
 cd client
 npm install
-npm run tauri dev      # 三个窗口：main / input / overlay
+npm run tauri dev      # 六个窗口入口：main / input / overlay / settings / screen / share
 ```
 
 ## 2. 生产部署（Docker Compose，一键脚本）
@@ -69,11 +69,33 @@ docker build -f docker/server.Dockerfile -t gametalk-server:latest .
 # 客户端安装包（Windows，本机构建）
 cd client && npm run build:full
 # 产物：client/src-tauri/target/release/bundle/nsis/GameTalk_<版本>_x64-setup.exe
-# 并自动复制到仓库根目录：GameTalk-<版本>-x64-Setup.exe
+# 并自动复制到仓库根目录：
+#   GameTalk-<版本>-build.<YYYYMMDD.HHmm>.<短sha>-x64-Setup.exe
 ```
 
-**三端 Release（推荐）**：推送 `v*` 标签（如 `v0.1.1`）触发 `.github/workflows/build-desktop.yml`，
-由 GitHub Actions 构建 Windows NSIS / Linux deb+AppImage / macOS dmg，并自动挂到对应 GitHub Release。
+每次构建都会生成唯一构建标识（`build.<时间戳>.<git 短 sha>`），显示在客户端登录页与设置「关于」页，也写进根目录安装包文件名。版本号相同的不同构建据此区分，核对方法见 [testing.md](testing.md) 第 6 节。
+
+**三端 Release（推荐）**：推送 `v*` 标签（如 `v0.7.1`）触发 `.github/workflows/build-desktop.yml`，
+由 GitHub Actions 构建 Windows NSIS / Linux deb+AppImage / macOS dmg，并自动挂到对应 GitHub Release（正文取自 annotated tag 的说明）。
+
+## 3.1 服务端升级
+
+```bash
+cd /root/gametalk
+git pull --ff-only            # 若历史被重写过则 git reset --hard origin/main
+cd docker && docker compose up -d --build server
+curl -s http://127.0.0.1:8787/health   # 确认 version 已变
+```
+
+迁移在服务启动时自动应用，无需手动执行。**如果服务器上的 compose 做过本地修改（例如去掉 Caddy、直接暴露端口），升级前先备份该文件**，`git pull` 后对比确认修改仍在：
+
+```bash
+cp -a docker/docker-compose.yml /tmp/compose-backup.yml
+# ... pull + rebuild ...
+diff <(sha256sum docker/docker-compose.yml) <(sha256sum /tmp/compose-backup.yml)   # 应完全一致
+```
+
+GitHub 拉取不稳定时可以用离线通道：本地 `git bundle create gt.bundle main` → `scp` 到服务器 → `git fetch /tmp/gt.bundle main:refs/bundle-main && git merge --ff-only refs/bundle-main && git update-ref -d refs/bundle-main`。
 
 ## 4. 客户端连接服务器
 
@@ -135,8 +157,9 @@ docker compose start server                      # 3) 重启并验证 /health、
 
 ## 8. 部署状态
 
-该部署方案已在真实服务器上长期稳定运行（2026-08-28 起）。自建部署按第 2 节流程操作即可，
-数据库备份与恢复见第 6 节。
+该部署方案已在真实服务器上长期稳定运行（2026-08-28 起），客户端与线上服务端保持同版本节奏。
+
+最近一次生产更新：2026-09-09 升至 **0.7.1**（服务端 14 项缺陷修复，无新增迁移）。验证项：`/health` 版本、`/api/turn` 匿名 401、WS 无效 token 拒绝、compose 与更新前逐字节一致、postgres 与 coturn 容器未重建。自建部署按第 2 节流程操作即可，数据库备份与恢复见第 6 节。
 
 ## 9. TURN 中继（跨网络屏幕共享，可选）
 
