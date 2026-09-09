@@ -296,6 +296,10 @@ describe('ScreenShareManager：中继路径限码率', () => {
     expect(mgr.isRelaying()).toBe(true);
     expect(mgr.snapshot().relayed).toBe(true);
     expect(mgr.getTargetBps()).toBe(RELAY_MAX_BPS);
+
+    // 服务端可下发更宽的中继预算（带宽充裕的机器）
+    mgr.setRelayMaxBps(4_000_000);
+    expect(mgr.getTargetBps()).toBe(4_000_000);
   });
 });
 

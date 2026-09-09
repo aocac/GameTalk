@@ -141,7 +141,10 @@ function ShareWindow() {
       // 每次（重）连上房间：重新登记共享 + 重发观看请求，媒体连接不受影响
       onJoined: () => {
         void getTurnCredentials(token)
-          .then(({ iceServers }) => mgr.setExtraIceServers(iceServers as unknown as RTCIceServer[]))
+          .then(({ iceServers, relayMaxBps }) => {
+            mgr.setExtraIceServers(iceServers as unknown as RTCIceServer[]);
+            mgr.setRelayMaxBps(relayMaxBps);
+          })
           .catch(() => undefined);
         sock.send({ type: 'screen:start', payload: { roomId: room } });
       },

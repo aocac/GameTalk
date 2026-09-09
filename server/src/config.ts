@@ -18,6 +18,8 @@ export interface Config {
   turnSecret: string | null;
   /** TURN 地址（逗号分隔，如 turn:host:3478,turn:host:3478?transport=tcp） */
   turnUrls: string[];
+  /** 走中继时的单路码率上限（bps）：中继消耗服务器出口，按机器带宽配置 */
+  turnRelayMaxBps: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -40,5 +42,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     authRateLimitMax: env.NODE_ENV === 'test' ? 1_000_000 : parseInt(env.RATE_LIMIT_AUTH_MAX || '10', 10),
     turnSecret: env.TURN_SECRET || null,
     turnUrls: env.TURN_URL ? env.TURN_URL.split(',').map((s) => s.trim()).filter(Boolean) : [],
+    // 默认 1.2Mbps（按 4Mbps 出口的小机器设计）；带宽充裕的机器可调高
+    turnRelayMaxBps: Math.max(300_000, Number(env.TURN_RELAY_MAX_BPS) || 1_200_000),
   };
 }

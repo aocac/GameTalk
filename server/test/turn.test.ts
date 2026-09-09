@@ -47,7 +47,9 @@ describe('turn credentials endpoint', () => {
     const { token, userId } = await registerUser('turn_a', app);
     const res = await app.inject({ method: 'GET', url: '/api/turn', headers: { authorization: `Bearer ${token}` } });
     expect(res.statusCode).toBe(200);
-    const { iceServers } = res.json();
+    const { iceServers, relayMaxBps } = res.json();
+    // 中继码率预算随凭据下发（未配置 TURN_RELAY_MAX_BPS 时默认 1.2Mbps）
+    expect(relayMaxBps).toBe(1_200_000);
     expect(iceServers).toHaveLength(1);
     const [server] = iceServers;
     expect(server.urls).toEqual(['turn:turnhost.example:3478', 'turn:turnhost.example:3478?transport=tcp']);

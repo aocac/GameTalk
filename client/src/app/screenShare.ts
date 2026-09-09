@@ -205,6 +205,8 @@ export class ScreenShareManager {
   private selfAudio = false;
   private quality: ShareQuality = 'auto';
   private lastParamError: string | null = null;
+  /** 中继路径的单路码率上限（由服务端 /api/turn 下发，默认 1.2Mbps） */
+  private relayMaxBps = RELAY_MAX_BPS;
   private budgetBps = DEFAULT_BUDGET_BPS;
   /** 自适应系数：1 = 满码率，最低 ADAPT_FLOOR */
   private adapt = 1;
@@ -229,6 +231,15 @@ export class ScreenShareManager {
 
   setExtraIceServers(list: RTCIceServer[]): void {
     this.extraIceServers = list;
+  }
+
+  /** 服务端下发的中继码率预算（按服务器出口带宽决定） */
+  setRelayMaxBps(bps: number | undefined): void {
+    if (!bps || !Number.isFinite(bps)) return;
+    const next = Math.max(300_000, Math.round(bps));
+    if (next === this.relayMaxBps) return;
+    this.relayMaxBps = next;
+    if (this.isRelaying()) this.applyAllSenderParams();
   }
 
   /** 画质档位（共享端生效；观看端也会记录，用于界面显示） */
@@ -267,7 +278,7 @@ export class ScreenShareManager {
   getTargetBps(): number {
     const viewers = Math.max(1, this.senders.size);
     const share = Math.round(this.budgetBps / viewers);
-    const cap = this.isRelaying() ? RELAY_MAX_BPS : QUALITY_PRESETS[this.getEffectiveQuality()].maxBitrate;
+    const cap = this.isRelaying() ? this.relayMaxBps : QUALITY_PRESETS[this.getEffectiveQuality()].maxBitrate;
     const base = Math.max(MIN_PER_VIEWER_BPS, Math.min(cap, share));
     return Math.round(base * this.adapt);
   }

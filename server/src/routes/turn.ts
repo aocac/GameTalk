@@ -29,12 +29,13 @@ export function registerTurnRoutes(app: FastifyInstance, deps: TurnDeps): void {
       await reply.code(401).send({ error: { code: 'unauthorized', message: 'unauthorized' } });
       return;
     }
-    const { turnSecret, turnUrls } = deps.config;
+    const { turnSecret, turnUrls, turnRelayMaxBps } = deps.config;
     if (!turnSecret || turnUrls.length === 0) {
-      await reply.send({ iceServers: [] });
+      await reply.send({ iceServers: [], relayMaxBps: turnRelayMaxBps });
       return;
     }
     const { username, credential } = mintTurnCredential(turnSecret, req.userId, 3600);
-    await reply.send({ iceServers: [{ urls: turnUrls, username, credential }] });
+    // relayMaxBps：走中继时的单路码率上限，由服务器按自身出口带宽决定（客户端据此限速）
+    await reply.send({ iceServers: [{ urls: turnUrls, username, credential }], relayMaxBps: turnRelayMaxBps });
   });
 }

@@ -90,7 +90,10 @@ function ScreenWindow() {
         // 首次连上：拿自建 TURN 凭据（receiver 的 ICE 配置构造时固定）后请求观看；
         // 重连：带原 cid 重发 request，已连通的媒体连接不受影响
         void getTurnCredentials(token)
-          .then(({ iceServers }) => mgr.setExtraIceServers(iceServers as unknown as RTCIceServer[]))
+          .then(({ iceServers, relayMaxBps }) => {
+            mgr.setExtraIceServers(iceServers as unknown as RTCIceServer[]);
+            mgr.setRelayMaxBps(relayMaxBps);
+          })
           .catch(() => undefined)
           .then(() => {
             if (disposed) return;

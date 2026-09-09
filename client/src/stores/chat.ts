@@ -217,8 +217,10 @@ async function ensureTurnIceServers(): Promise<api.TurnIceServer[]> {
   const { token } = useAuth.getState();
   if (!token) return turnIceCache?.iceServers ?? [];
   try {
-    const { iceServers } = await api.getTurnCredentials(token);
+    const { iceServers, relayMaxBps } = await api.getTurnCredentials(token);
     turnIceCache = { iceServers, expiry: Date.now() + 55 * 60_000 };
+    // 中继码率预算随凭据一起下发（服务器按自身出口带宽决定）
+    screenShareManager?.setRelayMaxBps(relayMaxBps);
     return iceServers;
   } catch {
     return turnIceCache?.iceServers ?? [];

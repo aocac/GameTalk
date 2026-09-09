@@ -97,6 +97,54 @@ diff <(sha256sum docker/docker-compose.yml) <(sha256sum /tmp/compose-backup.yml)
 
 GitHub 拉取不稳定时可以用离线通道：本地 `git bundle create gt.bundle main` → `scp` 到服务器 → `git fetch /tmp/gt.bundle main:refs/bundle-main && git merge --ff-only refs/bundle-main && git update-ref -d refs/bundle-main`。
 
+## 3.2 已有 nginx / 宝塔面板的服务器
+
+如果目标机器上已经有 nginx（例如宝塔面板）在跑其他网站，**不要装 Caddy**（会抢 80/443），改用 nginx 反代：
+
+1. 只起 `postgres` + `server` 两个容器（compose 里删掉 caddy 服务），server 端口保持 `127.0.0.1:8787` 仅本机监听。
+2. 新增一个独立 vhost（宝塔是 `/www/server/panel/vhost/nginx/<域名>.conf`），内容：
+
+```nginx
+server {
+    listen 80;
+    server_name 你的域名;
+    location /.well-known/acme-challenge/ { root /www/wwwroot/你的域名; try_files $uri =404; }
+    location / { return 301 https://$host$request_uri; }
+}
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name 你的域名;
+    ssl_certificate     /www/server/panel/vhost/cert/你的域名/fullchain.pem;
+    ssl_certificate_key /www/server/panel/vhost/cert/你的域名/privkey.pem;
+    client_max_body_size 8m;          # 媒体上传 ≤5MB（base64 后约 6.7MB）
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;   # 宝塔 0.websocket.conf 已定义该 map
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;      # WS 长连接
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+}
+```
+
+3. 证书：`acme.sh --issue -d 你的域名 -w /www/wwwroot/你的域名` 后 `--install-cert` 到上面的路径（宝塔面板里申请证书同理）。
+4. 只新增这一个 vhost 文件，不动已有站点；改完先 `nginx -t` 再 reload。
+
+**coturn 在 Docker host 网络下的坑**：容器会把 Docker 网桥（172.x.0.1）当成中继地址，导致对外通告错误。必须显式指定：
+
+```
+listening-ip=<内网IP>
+relay-ip=<内网IP>
+external-ip=<公网IP>/<内网IP>
+```
+
 ## 4. 客户端连接服务器
 
 - 默认 `http://127.0.0.1:8787`（本机自建服务器）。

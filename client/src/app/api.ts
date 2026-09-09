@@ -376,6 +376,6 @@ export interface TurnIceServer {
   credential: string;
 }
 
-export function getTurnCredentials(token: string): Promise<{ iceServers: TurnIceServer[] }> {
-  return request<{ iceServers: TurnIceServer[] }>('/api/turn', { token });
+export function getTurnCredentials(token: string): Promise<{ iceServers: TurnIceServer[]; relayMaxBps?: number }> {
+  return request<{ iceServers: TurnIceServer[]; relayMaxBps?: number }>('/api/turn', { token });
 }
