@@ -131,7 +131,7 @@ cd client/src-tauri && cargo check
 2. 客户端登录页与设置「关于」页显示的标识
 3. 根目录安装包文件名（`GameTalk-<版本>-build.<标识>-x64-Setup.exe`）
 
-同名版本的不同构建据此区分。CI 打包（推送 `v*` 标签）同样如此：workflow 在构建后运行 `client/scripts/copy-artifacts.mjs`，所以 Release 里的 Windows 资产名形如 `GameTalk-0.8.0-build.20260910.1747.afe7926-x64-Setup.exe`。
+同名版本的不同构建据此区分。CI 打包（推送 `v*` 标签）同样如此：workflow 在构建后运行 `client/scripts/copy-artifacts.mjs`，所以 Release 里的 Windows 资产名形如 `GameTalk-<版本>-build.<时间戳>.<短sha>-x64-Setup.exe`。
 
 ## 7. 验收结论记录
 
