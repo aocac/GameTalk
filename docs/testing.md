@@ -52,7 +52,7 @@ cd client/src-tauri && cargo check
 | 25 | 邀请链接（创建 / 预览 / 过期 410 / 耗尽 410 / 幂等入房不计数 / 创建者与房主吊销） | ✅（invites.test.ts） | ✅ 双账号浏览器（深链模拟入房，dev/e2e-invite-forward.mjs） |
 | 26 | 消息转发（源可见性 / 目标唯一 / 服务端代复制 media / 「来自…」来源标注；转发进房复用禁言校验） | ✅（forward.test.ts） | ✅ 双账号浏览器（转发角标，dev/e2e-invite-forward.mjs） |
 | 27 | 屏幕共享 P2P 信令（非成员拒绝发起 / 启停广播带 userId / 定向转发带 roomId 与越权拒绝） | ✅（screen.test.ts，服务端信令） | ✅ 跨网络真机验收通过（P2P + 自建 TURN 中继兜底；观看为独立系统窗口） |
-| 28 | TURN 中继凭据端点（鉴权 / 凭据绑定用户 / HMAC 数学 / 未配置返回空） | ✅（turn.test.ts，3 例） | ✅ 真机跨网走 VPS 自建 coturn（TCP 中继，UDP 被安全组拦） |
+| 28 | TURN 中继凭据端点（鉴权 / 凭据绑定用户 / HMAC 数学 / 未配置返回空） | ✅（turn.test.ts，3 例） | ✅ 真机跨网走自建 coturn（香港服务器 UDP/TCP 3478 均可用，`/api/turn` 返回服务端公网地址的中继候选（`udp/<服务器IP>`）） |
 | 29 | 历史分页保留最新消息（rooms + dm，翻页不漏不重） | ✅（regressions.test.ts） | ✅ 真机灌 58 条后重启，首屏含最新一条（2026-09-09） |
 | 30 | 纯图消息（无文字）发送 | ✅（store.regressions.test.ts） | ✅ 真机实测发送成功（2026-09-09，修复前静默丢弃） |
 | 31 | 踢「已退房成员」不移除操作者自己的房间 | ✅（regressions.test.ts + store 回归） | — |
@@ -60,8 +60,11 @@ cd client/src-tauri && cargo check
 | 33 | ScreenShareManager 生命周期（watch/offer/answer/bye、重复 request 非破坏性、ICE 重启） | ✅（screenShare.test.ts，8 例，mock RTCPeerConnection） | — |
 | 34 | 屏幕共享真实媒体链路（合成采集流 → 真实 P2P → 画面推进 + 音频 RMS） | ✅（dev/e2e-screen-share-media.mjs，7/7） | ✅ 双实例真机：整屏+系统音频共享，控制条与观看窗数据正常（2026-09-09） |
 | 35 | 码率分摊与画质档位（12M 预算下 1/4/12 人分别 4M/3M/下限；自动档按人数选档；参数下发被拒时回退） | ✅（screenShare.test.ts，11 例） | ✅ 真机自适应 + 档位切换实测：省流量 1280×720/1.3Mbps → 流畅优先 2560×1440/4.1Mbps·29fps |
+| 36 | 房间被解散后写消息（`room_gone` + roomId，不再回 `internal error`，并清陈旧订阅） | ✅（regressions.test.ts） | ✅ 生产真机复现并验证（2026-09-11） |
+| 37 | 设置广播到主窗口（主题 / 提示音音量等字段主窗口跟随变化） | 逻辑随 store（settings:changed 分支） | ✅ 生产真机双实例（深色模式两窗同步，2026-09-11） |
+| 38 | 屏幕共享全流程（窗口源采集 → 控制条数据 → 观看窗播放 → 档位切换 → 停止后观看窗自动关闭） | ✅（screenShare.test.ts 12 例 + e2e-screen-share-media.mjs） | ✅ 生产真机双实例端到端（2026-09-11，含「切回流畅优先」复验） |
 
-当前实测：server **90** 测试（11 文件）+ client **38** 测试（4 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。VPS 生产环境 2026-09-09 已更新至 0.7.1 并验证（`/health`、`/api/turn` 匿名 401、WS 无效 token、compose 与备份逐字节一致、postgres/coturn 未动）。
+当前实测：server **91** 测试（11 文件）+ client **38** 测试（4 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。生产环境（境外云服务器，地址不记录在本仓库）2026-09-11 运行 **0.8.0** 并验证（`/health` 版本、`/api/turn` 匿名 401、WSS 握手、容器 healthy、宝塔与其他站点不受影响），当日测试数据已全量清理（users/rooms/messages/dm_messages/media/invite_links 归零）。
 
 ## 3. 真机验收清单
 
@@ -79,6 +82,15 @@ cd client/src-tauri && cargo check
 - [x] 屏幕共享：系统屏幕选择器正常弹出；跨网络 P2P 连通；直连不通时经服务器自建 coturn 中继出画面（2026-09-05 真机确认）
 - [x] 电脑控制真机全流程（2026-09-09，release 包 + 隔离 WebView2 profile）：注册 → 建房 → 纯图无文字发送 → 灌 58 条消息重启后首屏含最新 → 第二账号消息触发浮层 → Alt+G 呼出输入条 → ESC 关闭 → 关于页/登录页显示构建标识
 - [ ] 观看改为独立系统窗口：原生拖拽 / 缩放；关闭观看窗后共享者连接释放；共享结束窗口自动关闭（浏览器路径已验证，Tauri 原生关闭路径待验收）
+
+> 以下为 v0.8.0 生产环境全量检测记录（2026-09-11，双实例连生产服务器，全程电脑控制 + 截图/可访问性树取证）：
+
+- [x] 注册 / 改服务器地址 / 建房 + 邀请码加入 / 成员在线 2/2 / 双向实时消息 / 纯图片消息 / 编辑（双端「已编辑」同步）/ 撤回（居中提示 + 预览同步）
+- [x] 游戏模式 Alt+G 输入条 + 浮层提示（失焦自动关闭为设计行为）；@提及选择器弹出并可用键盘选中
+- [x] 设置：深色模式（主窗口与设置窗同步变深）、音量滑块与四种试听、共享画质档位与上行预算
+- [x] 屏幕共享端到端（窗口源、不带系统音频）：控制条实时预览 + `● 正在共享` + 观看人数 + `1296×688 · 4.4 Mbps · 9 fps` + 生效档 `自动·清晰`；观看端独立窗口播放真实远端画面；档位切换 省流量 864×459 / 流畅优先 1296×688 / 自动·清晰 即时生效；停止后控制条消失、观看窗自动关闭
+- [x] `room_gone`：房间被删后继续发送，客户端提示「房间已不存在（可能已被解散）」并移除本地房间（不再 `internal error`）
+- [ ] 待验收（环境阻塞）：**全屏采集 + 系统音频**路径——本开发机（RTX 5070 Ti + 向日葵虚拟显示器 + nvlddmkm 32.0.16.1074）在该路径上会触发 `0x116 VIDEO_TDR_ERROR` 蓝屏（WER 归因显卡驱动），需更新驱动或换机器后再验
 
 ## 4. 面向用户的本机验收步骤（无服务器部署时）
 
@@ -119,7 +131,7 @@ cd client/src-tauri && cargo check
 2. 客户端登录页与设置「关于」页显示的标识
 3. 根目录安装包文件名（`GameTalk-<版本>-build.<标识>-x64-Setup.exe`）
 
-同名版本的不同构建据此区分。
+同名版本的不同构建据此区分。CI 打包（推送 `v*` 标签）同样如此：workflow 在构建后运行 `client/scripts/copy-artifacts.mjs`，所以 Release 里的 Windows 资产名形如 `GameTalk-0.8.0-build.20260910.1747.afe7926-x64-Setup.exe`。
 
 ## 7. 验收结论记录
 

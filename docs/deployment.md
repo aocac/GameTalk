@@ -75,8 +75,12 @@ cd client && npm run build:full
 
 每次构建都会生成唯一构建标识（`build.<时间戳>.<git 短 sha>`），显示在客户端登录页与设置「关于」页，也写进根目录安装包文件名。版本号相同的不同构建据此区分，核对方法见 [testing.md](testing.md) 第 6 节。
 
-**三端 Release（推荐）**：推送 `v*` 标签（如 `v0.7.1`）触发 `.github/workflows/build-desktop.yml`，
+**三端 Release（推荐）**：推送 `v*` 标签（如 `v0.8.0`）触发 `.github/workflows/build-desktop.yml`，
 由 GitHub Actions 构建 Windows NSIS / Linux deb+AppImage / macOS dmg，并自动挂到对应 GitHub Release（正文取自 annotated tag 的说明）。
+
+> 打 tag 时注意：`git tag -a -F <file>` 会把**以 `#` 开头的行当注释删掉**（与 `git commit -F` 同源），
+> 正文里的 Markdown 标题会整段丢失。要么加 `--cleanup=verbatim`，要么事后 `gh release edit --notes-file` 补。
+> Windows 产物的文件名由 `client/scripts/copy-artifacts.mjs` 生成，带唯一构建标识（`build.<时间戳>.<短sha>`），方便区分同版本号的不同构建。
 
 ## 3.1 服务端升级
 
@@ -207,7 +211,19 @@ docker compose start server                      # 3) 重启并验证 /health、
 
 该部署方案已在真实服务器上长期稳定运行（2026-08-28 起），客户端与线上服务端保持同版本节奏。
 
-最近一次生产更新：2026-09-09 升至 **0.7.1**（服务端 14 项缺陷修复，无新增迁移）。验证项：`/health` 版本、`/api/turn` 匿名 401、WS 无效 token 拒绝、compose 与更新前逐字节一致、postgres 与 coturn 容器未重建。自建部署按第 2 节流程操作即可，数据库备份与恢复见第 6 节。
+**当前生产部署形态（2026-09-11 起）**：境外云服务器，与宝塔面板及其他站点共存，因此**没有装 Caddy**，走第 3.2 节的 nginx 反代方案，证书用 acme.sh（webroot）签发到宝塔 cert 目录并配置自动续期；coturn 以 host 网络运行，UDP/TCP 3478 均已放行。具体域名与 IP 不写进本仓库（部署者自己记在密码管理器里即可）。
+
+最近一次生产更新：2026-09-11 升至 **0.8.0**（含 `room_gone` 修复，无新增迁移）。验证项：`/health` 返回 200 且版本正确、`/api/turn` 匿名 401、WSS 握手正常、容器 healthy、宝塔与其他站点不受影响。**服务端小改动可以只覆盖改动文件再重建镜像**：
+
+```bash
+# 本地：只上传改动的服务端源文件（示例，地址换成你自己的）
+scp server/src/ws/gateway.ts root@<你的服务器IP>:/root/gametalk/server/src/ws/
+# 服务器：重建并重启 server 容器
+cd /root/gametalk/docker && docker compose build server && docker compose up -d server
+curl -s https://<你的域名>/health
+```
+
+自建部署按第 2 节流程操作即可，数据库备份与恢复见第 6 节。
 
 ## 9. TURN 中继（跨网络屏幕共享，可选）
 
