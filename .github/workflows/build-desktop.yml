@@ -38,10 +38,15 @@ jobs:
       - name: Build Windows installer
         run: npm run tauri build -- --bundles nsis
         working-directory: client
+      # 产物文件名带上构建唯一标识（build.<时间戳>.<短sha>），与「关于」页显示的 ID 同源，
+      # 这样同一个版本号的多次构建在 Release 资产里也能区分开
+      - name: Rename installer with build id
+        run: node scripts/copy-artifacts.mjs
+        working-directory: client
       - uses: actions/upload-artifact@v7
         with:
           name: windows
-          path: client/src-tauri/target/release/bundle/nsis/*-setup.exe
+          path: GameTalk-*-Setup.exe
           if-no-files-found: error
 
   linux:
