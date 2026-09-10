@@ -26,6 +26,7 @@ client/src-tauri/gen/
 # --- IDE / OS ---
 .idea/
 .vscode/
+.zcode/
 *.suo
 *.user
 Thumbs.db
