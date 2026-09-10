@@ -29,6 +29,16 @@ npm run build:full   # tauri build + 复制安装包到仓库根目录（文件�
 
 `npm run build` 会先跑 `scripts/build-id.mjs --fresh` 生成唯一构建标识 `build.<时间戳>.<git 短 sha>`，写入 `client/.build-id` 并注入前端（登录页与设置「关于」页显示）。安装包复制脚本读同一个标识，保证包名与应用内显示一致。
 
+### 预置默认服务器地址
+
+想让安装包开箱即连自己的服务器，在打包机上建 `client/.env.local`（模板 `.env.example`，已被 gitignore）：
+
+```
+VITE_DEFAULT_SERVER_URL=https://你的域名
+```
+
+只在生产构建生效：`vite dev` 与 vitest 一律使用 `http://127.0.0.1:8787`。这道闸门是必需的——vitest 与 vite 都会加载 `.env.local`，若不加判断，本机跑单测会默认连上生产服务器。公开仓库与 CI 没有该文件，构建产物回落本地地址。
+
 ## 结构
 
 - `src/app/`：基础能力（`ws` 客户端 / `api` / `settings` / `gameMode` / `audio` / `screenShare` / `types`）
@@ -37,7 +47,7 @@ npm run build:full   # tauri build + 复制安装包到仓库根目录（文件�
 - `src/buildInfo.ts`：构建标识（由 vite `define` 注入）
 - `src-tauri/`：Rust 壳（托盘、单实例、quit_app、set_proxy、采集提示条隐藏），业务逻辑尽量留在 TS
 - `capabilities/`：Tauri 权限清单，按窗口标签分开授权（main / input+overlay / settings / screen+share）
-- `test/`：gameMode 单测、store 回归、真实 server 集成测试
+- `test/`：gameMode 单测、store 回归、默认服务器地址解析、真实 server 集成测试
 
 ## 开发注意
 

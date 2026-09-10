@@ -75,6 +75,14 @@ cd client && npm run build:full
 
 每次构建都会生成唯一构建标识（`build.<时间戳>.<git 短 sha>`），显示在客户端登录页与设置「关于」页，也写进根目录安装包文件名。版本号相同的不同构建据此区分，核对方法见 [testing.md](testing.md) 第 6 节。
 
+**预置默认服务器地址（可选）**：想让发出去的安装包开箱即连自己的服务器，在打包机上建 `client/.env.local`（模板 `client/.env.example`，已被 gitignore，不会进仓库）：
+
+```
+VITE_DEFAULT_SERVER_URL=https://你的域名
+```
+
+值只在生产构建生效——`vite dev` 与 vitest 一律使用 `http://127.0.0.1:8787`。这道判断不可省：vite 与 vitest 都会加载 `.env.local`，若不区分，开发机上跑单测会默认连上生产服务器。公开仓库与 CI 构建没有该文件，产物回落本地地址，由用户自行填写。
+
 **三端 Release（推荐）**：推送 `v*` 标签（如 `v0.8.0`）触发 `.github/workflows/build-desktop.yml`，
 由 GitHub Actions 构建 Windows NSIS / Linux deb+AppImage / macOS dmg，并自动挂到对应 GitHub Release（正文取自 annotated tag 的说明）。
 
@@ -151,8 +159,8 @@ external-ip=<公网IP>/<内网IP>
 
 ## 4. 客户端连接服务器
 
-- 默认 `http://127.0.0.1:8787`（本机自建服务器）。
-- 连接远程服务器：设置 → 服务器地址改为 `https://你的域名`（WS/WSS 自动推导）。
+- 默认 `http://127.0.0.1:8787`（本机自建服务器）；若安装包由管理员在构建期预置了地址（见第 3 节），首次启动即为该地址。
+- 连接远程服务器：设置 → 服务器地址改为 `https://你的域名`（WS/WSS 自动推导）。设置窗口的服务器地址下方会显示「当前默认」值，便于确认安装包预置的是哪个地址。
 
 ## 5. GitHub Actions
 

@@ -78,7 +78,31 @@ export interface AppSettings {
   setShareMuteOwnSounds: (v: boolean) => void;
 }
 
-export const DEFAULT_SERVER_URL = 'http://127.0.0.1:8787';
+/** 未注入默认服务器地址时的兜底（本地开发 / 公开仓库与 CI 构建） */
+export const FALLBACK_SERVER_URL = 'http://127.0.0.1:8787';
+
+/**
+ * 构建期注入的默认服务器地址，只在生产构建生效。
+ *
+ * - 本地打包机把真实地址写在 `client/.env.local`（已 gitignore，模板见 `client/.env.example`），
+ *   打出的安装包首次启动即指向该地址，玩家不必手填。
+ * - 公开仓库与 CI 没有该文件 → 回落 FALLBACK_SERVER_URL。
+ * - `vite dev` 与 vitest 一律不注入：避免开发机上存在 `.env.local` 时把开发环境和
+ *   单测指向生产服务器（历史坑：本地测试误连线上）。
+ */
+function readInjectedServerUrl(): string {
+  if (!import.meta.env.PROD) return '';
+  const injected = import.meta.env.VITE_DEFAULT_SERVER_URL;
+  return typeof injected === 'string' ? injected : '';
+}
+
+/** 归一化服务器地址：去空白、去尾部斜杠；空值回落兜底地址（纯函数，便于单测） */
+export function resolveDefaultServerUrl(injected: string): string {
+  return injected.trim().replace(/\/+$/, '') || FALLBACK_SERVER_URL;
+}
+
+export const DEFAULT_SERVER_URL = resolveDefaultServerUrl(readInjectedServerUrl());
+
 /** v0.4.2 起默认快捷键：Alt+G（原 Ctrl+Shift+Space 过长且 Space 在游戏内常用） */
 export const DEFAULT_HOTKEY = 'Alt+G';
 /** 旧默认快捷键：持久化了该值的用户在迁移时升级到新默认（自定义键不受影响） */

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { emit, listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
+import { useSettings, applyProxySetting, DEFAULT_SERVER_URL, type OverlayPosition } from './app/settings';
 import { QUALITY_OPTIONS, QUALITY_PRESETS, qualityLabel } from './app/screenShare';
 import { previewSound } from './app/audio';
 import { applyTheme } from './app/theme';
@@ -172,7 +172,9 @@ export default function SettingsWindow() {
                 placeholder="https://chat.example.com"
                 onChange={(e) => change('serverUrl', e.target.value)}
               />
-              <span className="field-hint">填写你部署的 GameTalk 服务器地址；本地开发调试可用 http://127.0.0.1:8787</span>
+              <span className="field-hint">
+                当前默认：{DEFAULT_SERVER_URL}；本地开发调试可用 http://127.0.0.1:8787
+              </span>
             </label>
             <div className="settings-section">
               <span className="section-title">网络代理</span>

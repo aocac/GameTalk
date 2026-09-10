@@ -7,7 +7,8 @@
 | 服务端单测/集成 | vitest | REST 路由、WS 网关（双客户端实时收发、房主删房、幂等 join、花名册/在线状态）、好友（申请/互加/删除 + 实时事件 + 在线广播）、好友私聊（非好友拒绝/双方广播/历史分页/会话聚合/撤回权限/图片与引用校验）、@提及（解析/成员校验/入库/编辑重算）、图片消息（上传校验/归属/绝对 URL/多图）、禁言（仅房主/到期/解除）、WS 加固（限流 / 超大帧断连）、REST 限流（登录 429）、头像端点（data URL → HTTP 端点）、邀请链接（创建/资格/过期 410/耗尽 410/幂等入房不计数/吊销权限/并发兑换）、消息转发（源可见性/目标唯一/代复制 media/来源标注；转发进房复用禁言校验）、屏幕共享信令（非成员拒绝 / 启停广播 / 定向转发与越权拒绝 / 晚加入快照）、migration 幂等、输入校验与错误映射 |
 | 服务端回归 | vitest | `test/regressions.test.ts`：历史分页保留最新一条、空 mediaUrls 不算内容、退房/删房后订阅失效、房主不可退房、目标不在房间用 `target_not_in_room`、私聊撤回清 media_urls、编辑重算提及、改名同步广播、群表情媒体归属、邀请并发兑换、非法 id 不 500、代理信任判定（17 例） |
 | 客户端逻辑 | vitest | gameMode 管理器（mock Tauri，含换键后旧键注销、启动途中关闭的热键清理）、真实 server 集成测试（双端聊天 / not_in_room / 断线重连 / 花名册离线保留 / 好友私聊收发与历史 / 编辑往返） |
-| 屏幕共享逻辑 | vitest | `test/screenShare.test.ts`：连接生命周期、重复 request 非破坏性、码率分摊与档位、ICE 断线重启（11 例，mock RTCPeerConnection） |
+| 屏幕共享逻辑 | vitest | `test/screenShare.test.ts`：连接生命周期、重复 request 非破坏性、码率分摊与档位、ICE 断线重启、relay 候选命中限码率（12 例，mock RTCPeerConnection） |
+| 默认服务器地址 | vitest | `test/settings.test.ts`：注入值去空白与尾部斜杠、空值回落本地地址、保留端口与路径、测试/dev 环境不受 `.env.local` 注入影响（6 例） |
 | 客户端回归 | vitest | `test/store.regressions.test.ts`：纯图无文字发送、踢已退房成员不移除自己的房间、退房重进重载历史、加载失败可重试、历史重载合并新消息、断线排队消息不被清空、私聊翻页 loading、窗口失焦计未读、换账号丢弃在途响应（9 例） |
 | Lint | ESLint（双工作区） | `npm run lint` |
 | 前端构建 | `npm run build`（tsc + vite） | 类型安全 + 产物可构建 |
@@ -64,7 +65,7 @@ cd client/src-tauri && cargo check
 | 37 | 设置广播到主窗口（主题 / 提示音音量等字段主窗口跟随变化） | 逻辑随 store（settings:changed 分支） | ✅ 生产真机双实例（深色模式两窗同步，2026-09-11） |
 | 38 | 屏幕共享全流程（窗口源采集 → 控制条数据 → 观看窗播放 → 档位切换 → 停止后观看窗自动关闭） | ✅（screenShare.test.ts 12 例 + e2e-screen-share-media.mjs） | ✅ 生产真机双实例端到端（2026-09-11，含「切回流畅优先」复验） |
 
-当前实测：server **91** 测试（11 文件）+ client **38** 测试（4 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。生产环境（境外云服务器，地址不记录在本仓库）2026-09-11 运行 **0.8.0** 并验证（`/health` 版本、`/api/turn` 匿名 401、WSS 握手、容器 healthy、宝塔与其他站点不受影响），当日测试数据已全量清理（users/rooms/messages/dm_messages/media/invite_links 归零）。
+当前实测：server **91** 测试（11 文件）+ client **44** 测试（5 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。生产环境（境外云服务器，地址不记录在本仓库）2026-09-11 运行 **0.8.0** 并验证（`/health` 版本、`/api/turn` 匿名 401、WSS 握手、容器 healthy、宝塔与其他站点不受影响），当日测试数据已全量清理（users/rooms/messages/dm_messages/media/invite_links 归零）。
 
 ## 3. 真机验收清单
 
