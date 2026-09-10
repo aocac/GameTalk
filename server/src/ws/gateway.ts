@@ -184,6 +184,20 @@ function sanitizeRoomId(id: string): string {
   return id.trim().slice(0, 64);
 }
 
+/**
+ * 房间已被解散时写库会撞 room_id 外键（23503）。这类失败要区别于真正的内部错误：
+ * 客户端应清掉本地幽灵房间，而不是收到一句 internal error。
+ */
+function goneRoomOf(e: unknown): string | null {
+  const err = e as { code?: string; constraint?: string; detail?: string } | null;
+  if (!err || err.code !== '23503') return null;
+  if (!err.constraint || !_roomFk.test(err.constraint)) return null;
+  const m = /Key \(room_id\)=\(([0-9a-fA-F-]{36})\)/.exec(err.detail ?? '');
+  return m ? m[1] : null;
+}
+
+const _roomFk = /_room_id_fkey$/;
+
 function safeText(text: unknown): string {
   // 客户端可发任意 JSON 类型：非字符串一律按空串处理，避免 .trim() 抛错变 internal_error
   return typeof text === 'string' ? text.trim().slice(0, MAX_TEXT_LENGTH) : '';
@@ -418,6 +432,17 @@ export function registerWsRoutes(app: FastifyInstance, deps: { config: Config; d
       // 统一兜底：任何 DB/逻辑异常不能变成 unhandled rejection 崩掉整个进程
       handleMessage(conn, raw, db, jwt).catch((e) => {
         console.error('ws message handling failed:', e);
+        const gone = goneRoomOf(e);
+        if (gone) {
+          // 房间已在别处被解散（断线期间离线队列重放、多端竞态）：清掉陈旧订阅并给出可读提示
+          if (conn.userId) dropRoomSubscription(conn.userId, gone);
+          conn.rooms.delete(gone);
+          send(conn.socket, {
+            type: 'error',
+            payload: { code: 'room_gone', roomId: gone, message: '房间已不存在（可能已被解散）' },
+          });
+          return;
+        }
         send(conn.socket, { type: 'error', payload: { code: 'internal_error', message: 'internal error' } });
       });
     });

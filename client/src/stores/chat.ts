@@ -969,7 +969,7 @@ export const useChat = create<ChatState>()((set, get) => ({
             }
           }
           // 未细分的错误码也给出可见反馈（服务端 message 为人类可读文案）
-          if (!['unauthorized', 'not_in_room', 'target_not_in_room', 'only_owner', 'rate_limited', 'muted', 'room_not_found'].includes(msg.payload.code)) {
+          if (!['unauthorized', 'not_in_room', 'target_not_in_room', 'only_owner', 'rate_limited', 'muted', 'room_not_found', 'room_gone'].includes(msg.payload.code)) {
             set({ roomError: msg.payload.message || `发送失败（${msg.payload.code}）` });
           }
           if (msg.payload.code === 'unauthorized') {
@@ -998,6 +998,15 @@ export const useChat = create<ChatState>()((set, get) => ({
             set({ roomError: mins ? `你已被禁言，约 ${mins} 分钟后恢复` : '你已被禁言' });
           } else if (msg.payload.code === 'room_not_found') {
             set({ roomError: '房间不存在或已被删除' });
+          } else if (msg.payload.code === 'room_gone') {
+            // 断线期间房间被解散，重放离线队列时才暴露：清掉本地幽灵房间并提示
+            const rid = msg.payload.roomId;
+            if (rid) {
+              const wasActive = get().activeRoomId === rid;
+              removeRoomLocal(rid);
+              if (get().activeRoomId) void get().selectRoom(get().activeRoomId!);
+              if (wasActive) set({ roomError: '房间已解散，已自动切换。' });
+            }
           }
           break;
         }
