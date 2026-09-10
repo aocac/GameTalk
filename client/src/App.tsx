@@ -1617,6 +1617,13 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
         case 'soundEnabled':
           s.setSoundEnabled(!!value);
           break;
+        case 'soundVolume':
+          s.setSoundVolume(Number(value));
+          break;
+        case 'theme':
+          s.setTheme(value as Parameters<typeof s.setTheme>[0]);
+          applyTheme(value as Parameters<typeof s.setTheme>[0]);
+          break;
         case 'notifyLevel':
           s.setNotifyLevel(value as 'all' | 'mention' | 'none');
           break;
