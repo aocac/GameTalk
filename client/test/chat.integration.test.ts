@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TEST_HTTP_URL, TEST_WS_URL } from './global-setup';
 import { ChatSocket } from '../src/app/ws';
+import { deviceId } from '../src/app/device';
 import type { ServerWsMessage } from '../src/app/types';
 
 async function register(username: string): Promise<{ token: string; userId: string }> {
@@ -51,7 +52,7 @@ async function connectAuthed(token: string): Promise<ChatSocket> {
   const opened = new Promise<void>((resolve) => s.onStatus((st) => st === 'open' && resolve()));
   s.connect(TEST_WS_URL);
   await opened;
-  s.send({ type: 'hello', payload: { token } });
+  s.send({ type: 'hello', payload: { token, deviceId: deviceId() } });
   await nextMsg(s, (m) => m.type === 'hello:ok');
   return s;
 }
@@ -173,7 +174,7 @@ describe('GameTalk room chat (integration)', () => {
     const opened = new Promise<void>((resolve) => s.onStatus((st) => st === 'open' && resolve()));
     s.connect(TEST_WS_URL);
     await opened;
-    s.send({ type: 'hello', payload: { token: user.token } });
+    s.send({ type: 'hello', payload: { token: user.token, deviceId: deviceId() } });
     await nextMsg(s, (m) => m.type === 'hello:ok');
 
     const inner = (s as unknown as { ws: WebSocket }).ws;

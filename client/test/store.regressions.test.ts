@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TEST_HTTP_URL, TEST_WS_URL } from './global-setup';
+import { deviceId } from '../src/app/device';
 
 // ---- 屏蔽 Tauri 运行时（chat store 间接 import gameMode/settings）----
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }));
@@ -87,7 +88,7 @@ async function connectSpectator(token: string, roomId: string): Promise<{ ws: Ch
   const opened = new Promise<void>((resolve) => s.onStatus((st) => st === 'open' && resolve()));
   s.connect(TEST_WS_URL);
   await opened;
-  s.send({ type: 'hello', payload: { token } });
+  s.send({ type: 'hello', payload: { token, deviceId: deviceId() } });
   await new Promise<void>((resolve) => {
     const off = s.onMessage((m) => {
       if (m.type === 'hello:ok') {
@@ -360,5 +361,41 @@ describe('客户端修复：换账号后在途请求不得污染新会话', () =
     expect(useChat.getState().rooms.some((r) => r.id === 'stale-room')).toBe(false);
     spy.mockRestore();
     void realList;
+  });
+});
+
+describe('同账号单设备登录：被新设备顶下线', () => {
+  it('顶号后提示、清凭据、停止重连（不再自动重连，否则两端互相顶号会无限对踢）', async () => {
+    const u = await register('kick_victim');
+    await createRoom(u.token, '顶号测试房');
+    await connectStore(u.token, 'kick_victim', u.userId);
+    expect(useChat.getState().sessionReplaced).toBe(false);
+
+    // 第二台设备（显式不同的 deviceId）登录同一账号
+    const other = new ChatSocket();
+    const opened = new Promise<void>((resolve) => other.onStatus((st) => st === 'open' && resolve()));
+    other.connect(TEST_WS_URL);
+    await opened;
+    other.send({ type: 'hello', payload: { token: u.token, deviceId: 'other-device-abcd1234' } });
+    await new Promise<void>((resolve) => {
+      const off = other.onMessage((m) => {
+        if (m.type === 'hello:ok') {
+          off();
+          resolve();
+        }
+      });
+    });
+
+    await waitFor(() => useChat.getState().sessionReplaced === true, 8000);
+    expect(useChat.getState().status).toBe('closed');
+    expect(useAuth.getState().token).toBeNull();
+    expect(useAuth.getState().user).toBeNull();
+
+    // 关键：不能再自动重连（否则两台设备会互相顶号形成死循环）
+    await new Promise((r) => setTimeout(r, 800));
+    expect(useChat.getState().status).toBe('closed');
+    expect(useChat.getState().sessionReplaced).toBe(true);
+
+    other.close();
   });
 });

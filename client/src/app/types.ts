@@ -88,7 +88,7 @@ export interface DmMessage {
 
 // 客户端 -> 服务端
 export type ClientWsMessage =
-  | { type: 'hello'; payload: { token: string } }
+  | { type: 'hello'; payload: { token: string; deviceId?: string } }
   | { type: 'room:join'; payload: { roomId: string } }
   | { type: 'room:leave'; payload: { roomId: string } }
   | { type: 'room:delete'; payload: { roomId: string } }
@@ -134,7 +134,19 @@ export type ServerWsMessage =
   | { type: 'screen:started'; payload: { roomId: string; userId: string; username: string } }
   | { type: 'screen:stopped'; payload: { roomId: string; userId?: string } }
   | { type: 'screen:signal'; payload: { from: string; roomId?: string; data: unknown } }
-  | { type: 'error'; payload: { code: string; message: string; roomId?: string; mutedUntil?: string; to?: string; from?: string } }
+  | {
+      type: 'error';
+      payload: {
+        code: string;
+        message: string;
+        roomId?: string;
+        mutedUntil?: string;
+        to?: string;
+        from?: string;
+        /** already_sharing：本端已在共享的房间（刻意不复用 roomId，避免被当成消息所属房间回滚） */
+        sharingRoomId?: string;
+      };
+    }
   | { type: 'pong' };
 
 export type WsStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed';

@@ -5,6 +5,7 @@
  * 外加断线自动重连。每次重新加入房间都会回调 onJoined，调用方据此重发 screen:start / request，
  * 这样网络抖动或服务端重启不会再让共享/观看直接结束。
  */
+import { deviceId } from './device';
 
 export type SignalStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
 
@@ -54,7 +55,7 @@ export class SignalSocket {
     ws.onopen = () => {
       this.retry = 0;
       this.lastAliveAt = Date.now();
-      this.send({ type: 'hello', payload: { token: this.opts.token } });
+      this.send({ type: 'hello', payload: { token: this.opts.token, deviceId: deviceId() } });
     };
     ws.onmessage = (ev) => {
       this.lastAliveAt = Date.now();
@@ -71,6 +72,13 @@ export class SignalSocket {
         case 'room:joined':
           this.opts.onStatus?.('open');
           this.opts.onJoined();
+          break;
+        case 'error':
+          if ((msg.payload as { code?: string } | undefined)?.code === 'session_replaced') {
+            // 账号在别处登录：立刻停掉重连。不停的话两端会互相顶号，形成无限对踢。
+            this.close();
+          }
+          this.opts.onMessage(msg);
           break;
         default:
           this.opts.onMessage(msg);

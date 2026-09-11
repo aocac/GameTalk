@@ -9,6 +9,7 @@ import type { MentionRef, RoomMember, UserBrief } from './app/types';
 import type { RoomMessage } from './app/api';
 import { useAuth } from './stores/auth';
 import { useSettings, applyProxySetting, type OverlayPosition } from './app/settings';
+import type { ShareQuality } from './app/screenShare';
 import { setExternalMute } from './app/audio';
 import { applyTheme } from './app/theme';
 import { BUILD_ID } from './buildInfo';
@@ -1070,9 +1071,15 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
     screenShare,
     stopScreenShare,
     stopWatching,
+    selfSharingRoomId,
+    sessionReplaced,
+    clearSessionReplaced,
+    setRoomError,
   } = useChat();
   const { user, logout } = useAuth();
-  const { gameModeEnabled, hotkey, soundEnabled, notifyLevel } = useSettings();
+  const { gameModeEnabled, hotkey, soundEnabled, notifyLevel, shareQuality } = useSettings();
+  /** 本端正在共享的房间名（账号级状态；不在该房间时也要能说清「你在哪个房间共享」） */
+  const selfSharingRoomName = selfSharingRoomId ? (rooms.find((r) => r.id === selfSharingRoomId)?.name ?? null) : null;
   /** 快捷输入框的独立发送目标（null = 跟随主窗口当前会话；呼出时重置） */
   const gameTargetRef = useRef<gameMode.InputTarget | null>(null);
   // 输入草稿按会话（房间/私聊）独立保存：切换会话互不串扰，回来还在
@@ -2346,6 +2353,23 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
                   🖥 你正在本房间共享屏幕{screenShare.selfSharingAudio ? '（含共享音频）' : ''}
                   {shareLive && shareLive.viewers > 0 ? ` · ${shareLive.viewers} 人观看 · ${shareLive.kbps >= 1000 ? `${(shareLive.kbps / 1000).toFixed(1)} Mbps` : `${shareLive.kbps} kbps`}` : ''}
                 </span>
+                {/* 画质档位放在应用内（控制条只留状态与停止）：改了立刻作用到进行中的共享 */}
+                <label className="screen-quality" title="共享画质；带宽充足时各档画面相同，紧张时才体现取舍">
+                  画质
+                  <select
+                    value={shareQuality}
+                    onChange={(e) => {
+                      const q = e.target.value as ShareQuality;
+                      useSettings.getState().setShareQuality(q);
+                      void emit('share:config', { quality: q }).catch(() => undefined);
+                    }}
+                  >
+                    <option value="auto">自动</option>
+                    <option value="quality">清晰优先</option>
+                    <option value="balanced">流畅优先</option>
+                    <option value="low">省流量</option>
+                  </select>
+                </label>
                 <button className="btn ghost small" onClick={stopScreenShare}>
                   停止共享
                 </button>
@@ -2806,12 +2830,20 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
               title={
                 screenShare.selfSharing && screenShare.roomId === activeRoomId
                   ? '停止共享本房间屏幕'
-                  : '共享本房间屏幕（P2P，不经过服务器；可与他人同时共享）'
+                  : selfSharingRoomId && selfSharingRoomId !== activeRoomId
+                    ? `你正在「${selfSharingRoomName ?? '其他房间'}」共享屏幕，请先停止`
+                    : '共享本房间屏幕（P2P，不经过服务器；可与他人同时共享）'
               }
               disabled={offline || !connected}
               onClick={() => {
-                if (screenShare.selfSharing && screenShare.roomId === activeRoomId) stopScreenShare();
-                else void openShareWindow(activeRoomId ?? '');
+                if (screenShare.selfSharing && screenShare.roomId === activeRoomId) {
+                  stopScreenShare();
+                } else if (selfSharingRoomId && selfSharingRoomId !== activeRoomId) {
+                  // 一台设备只能一路共享：直接说不清楚要停哪个房间，比让服务端拒绝更好懂
+                  setRoomError(`你正在「${selfSharingRoomName ?? '其他房间'}」共享屏幕，请先停止再共享这里`);
+                } else {
+                  void openShareWindow(activeRoomId ?? '');
+                }
               }}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -3382,6 +3414,21 @@ function ChatView({ offline = false, onExitOffline }: { offline?: boolean; onExi
           <button className="lightbox-close" title="关闭" onClick={() => setLightbox(null)}>
             ×
           </button>
+        </div>
+      )}
+
+      {/* 被顶号：阻断式提示。此时已经登出并停止重连（不停重连会两端互相顶号无限对踢） */}
+      {sessionReplaced && (
+        <div className="modal-mask">
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>账号已在其他设备登录</h3>
+            <p className="modal-note">
+              同一个账号同时只能在一台设备上使用，这台设备已被下线。要继续在这里使用，请重新登录（会把那台设备顶下线）。
+            </p>
+            <button className="btn primary block" onClick={clearSessionReplaced}>
+              知道了
+            </button>
+          </div>
         </div>
       )}
 

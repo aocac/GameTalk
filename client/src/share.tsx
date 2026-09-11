@@ -4,7 +4,7 @@ import { getCurrentWindow, currentMonitor, primaryMonitor } from '@tauri-apps/ap
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
-import { ScreenShareManager, QUALITY_OPTIONS, QUALITY_PRESETS, qualityLabel, type ShareQuality, type ShareStats } from './app/screenShare';
+import { ScreenShareManager, QUALITY_OPTIONS, QUALITY_PRESETS, type ShareQuality, type ShareStats } from './app/screenShare';
 import { SignalSocket, wsUrlOfServerUrl } from './app/signalSocket';
 import { getTurnCredentials } from './app/api';
 import './App.css';
@@ -23,8 +23,11 @@ import { applyStoredTheme } from './app/theme';
 // 控制条尺寸以「逻辑像素（CSS px）」为准，下发窗口时再乘显示器缩放系数。
 // 曾经的 bug：直接把 384×138 当物理像素设给窗口，在 150% 缩放的屏幕上只有 256px 逻辑宽，
 // 于是「正在共享」被挤成两行、按钮被压扁裁切。窗口尺寸必须与 DPI 无关。
-const CONTROL_W = 500;
-const CONTROL_H = 124;
+//
+// 控制条只放「看一眼就知道状态」的东西：本地预览 + 正在共享 + 观看人数 + 关键指标 + 停止。
+// 画质档位 / 带宽预算 / 静音提示音都在应用内（设置窗口「屏幕共享」页），不占常驻浮窗的地方。
+const CONTROL_W = 460;
+const CONTROL_H = 104;
 const MARGIN = 24;
 
 function readToken(): string {
@@ -51,18 +54,6 @@ function readSettings(): { serverUrl: string; quality: ShareQuality; budgetMbps:
   }
 }
 
-/** 把设置里的选择写回（控制条上切档位要持久化） */
-function persistSetting(key: string, value: unknown): void {
-  try {
-    const raw = localStorage.getItem('gametalk-settings');
-    const parsed = raw ? JSON.parse(raw) : { state: {}, version: 0 };
-    parsed.state = { ...(parsed.state ?? {}), [key]: value };
-    localStorage.setItem('gametalk-settings', JSON.stringify(parsed));
-  } catch {
-    /* 忽略 */
-  }
-}
-
 function ShareWindow() {
   const params = useRef(new URLSearchParams(window.location.search));
   const room = params.current.get('room') ?? '';
@@ -70,8 +61,8 @@ function ShareWindow() {
   const [phase, setPhase] = useState<'ready' | 'sharing' | 'ended'>('ready');
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<ShareStats | null>(null);
-  const [quality, setQuality] = useState<ShareQuality>(initial.current.quality);
-  const [muteOwn, setMuteOwn] = useState(initial.current.muteOwn);
+  /** 生效画质档位（控制条不再渲染档位按钮，但设置窗口改档要能作用到进行中的共享） */
+  const qualityRef = useRef<ShareQuality>(initial.current.quality);
   const mgrRef = useRef<ScreenShareManager | null>(null);
   const sockRef = useRef<SignalSocket | null>(null);
   const sharingRef = useRef(false);
@@ -128,7 +119,7 @@ function ShareWindow() {
 
     const mgr = new ScreenShareManager();
     mgrRef.current = mgr;
-    mgr.setQuality(quality);
+    mgr.setQuality(qualityRef.current);
     mgr.setBudgetBps(initial.current.budgetMbps * 1_000_000);
 
     const sock = new SignalSocket({
@@ -140,6 +131,8 @@ function ShareWindow() {
           void mgr.handleSignal(String(msg.payload?.from ?? ''), String(msg.payload?.roomId ?? room), msg.payload?.data);
         } else if (msg.type === 'error') {
           setError(String(msg.payload?.message ?? '连接出错'));
+          // 被顶号：共享已经无法继续，收尾关窗（不这样做会留一个空跑的控制条）
+          if (msg.payload?.code === 'session_replaced') stopShare();
         }
       },
       // 每次（重）连上房间：重新登记共享 + 重发观看请求，媒体连接不受影响
@@ -179,7 +172,7 @@ function ShareWindow() {
     setPhase('sharing');
     startingRef.current = false;
     // 共享含音频时默认静音本应用提示音，避免自己的提示音被采进共享流
-    if (mgr.hasAudio && muteOwn) void emit('share:audio-mute', { muted: true }).catch(() => undefined);
+    if (mgr.hasAudio && initial.current.muteOwn) void emit('share:audio-mute', { muted: true }).catch(() => undefined);
     await becomeControlBar();
     startBarHiding();
     statsTimerRef.current = setInterval(() => {
@@ -210,19 +203,6 @@ function ShareWindow() {
     setPhase('ended');
   };
 
-  const changeQuality = (q: ShareQuality) => {
-    setQuality(q);
-    persistSetting('shareQuality', q);
-    mgrRef.current?.setQuality(q);
-  };
-
-  const toggleMuteOwn = () => {
-    const next = !muteOwn;
-    setMuteOwn(next);
-    persistSetting('shareMuteOwnSounds', next);
-    void emit('share:audio-mute', { muted: next && !!stats?.audio }).catch(() => undefined);
-  };
-
   // 结束后自动销毁（重开共享由主窗口新建窗口）
   useEffect(() => {
     if (phase !== 'ended') return;
@@ -244,10 +224,13 @@ function ShareWindow() {
       void listen('share-stop', () => {
         if (sharingRef.current) stopShare();
       }).then((f) => (disposed ? f() : (offStop = f)));
-      // 主窗口设置里改了画质 → 同步到控制条
+      // 设置窗口里改了画质/预算 → 立刻作用到进行中的共享（控制条上已不再放这些控件）
       void listen<{ quality?: ShareQuality; budgetMbps?: number }>('share:config', (e) => {
         const q = e.payload?.quality;
-        if (q && QUALITY_OPTIONS.includes(q)) changeQuality(q);
+        if (q && QUALITY_OPTIONS.includes(q)) {
+          qualityRef.current = q;
+          mgrRef.current?.setQuality(q);
+        }
         if (e.payload?.budgetMbps) mgrRef.current?.setBudgetBps(e.payload.budgetMbps * 1_000_000);
       }).then((f) => (disposed ? f() : (offQuality = f)));
     } catch {
@@ -309,7 +292,7 @@ function ShareWindow() {
   if (phase === 'sharing') {
     // 指标段可省略（前缀保留最关键的分辨率/码率），告警段不可截断——中转限速是最该被看到的信息
     const metrics = `${res} · ${kbps} · ${fps}`;
-    const fullStats = `${metrics}${stats ? ` · ${QUALITY_PRESETS[stats.effectiveQuality].label}` : ''}${
+    const fullStatus = `${metrics}${stats ? ` · ${QUALITY_PRESETS[stats.effectiveQuality].label}` : ''}${
       stats?.relayed ? ' · 服务器中转（已限码率）' : ''
     }${stats?.audio ? ' · 含音频' : ''}${stats?.paramError ? ` · 参数下发失败(${stats.paramError})` : ''}`;
     return (
@@ -320,21 +303,11 @@ function ShareWindow() {
             <span className="share-bar-dot">●</span>
             <span className="share-bar-live">正在共享</span>
             <span className="share-bar-viewers">{(stats?.peers.length ?? 0) > 0 ? `${stats?.peers.length} 人观看` : '等待观看'}</span>
-            {/* 静音提示音是低频开关，放顶行避免与画质档位挤同一行（按钮行空间有限会被压缩裁切） */}
-            {stats?.audio && (
-              <button
-                className={`share-chip share-chip-mute${muteOwn ? ' active' : ''}`}
-                title={`共享音频期间静音本应用提示音（当前：${muteOwn ? '已静音' : '未静音'}）`}
-                onClick={toggleMuteOwn}
-              >
-                静音提示音
-              </button>
-            )}
             <button className="share-bar-close" title="停止共享" onClick={stopShare}>
               ■
             </button>
           </div>
-          <div className="share-bar-stats" title={fullStats}>
+          <div className="share-bar-stats" title={fullStatus}>
             <span className="share-bar-metrics">{metrics}</span>
             {stats?.relayed && (
               <span className="share-stat-warn" title="本路媒体经服务器 TURN 中继，码率已按服务端下发的上限压缩">
@@ -347,22 +320,6 @@ function ShareWindow() {
                 ⚠ 参数失败
               </span>
             )}
-          </div>
-          <div className="share-bar-actions">
-            {QUALITY_OPTIONS.map((q) => (
-              <button
-                key={q}
-                className={`share-chip${quality === q ? ' active' : ''}`}
-                title={
-                  q === 'auto'
-                    ? '按观看人数与带宽预算自动选档'
-                    : `${QUALITY_PRESETS[q].label}：单路上限 ${(QUALITY_PRESETS[q].maxBitrate / 1_000_000).toFixed(1)}Mbps（带宽充足时各档画面相同，紧张时才体现取舍）`
-                }
-                onClick={() => changeQuality(q)}
-              >
-                {q === 'auto' && stats ? `自动·${QUALITY_PRESETS[stats.effectiveQuality].label.replace('优先', '')}` : qualityLabel(q)}
-              </button>
-            ))}
           </div>
         </div>
       </div>

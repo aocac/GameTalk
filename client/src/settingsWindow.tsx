@@ -275,7 +275,7 @@ export default function SettingsWindow() {
           <>
             <h3>屏幕共享</h3>
             <div className="field">
-              <span>画质档位（共享中也能在右下角控制条上随时切换）</span>
+              <span>画质档位（共享中也能在房间顶部横幅上随时切换）</span>
               <div className="chip-row">
                 {QUALITY_OPTIONS.map((q) => (
                   <button

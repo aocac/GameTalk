@@ -8,6 +8,7 @@ import { wsUrlOf } from '../app/settings';
 import * as api from '../app/api';
 import { pushOverlayEdit, pushOverlayMessage, pushOverlayRecall } from '../app/gameMode';
 import { ScreenShareManager } from '../app/screenShare';
+import { deviceId } from '../app/device';
 import type { ChatMessage, DmMessage, RoomMember, UserBrief, WsStatus } from '../app/types';
 
 /** 通知点击跳转的会话定位（应用窗口获得焦点时消费） */
@@ -127,8 +128,19 @@ interface ChatState {
   roomError: string | null;
   /** 连接失败提示（server 不可达时展示） */
   connectionError: string | null;
+  /**
+   * 账号在别处登录导致本端被顶下线。为 true 时主窗口显示阻断式提示，
+   * 且绝不能再自动重连——否则两台设备会互相顶号形成无限对踢。
+   */
+  sessionReplaced: boolean;
   /** 主窗口是否在前台：最小化/托盘时即使选中会话也要计未读并弹通知 */
+  /** 主窗口当前是否在前台（最小化/托盘时不计未读、不弹通知） */
   mainWindowFocused: boolean;
+  /**
+   * 本端正在共享的房间（账号级，不随当前会话变化）。
+   * 一台设备同时只允许一路共享，主窗口据此在别的房间禁用共享按钮并告诉用户先停止。
+   */
+  selfSharingRoomId: string | null;
   // ============ 好友私聊（DM） ============
   /** 每个好友（peer）的 DM 消息（含自己的，userId=from） */
   dmMessages: Record<string, api.RoomMessage[]>;
@@ -148,6 +160,10 @@ interface ChatState {
   consumePendingNotifyTarget: () => void;
   connect: () => void;
   disconnect: () => void;
+  /** 确认「账号已在其他设备登录」提示（清标记；此时已回到登录页） */
+  clearSessionReplaced: () => void;
+  /** 直接给房间错误横幅设文案（用于本地就能判断的拦截，如「你已在别的房间共享」） */
+  setRoomError: (message: string | null) => void;
   /** 换账号（登出/注册新号）时清空上一账号的房间/消息/选中态，防止越权请求与界面残留 */
   resetAccountState: () => void;
   refreshRooms: () => Promise<void>;
@@ -446,7 +462,9 @@ export const useChat = create<ChatState>()((set, get) => ({
   loadingRooms: false,
   roomError: null,
   connectionError: null,
+  sessionReplaced: false,
   mainWindowFocused: true,
+  selfSharingRoomId: null,
   dmMessages: {},
   dmHistoryLoaded: {},
   dmHasMore: {},
@@ -473,7 +491,7 @@ export const useChat = create<ChatState>()((set, get) => ({
         // 残留旧房间 id，subscribeAllRooms 会认为已订阅而跳过 room:join，导致新连接
         // 在服务器侧没有订阅（发送/收消息都失效）
         set({ subscribedRoomIds: [] });
-        socket?.send({ type: 'hello', payload: { token } });
+        socket?.send({ type: 'hello', payload: { token, deviceId: deviceId() } });
       } else if (status === 'reconnecting') {
         // 连接抖动：未确认的乐观消息可能已发送/未发送，全部清除（含排队消息），
         // 由 hello:ok 后的历史重载兜底（已发送的会从历史回来）
@@ -516,7 +534,7 @@ export const useChat = create<ChatState>()((set, get) => ({
             get().connect();
             return;
           }
-          set({ me: msg.payload.me });
+          set({ me: msg.payload.me, sessionReplaced: false });
           // 好友列表/申请与房间并行加载
           void useFriends.getState().load();
           // 登录后加载房间列表，并订阅全部房间（refreshRooms 失败也要重订阅）
@@ -879,36 +897,58 @@ export const useChat = create<ChatState>()((set, get) => ({
         }
         case 'screen:started': {
           const { roomId, userId, username } = msg.payload;
-          if (roomId !== get().activeRoomId) break;
           if (userId === state.me?.id) {
-            // 自己发起共享的回声：标记 selfSharing（不加入 shares）
-            set((s) => ({ screenShare: { ...s.screenShare, roomId, selfSharing: true } }));
-          } else {
+            // 自己发起共享的回声：账号级记录正在共享的房间（主窗订阅了全部房间，
+            // 所以在别的房间也能知道「我已在 #A 共享」，据此禁用共享按钮）
             set((s) => ({
-              screenShare: {
-                roomId: s.screenShare.roomId ?? roomId,
-                selfSharing: s.screenShare.selfSharing,
-                selfSharingAudio: s.screenShare.selfSharingAudio,
-                shares: { ...s.screenShare.shares, [userId]: { name: username ?? '某人', watching: false, remoteStream: null } },
-              },
+              selfSharingRoomId: roomId,
+              screenShare:
+                roomId === s.activeRoomId
+                  ? { ...s.screenShare, roomId, selfSharing: true }
+                  : s.screenShare,
             }));
+            break;
           }
+          if (roomId !== get().activeRoomId) break;
+          set((s) => ({
+            screenShare: {
+              roomId: s.screenShare.roomId ?? roomId,
+              selfSharing: s.screenShare.selfSharing,
+              selfSharingAudio: s.screenShare.selfSharingAudio,
+              shares: { ...s.screenShare.shares, [userId]: { name: username ?? '某人', watching: false, remoteStream: null } },
+            },
+          }));
           break;
         }
         case 'screen:stopped': {
-          if (msg.payload.roomId !== get().activeRoomId && msg.payload.roomId !== get().screenShare.roomId) break;
           const userId = msg.payload.userId as string | undefined;
+          const stoppedRoom = msg.payload.roomId as string;
+          if (userId && userId === state.me?.id) {
+            // 自己的共享结束：清账号级记录 + 当前房间的 selfSharing
+            set((s) => ({
+              selfSharingRoomId: null,
+              screenShare: { ...s.screenShare, selfSharing: false },
+            }));
+            break;
+          }
+          if (stoppedRoom !== get().activeRoomId && stoppedRoom !== get().screenShare.roomId) break;
           const cur = get().screenShare;
-          if (!userId || userId === state.me?.id) {
-            // 无 userId（旧服务端）或自己停止：整体清理
-            set((s) => ({ screenShare: { ...s.screenShare, selfSharing: false } }));
-            if (!userId) set({ screenShare: { roomId: null, selfSharing: false, selfSharingAudio: false, shares: {} } });
+          if (!userId) {
+            // 无 userId（旧服务端）：整体清理
+            set({ screenShare: { roomId: null, selfSharing: false, selfSharingAudio: false, shares: {} } });
           } else {
             screenShareManager?.stopWatching(userId);
             const next = { ...cur.shares };
             delete next[userId];
             const empty = Object.keys(next).length === 0;
-            set({ screenShare: { roomId: empty && !cur.selfSharing ? null : cur.roomId, selfSharing: cur.selfSharing, selfSharingAudio: cur.selfSharingAudio, shares: next } });
+            set({
+              screenShare: {
+                roomId: empty && !cur.selfSharing ? null : cur.roomId,
+                selfSharing: cur.selfSharing,
+                selfSharingAudio: cur.selfSharingAudio,
+                shares: next,
+              },
+            });
           }
           break;
         }
@@ -925,6 +965,16 @@ export const useChat = create<ChatState>()((set, get) => ({
           useFriends.getState().handleWs(msg);
           break;
         case 'error': {
+          // 被新设备顶下线：必须立刻停掉重连（否则两端互相顶号会形成无限对踢），
+          // 清掉凭据回登录页，并给出阻断式提示
+          if (msg.payload.code === 'session_replaced') {
+            clearPending();
+            queuedSends = [];
+            get().disconnect();
+            useAuth.getState().logout();
+            set({ sessionReplaced: true, roomError: null });
+            break;
+          }
           // 服务器返回错误：清掉未确认的乐观占位与排队消息，避免"幽灵消息"卡在界面上。
           // 定向清理：房间错误只清该房间、私聊错误只清该会话（payload.to），避免殃及无关会话的在途消息
           const errRoomId: string | undefined = msg.payload.roomId;
@@ -969,11 +1019,28 @@ export const useChat = create<ChatState>()((set, get) => ({
             }
           }
           // 未细分的错误码也给出可见反馈（服务端 message 为人类可读文案）
-          if (!['unauthorized', 'not_in_room', 'target_not_in_room', 'only_owner', 'rate_limited', 'muted', 'room_not_found', 'room_gone'].includes(msg.payload.code)) {
+          if (
+            ![
+              'unauthorized',
+              'not_in_room',
+              'target_not_in_room',
+              'only_owner',
+              'rate_limited',
+              'muted',
+              'room_not_found',
+              'room_gone',
+              'already_sharing',
+            ].includes(msg.payload.code)
+          ) {
             set({ roomError: msg.payload.message || `发送失败（${msg.payload.code}）` });
           }
           if (msg.payload.code === 'unauthorized') {
             useAuth.getState().logout();
+          } else if (msg.payload.code === 'already_sharing') {
+            // 一台设备只能一路共享：把「在哪个房间」告诉用户，而不是一句泛泛的失败
+            const rid = msg.payload.sharingRoomId as string | undefined;
+            const name = rid ? get().rooms.find((r) => r.id === rid)?.name : undefined;
+            set({ roomError: name ? `你正在「${name}」共享屏幕，请先停止再共享这里` : '你正在其他房间共享屏幕，请先停止再共享这里' });
           } else if (msg.payload.code === 'target_not_in_room') {
             // 目标是别人（踢人/禁言/信令对端）已不在房间——自己仍在房里，绝不能移除自己的房间
             set({ roomError: '对方已不在该房间' });
@@ -1029,6 +1096,10 @@ export const useChat = create<ChatState>()((set, get) => ({
     set({ status: 'closed', subscribedRoomIds: [] });
   },
 
+  clearSessionReplaced: () => set({ sessionReplaced: false }),
+
+  setRoomError: (message) => set({ roomError: message }),
+
   resetAccountState: () => {
     stopSubWatchdog();
     // 换账号：世代自增，让在途的旧账号请求的响应被丢弃（否则会把上个账号的房间/消息写进新会话）
@@ -1065,8 +1136,10 @@ export const useChat = create<ChatState>()((set, get) => ({
       activeDmPeerId: null,
       pendingNotifyTarget: null,
       screenShare: { roomId: null, selfSharing: false, selfSharingAudio: false, shares: {} },
+      selfSharingRoomId: null,
       roomError: null,
       connectionError: null,
+      sessionReplaced: false,
     });
     useFriends.getState().reset();
   },

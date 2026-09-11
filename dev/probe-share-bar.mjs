@@ -42,15 +42,11 @@ const CONTROL = readControlSize();
 const SCENARIOS = {
   worst: {
     viewers: '2 人观看',
-    chips: ['自动·流畅', '清晰优先', '流畅优先', '省流量'],
-    mute: true,
     metrics: '1296×688 · 4.4 Mbps · 29 fps',
     warns: ['⚠ 服务器中转', '含音频'],
   },
   plain: {
     viewers: '等待观看',
-    chips: ['自动·流畅', '清晰优先', '流畅优先', '省流量'],
-    mute: false,
     metrics: '— · — · —',
     warns: [],
   },
@@ -65,15 +61,11 @@ function markup(s) {
       <span class="share-bar-dot">●</span>
       <span class="share-bar-live">正在共享</span>
       <span class="share-bar-viewers">${s.viewers}</span>
-      ${s.mute ? '<button class="share-chip share-chip-mute active">静音提示音</button>' : ''}
       <button class="share-bar-close" title="停止共享">■</button>
     </div>
     <div class="share-bar-stats">
       <span class="share-bar-metrics">${s.metrics}</span>
       ${s.warns.map((w) => `<span class="share-stat-warn">${w}</span>`).join('\n      ')}
-    </div>
-    <div class="share-bar-actions">
-      ${s.chips.map((c, i) => `<button class="share-chip${i === 0 ? ' active' : ''}">${c}</button>`).join('\n      ')}
     </div>
   </div>
 </div>`;

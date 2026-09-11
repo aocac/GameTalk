@@ -106,7 +106,9 @@ function ScreenWindow() {
       },
     });
     sockRef.current = sock;
-    byeRef.current = () => sock.send({ type: 'screen:signal', payload: { roomId: room, to: sharer, data: { type: 'bye' } } });
+    // 关窗必须走带 cid 的 bye：不带 cid 的 bye 会被共享端当作「释放该用户全部连接」，
+    // 同账号在主窗内嵌观看 + 独立窗同时看时，关掉一个会把另一个也断掉。
+    byeRef.current = () => mgr.stopWatching(sharer);
 
     mgr.setSignalSender((to, rid, data) => sock.send({ type: 'screen:signal', payload: { roomId: rid, to, data } }));
     mgr.setRemoteStreamHandler((_id, s) => {

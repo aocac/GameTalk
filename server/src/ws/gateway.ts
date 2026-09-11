@@ -30,6 +30,12 @@ interface Conn {
   username: string;
   avatarUrl: string | null;
   rooms: Set<string>;
+  /**
+   * 设备标识（同账号单设备登录用）。客户端持久化一个随机串，同一次安装的所有窗口
+   * （主窗 / 采集窗 / 观看窗）共用同一个值；旧客户端不带该字段，统一归到 LEGACY_DEVICE，
+   * 这样它们在服务端看起来是「同一台设备」，不会被互相顶掉。
+   */
+  deviceId: string;
   /** 连接升级时推导的对外 http base（头像等资源绝对 URL 用） */
   httpBase: string;
   /** 最近一次收到协议层 pong 的时间（服务端心跳存活检测） */
@@ -108,7 +114,7 @@ interface RosterMember {
 }
 
 type ClientMessage =
-  | { type: 'hello'; payload: { token: string } }
+  | { type: 'hello'; payload: { token: string; deviceId?: string } }
   | { type: 'room:join'; payload: { roomId: string } }
   | { type: 'room:leave'; payload: { roomId: string } }
   | { type: 'room:delete'; payload: { roomId: string } }
@@ -140,11 +146,67 @@ interface UserRow extends QueryResultRow {
 const rooms = new Map<string, Map<string, { username: string; avatarUrl: string | null; sockets: Set<WebSocket> }>>();
 
 /** roomId -> userId -> 当前共享登记；ownerSocket 用于区分同一用户的多个 WS 连接 */
-type ActiveScreenShare = { username: string; ownerSocket: WebSocket };
+type ActiveScreenShare = { username: string; ownerSocket: WebSocket; deviceId: string };
 const activeScreenShares = new Map<string, Map<string, ActiveScreenShare>>();
+
+/**
+ * deviceId -> 该设备当前占用的共享房间。一台设备同时只允许一路共享（跨房间也算）：
+ * 采集窗每个房间各有一个窗口，不设限的话来回切房间点共享就会堆出多路采集，
+ * 每路都要按观看人数上传，家用上行带宽会被吃光。
+ */
+const shareRoomByDevice = new Map<string, { roomId: string; userId: string }>();
 
 /** 全部存活连接（心跳巡检 / 踢人清理用；close 事件负责移除） */
 const connections = new Set<Conn>();
+
+/**
+ * 同账号单设备登录：userId -> 当前持有的设备及其全部连接。
+ *
+ * 为什么必须有：账号是全站共用的，同一账号多端并存会派生出成片的缺陷——
+ * 共享登记按 userId 唯一（第二台一共享就覆盖第一台，还能把第一台停掉）、
+ * REST 退房按 userId 清订阅导致其它端连坐、乐观消息按房间 FIFO 校正被同账号另一端的
+ * 广播顶掉。限制在「设备」维度而不是「连接」维度：同一个客户端实例本来就会开多条 WS
+ * （采集窗自带一条信令连接），按连接限会把自己的窗口踢掉。
+ *
+ * 旧客户端不带 deviceId → 统一归到 LEGACY_DEVICE，同账号的多个旧连接视为同一台设备，
+ * 不会互相踢（保持向后兼容）。
+ */
+const activeDevices = new Map<string, { deviceId: string; sockets: Set<WebSocket> }>();
+const LEGACY_DEVICE = 'legacy';
+/** 自定义关闭码：4001 = 账号已在其他设备登录 */
+const SESSION_REPLACED_CLOSE_CODE = 4001;
+
+function sanitizeDeviceId(raw: unknown): string {
+  const s = String(raw ?? '').trim();
+  return /^[A-Za-z0-9_-]{8,64}$/.test(s) ? s : LEGACY_DEVICE;
+}
+
+/** 认领设备：换成不同设备时踢掉旧设备的全部连接（先发通知再关闭，客户端才能给出可读提示） */
+function claimDevice(userId: string, deviceId: string, socket: WebSocket): void {
+  const cur = activeDevices.get(userId);
+  if (cur && cur.deviceId !== deviceId) {
+    for (const s of [...cur.sockets]) {
+      send(s, { type: 'error', payload: { code: 'session_replaced', message: '账号已在其他设备登录' } });
+      try {
+        s.close(SESSION_REPLACED_CLOSE_CODE, 'session_replaced');
+      } catch {
+        /* 已关闭 */
+      }
+    }
+    activeDevices.delete(userId);
+  }
+  const entry = activeDevices.get(userId);
+  if (entry) entry.sockets.add(socket);
+  else activeDevices.set(userId, { deviceId, sockets: new Set([socket]) });
+}
+
+/** 连接断开时释放设备占用（最后一个连接断开才算该设备下线） */
+function releaseDevice(userId: string, socket: WebSocket): void {
+  const entry = activeDevices.get(userId);
+  if (!entry) return;
+  entry.sockets.delete(socket);
+  if (entry.sockets.size === 0) activeDevices.delete(userId);
+}
 
 /** 向指定用户的所有在线连接推送（好友请求 / 好友动态等系统通知） */
 export function sendToUser(userId: string, msg: unknown): void {
@@ -167,8 +229,10 @@ export function onlineUserIds(): Set<string> {
  * 否则旧连接仍持有内存订阅，可继续 message:send / recall（越权）。
  */
 export function dropRoomSubscription(userId: string, roomId: string): void {
-  for (const c of connections) {
-    if (c.userId === userId) c.rooms.delete(roomId);
+  // 必须按连接走一次完整的退房：广播走的是 rooms 表的 socket 集合（不是 conn.rooms），
+  // 只清 conn.rooms 的话该用户退房后仍会收到这个房间的全部广播，花名册也还显示在线。
+  for (const c of [...connections]) {
+    if (c.userId === userId) leaveRoom(c, roomId);
   }
   removeActiveScreenShare(roomId, userId);
 }
@@ -177,6 +241,11 @@ export function dropRoomSubscription(userId: string, roomId: string): void {
 export function refreshUsername(userId: string, username: string): void {
   for (const c of connections) {
     if (c.userId === userId) c.username = username;
+  }
+  // rooms 表里的 username 用于 member:left 等广播文案，不同步的话这些广播会一直带旧名
+  for (const members of rooms.values()) {
+    const entry = members.get(userId);
+    if (entry) entry.username = username;
   }
 }
 
@@ -307,6 +376,9 @@ function removeActiveScreenShare(roomId: string, userId: string, ownerSocket?: W
   if (!share || (ownerSocket && share.ownerSocket !== ownerSocket)) return false;
   shares!.delete(userId);
   if (shares!.size === 0) activeScreenShares.delete(roomId);
+  // 设备占用一并释放，否则该设备再也开不了新的共享
+  const hold = shareRoomByDevice.get(share.deviceId);
+  if (hold && hold.roomId === roomId && hold.userId === userId) shareRoomByDevice.delete(share.deviceId);
   if (notify) broadcastToRoom(roomId, { type: 'screen:stopped', payload: { roomId, userId } });
   return true;
 }
@@ -420,6 +492,7 @@ export function registerWsRoutes(app: FastifyInstance, deps: { config: Config; d
       username: 'Player',
       avatarUrl: null,
       rooms: new Set(),
+      deviceId: LEGACY_DEVICE,
       httpBase: httpBaseOf(request.headers),
       lastPongAt: Date.now(),
       sentAt: [],
@@ -451,6 +524,7 @@ export function registerWsRoutes(app: FastifyInstance, deps: { config: Config; d
       for (const roomId of [...conn.rooms]) leaveRoom(conn, roomId);
       // 该用户的最后一个连接断开 → 通知其在线好友「已离线」
       if (conn.userId) {
+        releaseDevice(conn.userId, conn.socket);
         const stillOnline = [...connections].some((c) => c.userId === conn.userId);
         if (!stillOnline) void broadcastFriendPresence(db, conn.userId, false);
       }
@@ -490,6 +564,9 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
           if (!user) throw new Error('user not found');
           conn.userId = user.id;
           conn.username = user.username;
+          conn.deviceId = sanitizeDeviceId(msg.payload.deviceId);
+          // 单设备登录：换成新设备时旧设备的连接会被踢（先发 session_replaced）
+          claimDevice(user.id, conn.deviceId, conn.socket);
           // data URL 头像一律转成 HTTP 端点 URL，避免 base64 随广播/成员表内嵌
           conn.avatarUrl = avatarHttpUrlOf(conn.httpBase, user.id, user.avatar_url);
           send(conn.socket, { type: 'hello:ok', payload: { me: publicMember(user.id, user.username, conn.avatarUrl) } });
@@ -1341,16 +1418,35 @@ async function handleMessage(conn: Conn, raw: RawData, db: Db, jwt: JwtService):
         send(conn.socket, { type: 'error', payload: { code: 'not_in_room', message: 'not in room', roomId } });
         return;
       }
+      // 一台设备同时只允许一路共享（跨房间也算）；同房间重复 start（信令重连后重登记）视为幂等
+      const hold = shareRoomByDevice.get(conn.deviceId);
+      if (hold && hold.roomId !== roomId) {
+        send(conn.socket, {
+          type: 'error',
+          // 刻意不用 roomId 字段：客户端的错误处理会把 roomId 当成「本条消息所属房间」去回滚乐观消息
+          payload: {
+            code: 'already_sharing',
+            sharingRoomId: hold.roomId,
+            message: '同一台设备同时只能共享一个房间的屏幕，请先停止当前共享',
+          },
+        });
+        return;
+      }
       let shares = activeScreenShares.get(roomId);
       if (!shares) {
         shares = new Map();
         activeScreenShares.set(roomId, shares);
       }
-      shares.set(conn.userId, { username: conn.username, ownerSocket: conn.socket });
-      broadcastToRoom(roomId, {
-        type: 'screen:started',
-        payload: { roomId, userId: conn.userId, username: conn.username },
-      });
+      const isNewShare = !shares.has(conn.userId);
+      shares.set(conn.userId, { username: conn.username, ownerSocket: conn.socket, deviceId: conn.deviceId });
+      shareRoomByDevice.set(conn.deviceId, { roomId, userId: conn.userId });
+      // 只在「新出现的共享」时广播：重连重登记再广播一次会让观看端把已有画面重置掉
+      if (isNewShare) {
+        broadcastToRoom(roomId, {
+          type: 'screen:started',
+          payload: { roomId, userId: conn.userId, username: conn.username },
+        });
+      }
       break;
     }
 

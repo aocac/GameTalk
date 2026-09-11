@@ -3573,6 +3573,35 @@ body {
   background: #e7f6ec;
   color: var(--ok-strong);
 }
+/* 共享横幅里只有「文字」和「画质 + 停止」两组，文字占满左侧，控件固定右侧不换行 */
+.screen-banner > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.screen-quality {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.screen-quality select {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+/* 阻断式提示的正文（弹窗内说明文字） */
+.modal-note {
+  margin: 0 0 14px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
 /* 观看窗：浮动卡片，独立于聊天流，像一个小窗（位置/尺寸由组件内联样式控制，可拖拽） */
 .screen-viewer {
   position: fixed;
@@ -3852,7 +3881,7 @@ html[data-window='share'] .share-window {
 
 /* ===== 屏幕共享控制条（采集窗共享中形态）=====
    尺寸由 share.tsx 的 CONTROL_W/CONTROL_H（逻辑像素）决定，窗口在任意 DPI 下都保证同样的 CSS 宽度。
-   约束：预览 132 + 间隔 12 + 信息区；顶行（含静音开关）与档位行都不压缩、不换行。 */
+   内容只有「本地预览 + 状态 + 关键指标 + 停止」两行；画质/静音等设置都在应用内，不占常驻浮窗。 */
 .share-bar {
   display: flex;
   gap: 12px;
@@ -3869,8 +3898,8 @@ html[data-window='share'] .share-window {
   overflow: hidden;
 }
 .share-bar-preview {
-  width: 132px;
-  height: 74px;
+  width: 128px;
+  height: 72px;
   flex: 0 0 auto;
   align-self: center;
   border-radius: 8px;
@@ -3881,7 +3910,8 @@ html[data-window='share'] .share-window {
 .share-bar-main {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: center;
+  gap: 8px;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -3956,36 +3986,8 @@ html[data-window='share'] .share-window {
   flex: 0 0 auto;
   color: #8fb8ff;
 }
-.share-bar-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: nowrap;
-}
-/* flex 子项默认会被压缩（压缩后文字被裁切）；chip 一律保持原始宽度 */
-.share-chip {
-  flex: 0 0 auto;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
-  color: #b9c0cf;
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
-}
-.share-chip:hover {
-  background: rgba(255, 255, 255, 0.09);
-}
-.share-chip.active {
-  background: rgba(51, 112, 255, 0.22);
-  border-color: rgba(51, 112, 255, 0.55);
-  color: #dbe6ff;
-}
-/* 静音开关与画质档位不是一类控件：方形圆角，避免被当成第 5 个档位 */
-.share-chip-mute {
-  border-radius: 6px;
-}
+/* 画质档位/带宽预算/静音提示音都在应用内（设置窗口「屏幕共享」页），控制条不再放这些控件，
+   所以这里没有 chip 相关规则——常驻浮窗只放状态与停止。 */
 
 /* ===== 观看窗工具条 ===== */
 .screen-viewer-title {
@@ -4038,8 +4040,7 @@ html[data-window='share'] .share-window {
 .chip,
 .ctx-item,
 .icon-btn,
-.screen-tool,
-.share-chip {
+.screen-tool {
   transition:
     background-color var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease),
