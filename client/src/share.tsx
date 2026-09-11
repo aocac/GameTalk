@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { getCurrentWindow, primaryMonitor } from '@tauri-apps/api/window';
+import { getCurrentWindow, currentMonitor, primaryMonitor } from '@tauri-apps/api/window';
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
@@ -20,8 +20,11 @@ import { applyStoredTheme } from './app/theme';
  * 浮条：WebView2 的采集提示条是系统行为（无官方开关），这里仍用 Win32 命令周期性隐藏。
  */
 
-const CONTROL_W = 384;
-const CONTROL_H = 138;
+// 控制条尺寸以「逻辑像素（CSS px）」为准，下发窗口时再乘显示器缩放系数。
+// 曾经的 bug：直接把 384×138 当物理像素设给窗口，在 150% 缩放的屏幕上只有 256px 逻辑宽，
+// 于是「正在共享」被挤成两行、按钮被压扁裁切。窗口尺寸必须与 DPI 无关。
+const CONTROL_W = 500;
+const CONTROL_H = 124;
 const MARGIN = 24;
 
 function readToken(): string {
@@ -86,12 +89,13 @@ function ShareWindow() {
   const becomeControlBar = async () => {
     try {
       const win = getCurrentWindow();
-      const mon = await primaryMonitor();
-      await win.setSize(new PhysicalSize(CONTROL_W, CONTROL_H));
+      // 用窗口所在显示器（多显示器不同缩放时 primaryMonitor 会算错位置/尺寸）
+      const mon = (await currentMonitor()) ?? (await primaryMonitor());
+      const scale = mon?.scaleFactor || window.devicePixelRatio || 1;
+      await win.setSize(new PhysicalSize(Math.round(CONTROL_W * scale), Math.round(CONTROL_H * scale)));
       if (mon) {
-        const dpr = window.devicePixelRatio || 1;
-        const x = mon.position.x + mon.size.width - CONTROL_W * dpr - MARGIN * dpr;
-        const y = mon.position.y + mon.size.height - CONTROL_H * dpr - MARGIN * dpr;
+        const x = mon.position.x + mon.size.width - CONTROL_W * scale - MARGIN * scale;
+        const y = mon.position.y + mon.size.height - CONTROL_H * scale - MARGIN * scale;
         await win.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
       }
       await win.setAlwaysOnTop(true);
@@ -303,6 +307,11 @@ function ShareWindow() {
   const fps = peer && peer.fps ? `${peer.fps} fps` : '—';
 
   if (phase === 'sharing') {
+    // 指标段可省略（前缀保留最关键的分辨率/码率），告警段不可截断——中转限速是最该被看到的信息
+    const metrics = `${res} · ${kbps} · ${fps}`;
+    const fullStats = `${metrics}${stats ? ` · ${QUALITY_PRESETS[stats.effectiveQuality].label}` : ''}${
+      stats?.relayed ? ' · 服务器中转（已限码率）' : ''
+    }${stats?.audio ? ' · 含音频' : ''}${stats?.paramError ? ` · 参数下发失败(${stats.paramError})` : ''}`;
     return (
       <div className="share-bar" data-tauri-drag-region>
         <video ref={previewRef} className="share-bar-preview" muted playsInline />
@@ -311,16 +320,33 @@ function ShareWindow() {
             <span className="share-bar-dot">●</span>
             <span className="share-bar-live">正在共享</span>
             <span className="share-bar-viewers">{(stats?.peers.length ?? 0) > 0 ? `${stats?.peers.length} 人观看` : '等待观看'}</span>
+            {/* 静音提示音是低频开关，放顶行避免与画质档位挤同一行（按钮行空间有限会被压缩裁切） */}
+            {stats?.audio && (
+              <button
+                className={`share-chip share-chip-mute${muteOwn ? ' active' : ''}`}
+                title={`共享音频期间静音本应用提示音（当前：${muteOwn ? '已静音' : '未静音'}）`}
+                onClick={toggleMuteOwn}
+              >
+                静音提示音
+              </button>
+            )}
             <button className="share-bar-close" title="停止共享" onClick={stopShare}>
               ■
             </button>
           </div>
-          <div className="share-bar-stats">
-            {res} · {kbps} · {fps}
-            {stats ? ` · ${QUALITY_PRESETS[stats.effectiveQuality].label}` : ''}
-            {stats?.relayed ? ' · ⚠ 服务器中转（已限码率）' : ''}
-            {stats?.audio ? ' · 含音频' : ''}
-            {stats?.paramError ? ` · ⚠ 参数下发失败(${stats.paramError})` : ''}
+          <div className="share-bar-stats" title={fullStats}>
+            <span className="share-bar-metrics">{metrics}</span>
+            {stats?.relayed && (
+              <span className="share-stat-warn" title="本路媒体经服务器 TURN 中继，码率已按服务端下发的上限压缩">
+                ⚠ 服务器中转
+              </span>
+            )}
+            {stats?.audio && <span className="share-stat-tag">含音频</span>}
+            {stats?.paramError && (
+              <span className="share-stat-warn" title={`参数下发被拒：${stats.paramError}`}>
+                ⚠ 参数失败
+              </span>
+            )}
           </div>
           <div className="share-bar-actions">
             {QUALITY_OPTIONS.map((q) => (
@@ -337,11 +363,6 @@ function ShareWindow() {
                 {q === 'auto' && stats ? `自动·${QUALITY_PRESETS[stats.effectiveQuality].label.replace('优先', '')}` : qualityLabel(q)}
               </button>
             ))}
-            {stats?.audio && (
-              <button className={`share-chip${muteOwn ? ' active' : ''}`} title="共享音频期间静音本应用提示音" onClick={toggleMuteOwn}>
-                静音提示音
-              </button>
-            )}
           </div>
         </div>
       </div>

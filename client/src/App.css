@@ -3850,13 +3850,15 @@ html[data-window='share'] .share-window {
   margin-bottom: 14px;
 }
 
-/* ===== 屏幕共享控制条（采集窗共享中形态）===== */
+/* ===== 屏幕共享控制条（采集窗共享中形态）=====
+   尺寸由 share.tsx 的 CONTROL_W/CONTROL_H（逻辑像素）决定，窗口在任意 DPI 下都保证同样的 CSS 宽度。
+   约束：预览 132 + 间隔 12 + 信息区；顶行（含静音开关）与档位行都不压缩、不换行。 */
 .share-bar {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
   height: 100%;
-  padding: 10px;
+  padding: 12px;
   box-sizing: border-box;
   background: rgba(26, 29, 37, 0.96);
   border: 1px solid rgba(255, 255, 255, 0.09);
@@ -3867,9 +3869,10 @@ html[data-window='share'] .share-window {
   overflow: hidden;
 }
 .share-bar-preview {
-  width: 108px;
-  height: 61px;
-  flex-shrink: 0;
+  width: 132px;
+  height: 74px;
+  flex: 0 0 auto;
+  align-self: center;
   border-radius: 8px;
   background: #0f1116;
   object-fit: cover;
@@ -3880,35 +3883,43 @@ html[data-window='share'] .share-window {
   flex-direction: column;
   justify-content: space-between;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 auto;
 }
 .share-bar-top {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   cursor: move;
 }
 .share-bar-dot {
   color: #ff5a5f;
   font-size: 10px;
+  flex: 0 0 auto;
   animation: share-pulse 1.6s ease-in-out infinite;
 }
 @keyframes share-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+/* 绝不换行、绝不被压缩——被压缩会把「正在共享」拆成两行（旧 bug） */
 .share-bar-live {
   font-weight: 600;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .share-bar-viewers {
   color: #9aa2b4;
   margin-left: auto;
-  margin-right: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .share-bar-close {
-  width: 22px;
-  height: 22px;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
   border: none;
   border-radius: 6px;
   background: rgba(229, 72, 77, 0.18);
@@ -3921,24 +3932,43 @@ html[data-window='share'] .share-window {
 .share-bar-close:hover {
   background: rgba(229, 72, 77, 0.34);
 }
+/* 状态行 = 可省略的指标段 + 不可截断的告警段（中转限速这类信息被省略等于没有） */
 .share-bar-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
   color: #9aa2b4;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+.share-bar-metrics {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.share-stat-warn {
+  flex: 0 0 auto;
+  color: #f0b866;
+}
+.share-stat-tag {
+  flex: 0 0 auto;
+  color: #8fb8ff;
+}
 .share-bar-actions {
   display: flex;
-  gap: 5px;
+  gap: 6px;
   flex-wrap: nowrap;
 }
+/* flex 子项默认会被压缩（压缩后文字被裁切）；chip 一律保持原始宽度 */
 .share-chip {
+  flex: 0 0 auto;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.04);
   color: #b9c0cf;
   font-size: 11px;
-  padding: 3px 8px;
+  padding: 4px 10px;
   border-radius: 999px;
   cursor: pointer;
   white-space: nowrap;
@@ -3951,6 +3981,10 @@ html[data-window='share'] .share-window {
   background: rgba(51, 112, 255, 0.22);
   border-color: rgba(51, 112, 255, 0.55);
   color: #dbe6ff;
+}
+/* 静音开关与画质档位不是一类控件：方形圆角，避免被当成第 5 个档位 */
+.share-chip-mute {
+  border-radius: 6px;
 }
 
 /* ===== 观看窗工具条 ===== */
