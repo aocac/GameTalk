@@ -64,8 +64,13 @@ cd client/src-tauri && cargo check
 | 36 | 房间被解散后写消息（`room_gone` + roomId，不再回 `internal error`，并清陈旧订阅） | ✅（regressions.test.ts） | ✅ 生产真机复现并验证（2026-09-11） |
 | 37 | 设置广播到主窗口（主题 / 提示音音量等字段主窗口跟随变化） | 逻辑随 store（settings:changed 分支） | ✅ 生产真机双实例（深色模式两窗同步，2026-09-11） |
 | 38 | 屏幕共享全流程（窗口源采集 → 控制条数据 → 观看窗播放 → 档位切换 → 停止后观看窗自动关闭） | ✅（screenShare.test.ts 12 例 + e2e-screen-share-media.mjs） | ✅ 生产真机双实例端到端（2026-09-11，含「切回流畅优先」复验） |
+| 39 | 单设备登录：同设备多连接不互踢 / 新设备顶掉旧设备（session_replaced + close）/ 旧客户端互不顶号 | ✅（session.test.ts 3 例） | ⬜ 待真机：两台设备同账号，旧端应被踢并弹提示 |
+| 40 | 每设备一路共享：跨房间第二路被拒（already_sharing，不广播 screen:started）/ 同房间重复 start 幂等 / 不同设备可各自共享 | ✅（session.test.ts 3 例） | ⬜ 待真机复验 |
+| 41 | 退房订阅清理对称性：REST 退房后不再收到该房间广播、花名册不再显示其在线 | ✅（session.test.ts 1 例） | ⬜ |
+| 42 | 客户端顶号处理：提示 + 清凭据 + 不再自动重连（防两端互相顶号死循环） | ✅（store.regressions.test.ts 1 例） | ⬜ |
+| 43 | 屏幕共享控制条布局体检（按 `CONTROL_W/H` 渲染真实 DOM，量溢出/换行/按钮压缩） | ✅（dev/probe-share-bar.mjs，失败退出码 1） | — |
 
-当前实测：server **91** 测试（11 文件）+ client **44** 测试（5 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。生产环境（境外云服务器，地址不记录在本仓库）2026-09-11 运行 **0.8.0** 并验证（`/health` 版本、`/api/turn` 匿名 401、WSS 握手、容器 healthy、宝塔与其他站点不受影响），当日测试数据已全量清理（users/rooms/messages/dm_messages/media/invite_links 归零）。
+当前实测：server **98** 测试（12 文件）+ client **45** 测试（5 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。生产环境（境外云服务器，地址不记录在本仓库）2026-09-11 运行 **0.8.0** 并验证（`/health` 版本、`/api/turn` 匿名 401、WSS 握手、容器 healthy、宝塔与其他站点不受影响），当日测试数据已全量清理（users/rooms/messages/dm_messages/media/invite_links 归零）。
 
 ## 3. 真机验收清单
 

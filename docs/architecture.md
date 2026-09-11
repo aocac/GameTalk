@@ -65,9 +65,17 @@ gametalk/
 
 **连接**：`/ws`，客户端连接成功后发送 `hello` 携带 JWT token，服务端校验并绑定用户。
 
+**账号与设备（单设备登录）**：账号是全站共用的，同一账号多端并存会派生出一片问题——共享登记按 `userId` 唯一（第二台一共享就覆盖第一台、还能把第一台停掉）、乐观消息按房间 FIFO 校正被同账号另一端的广播顶掉、REST 退房按 `userId` 清订阅导致其它端连坐。因此约定：**一个账号同一时刻只有一台设备在线**。
+
+- 客户端在 localStorage 持久化一个随机 `deviceId`（`client/src/app/device.ts`），主窗 `ChatSocket` 与采集/观看窗 `SignalSocket` 的 `hello` 都带上同一值。限制落在**设备**维度而不是连接维度——同一个客户端实例本来就会为采集窗另开一条信令 WS，按连接限会把自己的窗口踢掉。
+- 服务端 `activeDevices: userId -> {deviceId, sockets}`；新设备 `hello` 时若设备不同，先向旧设备的所有连接发 `{code:'session_replaced'}` 再 `close(4001)`，然后登记新设备。连接断开时释放（该设备最后一个连接断开才算下线）。
+- 旧客户端不带 `deviceId` → 归到 `LEGACY_DEVICE`，同账号的多个旧连接视为同一台设备，不会互相踢（向后兼容）。
+- 客户端收到 `session_replaced` 后清凭据回登录页、显示阻断式提示，并**立刻停掉重连**——不停的话两台设备会互相顶号形成无限对踢。
+- **写脚本/测试注意**：用同一账号开裸 WebSocket 时必须带同一个 `deviceId`，否则会被服务端当成另一台设备把主连接顶掉。
+
 **客户端 → 服务端**
 ```json
-{"type":"hello","payload":{"token":"<JWT>"}}
+{"type":"hello","payload":{"token":"<JWT>","deviceId":"<本机持久化随机串>"}}
 {"type":"room:join","payload":{"roomId":"..."}}
 {"type":"room:leave","payload":{"roomId":"..."}}
 {"type":"room:delete","payload":{"roomId":"..."}}
@@ -116,7 +124,7 @@ gametalk/
 {"type":"pong"}
 ```
 
-**房间模型**：服务端内存 `roomId -> userId -> {sockets}`（同一用户可多端连接）。消息先持久化再广播；`joinRoom` 幂等（重复 join 也回 `room:joined`，客户端有 2s 订阅看门狗自愈）；`room:delete` 仅房主可调用，级联删除、广播 `room:deleted` 并清掉所有连接的该房间订阅；`member:kick` 仅房主可调用，把成员移出房间（DB 删除 + 全员通知 `member:kicked` + 被踢者订阅清理），被踢者客户端自动移除房间并切换。**REST 退房同样会清实时订阅**（`dropRoomSubscription`），否则旧连接还能继续发送/撤回。**房主不能退房**（回 `owner_cannot_leave`），只能删房，避免房间失去管理权。**客户端订阅其全部房间**（非活跃房间也能实时收消息，UI 显示未读角标，浮层标注来源房间）。
+**房间模型**：服务端内存 `roomId -> userId -> {sockets}`。消息先持久化再广播；`joinRoom` 幂等（重复 join 也回 `room:joined`，客户端有 2s 订阅看门狗自愈）；`room:delete` 仅房主可调用，级联删除、广播 `room:deleted` 并清掉所有连接的该房间订阅；`member:kick` 仅房主可调用，把成员移出房间（DB 删除 + 全员通知 `member:kicked` + 被踢者订阅清理），被踢者客户端自动移除房间并切换。**REST 退房同样会清实时订阅**（`dropRoomSubscription`），否则旧连接还能继续发送/撤回。**房主不能退房**（回 `owner_cannot_leave`），只能删房，避免房间失去管理权。**客户端订阅其全部房间**（非活跃房间也能实时收消息，UI 显示未读角标，浮层标注来源房间）。
 
 **错误码语义**：`not_in_room` 专指「你自己不在该房间」，客户端据此把房间从本地移除；「操作目标不在房间」（踢人/禁言/信令对端）用独立的 `target_not_in_room`，客户端只提示、不动自己的房间列表；**`room_gone`** 用于房间已在别处被解散（断线期间被删、离线队列重放、多端竞态）——WS 层识别 `room_id` 外键冲突（23503）后清理该连接的陈旧订阅，返回 `{code:'room_gone', roomId, message}`，客户端据此移除本地幽灵房间并提示已自动切换。PG 入参/外键类错误由全局错误处理映射：`22P02`（非法 UUID）→ 400、`23503`（外键不存在）→ 404，不再变成 500。
 
@@ -146,15 +154,15 @@ gametalk/
 
 **消息转发**：`message:forward` 由服务端校验源消息可见性后**代为复制**到新会话，客户端拿不到也不伪造内容——房间消息须为源房间成员、私聊须为对话双方（不可见回 `not_in_room`；撤回消息不可转发）。目标为房间（`targetRoomId`）或好友（`targetUserId`），二者恰好其一（否则 `invalid_input`）；转发进房间复用成员资格 + 禁言校验（等价一条新 `message:send`），转发给好友复用 `dm:send` 的好友校验。文本 / 图片原样带走，**引用与提及不带走**；服务端写 `forwarded_from_label` 展示快照（房间「来自 群A · 张三」/ 私聊「来自 张三 的私聊」），随 `message:new` / `dm:new` 与历史接口透传，客户端渲染「转发」角标。媒体归属：服务端复制 `media_url` 天然绕过发送归属校验（入库时已校验过）。
 
-**屏幕共享**：房间内 1 对 N（支持多人同时共享）的 WebRTC 共享，**媒体流不经服务器**，服务端只做信令透传。WS：`screen:start`（仅房间成员发起，向全房间广播 `screen:started{roomId,userId,username}`）、`screen:stop`（广播 `screen:stopped{roomId,userId}`，各端按 userId 精确移除）、`screen:signal`（按 `to` 定向转发 `{from,roomId,data}`，服务端校验收发双方均为同房间成员——防把媒体信令发给陌生人，且**不解析 data**）。`room:joined` 除完整花名册外返回 `screenShares:[{userId,username}]` 当前快照，晚加入成员据此显示可选的「观看」入口，不自动观看；服务端按 owner socket 清理断开的共享并广播 `screen:stopped`，显式停止按用户清理，支持多人并行共享。信令协议（data 内容，客户端约定）：观看端 `request` → 共享者为其建 sender 连接并回 `offer`（晚加入靠观看端主动请求触发，不做预建 mesh）→ 观看端 `answer` → 双向 `candidate`；观看端关窗发 `bye`，共享者立即释放该路连接。**观看为独立系统窗口**（`screen.html` 入口）：MediaStream 不能跨 webview，故观看窗自持一条 WS 信令连接（同源共享 localStorage token）并建立自己的 RTCPeerConnection；关窗（含原生标题栏 X，经 onCloseRequested）先发 `bye` 再关闭。**跨网络兜底（自建 TURN）**：服务器管理员部署 coturn（`use-auth-secret` 模式），服务端经 `GET /api/turn`（登录态）按用户签发限时 1 小时凭据（`username='<到期时间戳>:<userId>'`，`credential=base64(hmac-sha1(TURN_SECRET, username))`）；客户端缓存 55 分钟并作为首选 ICE——密钥不进客户端，中继不会变成无鉴权的开放代理。未配置 `TURN_SECRET`/`TURN_URL` 时接口返回空、客户端仅用 STUN（同网直连可用，跨网对称 NAT 受限）。采集端请求 `audio:true + systemAudio:'include'`，窗口源额外提示 `windowAudio:'window'`（均为 WebView2/Chromium 实验性 hint，最终以原生选择器和返回音轨为准）；`contentHint='motion'`；WebView2 采集要求窗口高度 ≥600px。
+**屏幕共享**：房间内 1 对 N（同房间可多人各共享一路）的 WebRTC 共享，**媒体流不经服务器**，服务端只做信令透传。WS：`screen:start`（仅房间成员发起，向全房间广播 `screen:started{roomId,userId,username}`）、`screen:stop`（广播 `screen:stopped{roomId,userId}`，各端按 userId 精确移除）、`screen:signal`（按 `to` 定向转发 `{from,roomId,data}`，服务端校验收发双方均为同房间成员——防把媒体信令发给陌生人，且**不解析 data**）。`room:joined` 除完整花名册外返回 `screenShares:[{userId,username}]` 当前快照，晚加入成员据此显示可选的「观看」入口，不自动观看；服务端按 owner socket 清理断开的共享并广播 `screen:stopped`；显式 `screen:stop` 按用户清理（主窗口与采集窗是不同 socket，都代表同一个人）。**一台设备同时只能共享一个房间**：`shareRoomByDevice` 记录设备占用，跨房间第二路回 `already_sharing` + `sharingRoomId`（刻意不复用 `roomId` 字段，否则客户端的错误分支会拿它去回滚乐观消息）；同房间重复 `screen:start`（信令重连后重登记）幂等，只在「新出现的共享」时广播——否则观看端每次重连都会被 `screen:started` 把画面重置掉。信令协议（data 内容，客户端约定）：观看端 `request` → 共享者为其建 sender 连接并回 `offer`（晚加入靠观看端主动请求触发，不做预建 mesh）→ 观看端 `answer` → 双向 `candidate`；观看端关窗发**带 `cid` 的** `bye`（不带 cid 的兜底分支会按用户释放，同账号同时看多路时关一个会误断其它路），共享者只释放那一路连接。**观看为独立系统窗口**（`screen.html` 入口）：MediaStream 不能跨 webview，故观看窗自持一条 WS 信令连接（同源共享 localStorage token）并建立自己的 RTCPeerConnection；关窗（含原生标题栏 X，经 onCloseRequested）先发 `bye` 再关闭。**跨网络兜底（自建 TURN）**：服务器管理员部署 coturn（`use-auth-secret` 模式），服务端经 `GET /api/turn`（登录态）按用户签发限时 1 小时凭据（`username='<到期时间戳>:<userId>'`，`credential=base64(hmac-sha1(TURN_SECRET, username))`）；客户端缓存 55 分钟并作为首选 ICE——密钥不进客户端，中继不会变成无鉴权的开放代理。未配置 `TURN_SECRET`/`TURN_URL` 时接口返回空、客户端仅用 STUN（同网直连可用，跨网对称 NAT 受限）。采集端请求 `audio:true + systemAudio:'include'`，窗口源额外提示 `windowAudio:'window'`（均为 WebView2/Chromium 实验性 hint，最终以原生选择器和返回音轨为准）；`contentHint='motion'`；WebView2 采集要求窗口高度 ≥600px。
 
-**码率策略（v0.8）**：mesh 下每增加一个观看者就多一路编码，所以按「总预算 ÷ 观看人数」分摊（默认 12Mbps，设置可改），单路下限 1.2Mbps；画质档位决定单路上限与取舍——**自动（默认）**按「可用预算/观看人数」选档（≥5Mbps 给清晰优先、≥2.5Mbps 给流畅优先、否则省流量，再叠加实测丢包与 RTT 的自适应系数）、清晰优先（`maxBitrate` 6M / `maintain-resolution`，带宽不足掉帧）、流畅优先（4M / `balanced`，带宽不足降分辨率）、省流量（1.5M / `scaleResolutionDownBy=1.5` / `balanced`）；手动锁定某一档后自适应仍在，但不再换档。控制条与观看窗都显示**当前生效**的档位（自动档标签形如 `自动·清晰`）。系统声音轨固定 128kbps。每 2s 读 `getStats()`（outbound/inbound-rtp 字节增量、`remote-inbound-rtp` 的丢包与 RTT）驱动自适应系数（丢包 >5% 或 RTT >400ms 下调 25%，最低 60%；恢复后每 4s 上调 15%），变化超过 1% 时重设所有 sender 参数；`setParameters` 被拒时退回「只改码率」重试并在控制条提示。
+**码率策略（v0.8）**：mesh 下每增加一个观看者就多一路编码，所以按「总预算 ÷ 观看人数」分摊（默认 12Mbps，设置可改），单路下限 1.2Mbps；画质档位决定单路上限与取舍——**自动（默认）**按「可用预算/观看人数」选档（≥5Mbps 给清晰优先、≥2.5Mbps 给流畅优先、否则省流量，再叠加实测丢包与 RTT 的自适应系数）、清晰优先（`maxBitrate` 6M / `maintain-resolution`，带宽不足掉帧）、流畅优先（4M / `balanced`，带宽不足降分辨率）、省流量（1.5M / `scaleResolutionDownBy=1.5` / `balanced`）；手动锁定某一档后自适应仍在，但不再换档。房间横幅与观看窗显示**当前生效**的档位（自动档标签形如 `自动·清晰`）。系统声音轨固定 128kbps。每 2s 读 `getStats()`（outbound/inbound-rtp 字节增量、`remote-inbound-rtp` 的丢包与 RTT）驱动自适应系数（丢包 >5% 或 RTT >400ms 下调 25%，最低 60%；恢复后每 4s 上调 15%），变化超过 1% 时重设所有 sender 参数；`setParameters` 被拒时退回「只改码率」重试并在控制条提示。
 
 **中继限码率**：TURN 中继会占用服务器公网出口（媒体先到服务器再转发）。客户端每 2s 的采样会读取选中候选对的类型，一旦本地或对端为 `relay`，单路目标码率被压到服务端下发的 `relayMaxBps`（`TURN_RELAY_MAX_BPS`，默认 1.2Mbps）并在控制条显示「服务器中转」——避免一路 1080p 吃满服务器出口、连带影响聊天流量。服务端建议同时给 coturn 配 `max-bps`（单会话）与 `bps-capacity`（全服，单位字节/秒、上下行分别计）做兜底。
 
 **断线自愈**：ICE `disconnected` 等 2s、`failed` 等 0.5s 触发 `restartIce()`，退避 2/4/8s 最多 4 次，`connected` 后复位。采集窗与观看窗的信令改用 `app/signalSocket.ts`（退避重连 + 心跳 + 半开检测）：重连后采集端重新 `screen:start`、观看端**带原 cid 重发 `request`**——共享端对 `connected/completed/checking/new` 的既有 sender 保持不动，只有已 failed 的才重建，因此信令抖动期间媒体不中断。
 
-**控制条与诊断**：共享建立后采集窗从 1020×720 缩成右下角 384×138 的常驻控制条（无边框、置顶、不进任务栏），内含本地预览（同一 MediaStream）、观看人数、实测分辨率/码率/帧率、画质档位与停止按钮；数据来自 `ScreenShareManager.snapshot()`，并经 `share:stats` 事件同步给主窗口横幅。观看窗同样显示分辨率/码率/帧率。**已知限制**：无 SFU，上行随观看人数线性增长；无进程级音频隔离。
+**控制条与诊断**：共享建立后采集窗从 1020×720 缩成右下角 **460×104** 的常驻控制条（无边框、置顶、不进任务栏；尺寸以**逻辑像素**为准，下发窗口时乘窗口所在显示器的 `scaleFactor`，否则高 DPI 下会被压扁裁切），内含本地预览（同一 MediaStream）、正在共享、观看人数、实测分辨率/码率/帧率与停止按钮；画质档位/带宽预算/静音提示音都在应用内（房间横幅 + 设置窗口「屏幕共享」页），不占常驻浮窗；数据来自 `ScreenShareManager.snapshot()`，并经 `share:stats` 事件同步给主窗口横幅。观看窗同样显示分辨率/码率/帧率。**已知限制**：无 SFU，上行随观看人数线性增长；无进程级音频隔离。
 
 **用户资料**：`users` 含个性签名 `bio`（≤100 字，PATCH /api/auth/me 维护）；成员卡片经
 `GET /api/users/:id`（登录态、UUID 不可枚举）读取公开资料。
