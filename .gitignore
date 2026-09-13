@@ -57,3 +57,6 @@ client/.build-id
 # 移动端图标（当前仅发布桌面端）
 client/src-tauri/icons/android/
 client/src-tauri/icons/ios/
+
+# 本地恢复清单（含私密指引，勿入库）
+/RECOVERY-LOCAL.md
