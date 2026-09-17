@@ -239,4 +239,19 @@ describe('friends', () => {
     expect((await bSeesOffline).payload).toMatchObject({ userId: a.userId, online: false });
     wsB.close();
   });
+
+  it('pair unique index rejects inserting A→B and B→A as two rows', async () => {
+    const a = await registerUser('fr_uniq_a');
+    const b = await registerUser('fr_uniq_b');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/friends/requests',
+      headers: auth(a.token),
+      payload: { userId: b.userId },
+    });
+    expect(created.statusCode).toBe(201);
+    await expect(
+      db.query('INSERT INTO friendships (requester_id, addressee_id) VALUES ($1, $2)', [b.userId, a.userId]),
+    ).rejects.toMatchObject({ code: '23505' });
+  });
 });

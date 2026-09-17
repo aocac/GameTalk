@@ -20,6 +20,10 @@ export interface Config {
   turnUrls: string[];
   /** 走中继时的单路码率上限（bps）：中继消耗服务器出口，按机器带宽配置 */
   turnRelayMaxBps: number;
+  /** 每用户图片存储上限（字节）。≤0 表示不限制。默认 64MB */
+  mediaQuotaBytes: number;
+  /** 未被消息/表情引用的图片保留天数。≤0 表示不自动清理。默认 14 */
+  mediaUnusedTtlDays: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -44,5 +48,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     turnUrls: env.TURN_URL ? env.TURN_URL.split(',').map((s) => s.trim()).filter(Boolean) : [],
     // 默认 1.2Mbps（按 4Mbps 出口的小机器设计）；带宽充裕的机器可调高
     turnRelayMaxBps: Math.max(300_000, Number(env.TURN_RELAY_MAX_BPS) || 1_200_000),
+    mediaQuotaBytes: env.MEDIA_QUOTA_BYTES === undefined ? 64 * 1024 * 1024 : Number(env.MEDIA_QUOTA_BYTES) || 0,
+    mediaUnusedTtlDays: env.MEDIA_UNUSED_TTL_DAYS === undefined ? 14 : Number(env.MEDIA_UNUSED_TTL_DAYS) || 0,
   };
 }

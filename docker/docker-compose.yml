@@ -14,6 +14,8 @@ services:
       # 默认 *（桌面客户端不受浏览器同源限制，够用）；如需收紧在 .env 里设置 CORS_ORIGIN
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
       LOG_LEVEL: info
+      MEDIA_QUOTA_BYTES: ${MEDIA_QUOTA_BYTES:-67108864}
+      MEDIA_UNUSED_TTL_DAYS: ${MEDIA_UNUSED_TTL_DAYS:-14}
     depends_on:
       postgres:
         condition: service_healthy

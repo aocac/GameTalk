@@ -385,7 +385,7 @@ cd client && npm install && npm run tauri dev
 npm test && npm run lint && npm run typecheck
 ```
 
-测试基线：服务端 91 例（PGlite 内存库 + 真实 WebSocket 集成），客户端 44 例（含屏幕共享连接生命周期、自动档位、码率分摊与中继限速、默认服务器地址解析的单元测试）。仓库里另有 13 个双账号浏览器回归脚本（`dev/e2e-*.mjs`），覆盖私聊、编辑、表情、通知跳转、邀请链接、屏幕共享等流程；其中 `e2e-screen-share-media.mjs` 用合成采集流跑真实的 P2P 媒体链路（断言画面推进与音频 RMS），不需要人工点选择器。
+测试基线：服务端 105 例（PGlite 内存库 + 真实 WebSocket 集成，含图片配额/TTL 与 S3 兼容备份上传），客户端 45 例（含屏幕共享连接生命周期、自动档位、码率分摊与中继限速、默认服务器地址解析的单元测试）。仓库里另有 13 个双账号浏览器回归脚本（`dev/e2e-*.mjs`），覆盖私聊、编辑、表情、通知跳转、邀请链接、屏幕共享等流程；其中 `e2e-screen-share-media.mjs` 用合成采集流跑真实的 P2P 媒体链路（断言画面推进与音频 RMS），不需要人工点选择器。
 
 数据库结构由 16 个纯 SQL 迁移文件定义（`server/migrations/`），启动时按序自动应用。开发用的 PGlite 和生产 PostgreSQL 执行的是同一份 SQL。
 
@@ -430,7 +430,7 @@ GameTalk/
 - [x] 邀请链接（有效期 / 次数 / 深链加入）
 - [x] 房间内 P2P 屏幕共享 + 独立观看窗 + 自建 TURN 兜底
 - [x] 通知点击跳转到对应会话
-- [ ] 图片对象存储冷备（S3 / COS）
+- [x] 图片对象存储冷备（S3 / COS / OSS / MinIO，可选）
 - [ ] macOS / Linux 的游戏模式适配
 
 ## 参与贡献

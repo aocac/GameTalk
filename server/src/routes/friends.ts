@@ -123,7 +123,29 @@ export function registerFriendsRoutes(app: FastifyInstance, deps: FriendsDeps): 
       [req.userId, target.id],
     );
     if (!inserted.rows[0]) {
-      // 并发反向申请（A→B 与 B→A 同时到达）由唯一索引兜底，视作申请已存在
+      // 无向唯一索引挡住了反向并发插入：再读一行，对方先到的 pending 视作互加
+      const again = await db.query<FriendshipRow>(
+        `SELECT * FROM friendships
+         WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
+        [req.userId, target.id],
+      );
+      const raced = again.rows[0];
+      if (raced && raced.requester_id === target.id && raced.status === 'pending') {
+        await db.query("UPDATE friendships SET status = 'accepted', updated_at = now() WHERE id = $1", [raced.id]);
+        const me = (
+          await db.query<UserRow>('SELECT id, username, avatar_url, bio FROM users WHERE id = $1', [req.userId!])
+        ).rows[0]!;
+        sendToUser(target.id, {
+          type: 'friend:accepted',
+          payload: { user: { ...publicUserOf(base, me), online: onlineUserIds().has(me.id) } },
+        });
+        await reply.send({ request: { id: raced.id, status: 'accepted', user: publicUserOf(base, target) } });
+        return;
+      }
+      if (raced?.status === 'accepted') {
+        await reply.code(409).send({ error: { code: 'already_friends', message: '你们已经是好友了' } });
+        return;
+      }
       await reply.code(409).send({ error: { code: 'request_pending', message: '好友申请已发送，等待对方处理' } });
       return;
     }

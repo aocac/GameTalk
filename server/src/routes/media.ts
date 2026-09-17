@@ -1,13 +1,21 @@
 import type { FastifyInstance } from 'fastify';
 import type { QueryResultRow } from 'pg';
+import type { Config } from '../config.js';
 import type { Db } from '../db/db.js';
 import type { JwtService } from '../lib/jwt.js';
 import { MAX_IMAGE_BYTES, validateImageDataUrl } from '../lib/image.js';
 import { makeAuthPreHandler } from '../plugins/auth.js';
+import {
+  mediaPathOf,
+  mediaQuotaExceededMessage,
+  mediaUsageOf,
+  sweepUnusedMedia,
+} from '../lib/mediaLifecycle.js';
 
 export interface MediaDeps {
   db: Db;
   jwt: JwtService;
+  config: Config;
 }
 
 interface MediaRow extends QueryResultRow {
@@ -18,13 +26,10 @@ interface MediaRow extends QueryResultRow {
 
 const MEDIA_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** 消息图片存储路径（存入 messages.media_url 的规范形式） */
-export function mediaPathOf(id: string): string {
-  return `/api/media/${id}`;
-}
+export { mediaPathOf };
 
 export function registerMediaRoutes(app: FastifyInstance, deps: MediaDeps): void {
-  const { db } = deps;
+  const { db, config } = deps;
   const auth = makeAuthPreHandler(deps.jwt);
 
   // 图片上传：dataUrl → media 表（bodyLimit 覆盖 5MB 图的 base64 体积 ≈ 6.7MB）
@@ -41,6 +46,21 @@ export function registerMediaRoutes(app: FastifyInstance, deps: MediaDeps): void
             : '图片格式不支持（仅 PNG/JPEG/WebP/GIF）';
         await reply.code(400).send({ error: { code: result.error ?? 'invalid_media', message: msg } });
         return;
+      }
+      // 先清掉过期未引用图，再按当前占用判断配额（避免「已撤回的图」一直占额度）
+      if (config.mediaUnusedTtlDays > 0) {
+        const cutoff = new Date(Date.now() - config.mediaUnusedTtlDays * 24 * 60 * 60 * 1000);
+        await sweepUnusedMedia(db, cutoff);
+      }
+      const incoming = result.bytes!.length;
+      if (config.mediaQuotaBytes > 0) {
+        const used = await mediaUsageOf(db, req.userId!);
+        if (used + incoming > config.mediaQuotaBytes) {
+          await reply.code(413).send({
+            error: { code: 'quota_exceeded', message: mediaQuotaExceededMessage(config.mediaQuotaBytes) },
+          });
+          return;
+        }
       }
       const inserted = await db.query<{ id: string }>(
         'INSERT INTO media (owner_id, mime, bytes) VALUES ($1, $2, $3) RETURNING id',

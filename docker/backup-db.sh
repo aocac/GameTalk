@@ -55,3 +55,43 @@ find "$BACKUP_DIR" -name 'configs-*.tar.gz' -mtime +"$KEEP_DAYS" -delete
 
 size=$(du -h "$dump" | cut -f1)
 log "✅ 完成：$dump ($size, TOC $toc_lines 行) + $cfg；保留 ${KEEP_DAYS} 天"
+
+# 5) 可选：推到 S3 兼容对象存储（AWS / COS / OSS / MinIO）。未配置四项凭据则跳过。
+#    失败不回滚本地 dump——对象存储是额外的冷备，不能因为远端故障丢掉本机备份。
+if [ -f "$REPO_ROOT/docker/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/docker/.env"
+  set +a
+fi
+
+upload_s3() {
+  local file="$1"
+  if [ -z "${BACKUP_S3_ENDPOINT:-}" ] || [ -z "${BACKUP_S3_BUCKET:-}" ] \
+    || [ -z "${BACKUP_S3_ACCESS_KEY:-}" ] || [ -z "${BACKUP_S3_SECRET_KEY:-}" ]; then
+    return 0
+  fi
+  local server="${SERVER_CONTAINER:-docker-server-1}"
+  local remote="/tmp/gt-s3-$(basename "$file")"
+  if ! docker cp "$file" "$server:$remote" 2>/dev/null; then
+    log "⚠ 对象存储：无法把文件拷进 $server，跳过 $(basename "$file")"
+    return 0
+  fi
+  if docker exec \
+      -e BACKUP_S3_ENDPOINT -e BACKUP_S3_BUCKET \
+      -e BACKUP_S3_ACCESS_KEY -e BACKUP_S3_SECRET_KEY \
+      -e BACKUP_S3_REGION -e BACKUP_S3_PREFIX -e BACKUP_S3_PATH_STYLE \
+      "$server" node dist/cli/push-backup.js "$remote" "$(basename "$file")"; then
+    log "✅ 已上传到对象存储：$(basename "$file")"
+  else
+    log "⚠ 对象存储上传失败（本地 dump 仍保留）：$(basename "$file")"
+  fi
+  docker exec "$server" rm -f "$remote" >/dev/null 2>&1 || true
+}
+
+if [ -n "${BACKUP_S3_BUCKET:-}" ]; then
+  upload_s3 "$dump"
+  upload_s3 "$cfg"
+else
+  log "对象存储未配置（BACKUP_S3_*），仅保留本地 dump"
+fi
