@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "migrate": "tsx src/db/migrate.ts",
     "reset-password": "tsx src/cli/reset-password.ts",
+    "push-backup": "tsx src/cli/push-backup.ts",
     "lint": "eslint ."
   },
   "dependencies": {

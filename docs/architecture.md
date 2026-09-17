@@ -53,7 +53,7 @@ gametalk/
 │   │   ├── routes/          # REST 路由（health / auth / rooms / invites / friends / dm / stickers / media / turn）
 │   │   ├── ws/              # WS 网关（认证 + 房间广播 + 花名册/在线状态 + 信令透传 + 限流 + 心跳清理）
 │   │   ├── db/              # pg/PGlite 抽象 + migration 执行器
-│   │   └── lib/             # jwt / password / image / invite / avatar / validate / envfile
+│   │   └── lib/             # jwt / password / image / invite / avatar / validate / envfile / mediaLifecycle / s3
 │   ├── migrations/          # 纯 SQL migration（生产与 PGlite 同源）
 │   └── test/                # vitest 单测 + 集成测试
 ├── docker/                  # 生产部署 compose、Caddyfile、部署/备份/coturn 脚本
@@ -142,7 +142,7 @@ gametalk/
 
 **表情包**：`POST/GET/DELETE /api/stickers`（个人云表情，媒体归属校验 + 24 上限 + 幂等）、`POST/GET/DELETE /api/rooms/:id/stickers`（房间共享，成员资格校验，删除 = 添加者或房主）。客户端表情面板三页签：表情 / 我的表情包（云同步，本地旧数据自动迁移）/ 群表情（按房间隔离）。
 
-**好友**：`friendships`（pending/accepted，双向唯一）；支持 userId / 用户名 / `#8 位短 ID` 查找；反向申请等价于互加。实时事件（`friend:request/accepted/declined/removed`）经 WS 推送在线方。好友与房间完全分离管理。
+**好友**：`friendships`（pending/accepted）。`(requester_id, addressee_id)` 方向唯一之外，另有无向唯一索引 `(LEAST(requester, addressee), GREATEST(...))`，A→B 与 B→A 不能并存。反向申请等价于互加；反向并发插入撞唯一索引时再读对方那一行并自动接受。支持 userId / 用户名 / `#8 位短 ID` 查找。实时事件（`friend:request/accepted/declined/removed`）经 WS 推送在线方。好友与房间完全分离管理。
 
 **好友私聊（DM）**：仅 accepted 好友可互发（`dm:send` 服务端校验，非好友回 `not_friends`）。独立 `dm_messages` 表（与房间消息分离，无提及/禁言语义），消息含 `from/to/username 快照/kind/media_url/reply_to/recalled`；持久化后向**双方所有连接**广播 `dm:new`（发送者自己也收到，多端一致）。撤回 `dm:recall` 仅发送者本人（无房主概念，他人撤回回 `only_sender`），广播 `dm:recalled`，内容清空。REST：`GET /api/dm/conversations`（DISTINCT ON 聚合每会话最后一条，侧栏预览一次拉齐）、`GET /api/dm/:peerId/messages`（游标分页，非好友 403）。删除好友不删历史（重新加好友后消息仍在，UI 隐藏会话）。客户端：乐观发送 + 按序校正，`activeDmPeerId` 与 `activeRoomId` 互斥表达活跃会话。
 
@@ -195,6 +195,7 @@ gametalk/
 - `014_invite_links`：`invite_links`（16 位长码，可过期 `expires_at` / 可限次数 `max_uses` / `used_count` 计数，随房间级联删除）
 - `015_forwarded_label`：`messages.forwarded_from_label` / `dm_messages.forwarded_from_label`（转发来源展示快照，纯展示不参与权限判断）
 - `016_media_urls`：`messages.media_urls` / `dm_messages.media_urls`（多图消息的完整 URL 列表 JSONB，首图仍写 `media_url` 兼容旧客户端）
+- `017_media_quota_friends_pair`：`media.owner_id` 索引；`friendships` 无向唯一索引（LEAST/GREATEST），并先按「已接受优先」去重
 
 ## 6. 游戏 Overlay（透明置顶窗口方案）
 
@@ -241,7 +242,7 @@ gametalk/
 - 邀请码/邀请链接用 `crypto.randomInt` 生成（CSPRNG），不用 `Math.random`。
 - 头像：上传 data URL 类型/大小（≤3MB）/魔数三重校验；分发走 `/api/avatars/:id`（公开端点，
   id 为不可枚举 UUID），带 5 分钟缓存头。
-- 消息图片：`POST /api/media` 需登录，类型/大小（≤5MB）/魔数三重校验；读取 `/api/media/:id`
+- 消息图片：`POST /api/media` 需登录，类型/大小（≤5MB）/魔数三重校验；**每用户默认 64MB 配额**（`MEDIA_QUOTA_BYTES`，超限 413 `quota_exceeded`）；未被消息或表情引用的图片默认 14 天后清理（`MEDIA_UNUSED_TTL_DAYS`，0 关闭）。读取 `/api/media/:id`
   公开（`<img>` 无法附带认证头），id 为不可枚举 UUID + immutable 缓存；发送时校验媒体归属，群表情入库时同样校验归属。
 - 注册并发竞态由用户名唯一索引兜底（冲突返回 409）；邀请兑换用「占位入房 + 条件原子自增」防超额，并发下不会 500。
 - CORS 可配置：compose 默认 `*`（桌面客户端不受浏览器同源限制），可经 `CORS_ORIGIN` 收紧。
