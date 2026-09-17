@@ -2,6 +2,7 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { primaryMonitor } from '@tauri-apps/api/window';
+import { invoke } from '@tauri-apps/api/core';
 import { isRegistered, register, unregister } from '@tauri-apps/plugin-global-shortcut';
 import {
   OVERLAY_BASE_HEIGHT,
@@ -17,7 +18,8 @@ import type { ChatMessage } from './types';
  * - 全局快捷键呼出输入 Overlay（透明置顶无边框窗口）
  * - 消息 Overlay：绝对透明背景 + IgnoreCursorEvents + 自定义位置/缩放/自动隐藏
  * - Enter 发送 / Esc 取消：由 input 窗口发事件给主窗口，主窗口走现有 WS 通道
- * - 发送后隐藏输入窗口（Windows 通常将焦点还给先前的前台窗口，即游戏）
+ * - 发送后隐藏输入窗口，经 Rust 把焦点还给呼出前的前台（游戏）
+ * - macOS 浮层/输入框 visibleOnAllWorkspaces；Linux X11 可还原焦点，纯 Wayland 不能
  */
 
 export const INPUT_WINDOW_LABEL = 'input';
@@ -80,6 +82,33 @@ function getOverlayWindow(): Promise<WebviewWindow | null> {
   return WebviewWindow.getByLabel(OVERLAY_WINDOW_LABEL);
 }
 
+/** 呼出输入框前记下前台；非 Tauri / 命令失败时忽略 */
+async function captureForeground(): Promise<void> {
+  try {
+    await invoke('capture_foreground');
+  } catch {
+    // 浏览器调试或旧壳没有该命令
+  }
+}
+
+/** 关闭输入框后把焦点还给呼出前的前台（游戏） */
+async function restoreForeground(): Promise<void> {
+  try {
+    await invoke('restore_foreground');
+  } catch {
+    // 忽略
+  }
+}
+
+/** macOS Spaces / Linux 虚拟桌面：浮层和输入框跟到当前桌面 */
+async function pinToAllWorkspaces(win: WebviewWindow): Promise<void> {
+  try {
+    await win.setVisibleOnAllWorkspaces(true);
+  } catch {
+    // 旧壳或不支持
+  }
+}
+
 /**
  * 确保 Overlay 窗口存在（webview 崩溃/窗口被意外关闭时重建）。
  * Overlay 平时隐藏，若窗口丢失则消息/预览事件会无人接收——这是"Overlay 完全失效"的兜底。
@@ -101,6 +130,7 @@ async function ensureOverlayWindow(): Promise<void> {
       shadow: false,
       focus: false,
       visible: false,
+      visibleOnAllWorkspaces: true,
     });
     // 等窗口与监听器就绪（事件监听在 overlay.tsx mount 时注册）
     await new Promise((r) => setTimeout(r, 500));
@@ -133,6 +163,7 @@ async function ensureInputWindow(): Promise<void> {
       shadow: false,
       focus: true,
       visible: false,
+      visibleOnAllWorkspaces: true,
     });
     await new Promise((r) => setTimeout(r, 500));
   } catch {
@@ -209,6 +240,7 @@ export async function applyOverlayConfig(
   const win = await getOverlayWindow();
   const mon = await primaryMonitor();
   if (!win || !mon) return;
+  await pinToAllWorkspaces(win);
   const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
   const w = Math.round(OVERLAY_BASE_WIDTH * overlayScale);
   const h = Math.round(OVERLAY_BASE_HEIGHT * overlayScale);
@@ -260,8 +292,9 @@ export async function stopOverlayAdjust(): Promise<void> {
   await emit('overlay:adjust', { active: false });
 }
 
-/** 呼出输入框（全局快捷键触发）：定位底部居中 + 显示 + 聚焦 */
+/** 呼出输入框（全局快捷键触发）：先记下前台，再定位底部居中 + 显示 + 聚焦 */
 export async function showInputWindow(): Promise<void> {
+  await captureForeground();
   await registerEsc();
   await ensureInputWindow();
   const win = await getInputWindow();
@@ -269,6 +302,7 @@ export async function showInputWindow(): Promise<void> {
   if (!win || !mon) {
     return;
   }
+  await pinToAllWorkspaces(win);
   const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
   const x = mon.position.x + (mon.size.width - INPUT_WIDTH * dpr) / 2;
   const y = mon.position.y + mon.size.height - INPUT_HEIGHT * dpr - INPUT_BOTTOM_MARGIN * dpr;
@@ -278,7 +312,7 @@ export async function showInputWindow(): Promise<void> {
   // 每次呼出：独立目标重置为默认（主窗口当前会话），再下发上下文
   onInputShown();
   await pushInputTargetContext().catch(() => undefined);
-  // Windows 上 show 后需要一点时间才能聚焦
+  // 部分平台 show 后需要一点时间才能聚焦
   setTimeout(() => void win.setFocus(), 60);
 }
 
@@ -286,8 +320,10 @@ export async function hideInputWindow(): Promise<void> {
   const win = await getInputWindow();
   await unregisterEsc();
   inputVisible = false;
-  if (!win) return;
-  await win.hide();
+  if (win) {
+    await win.hide();
+  }
+  await restoreForeground();
 }
 
 /** 输入框当前是否显示（呼出快捷键反呼出判定用；所有显隐都经过上面两个函数，状态不会漂移） */

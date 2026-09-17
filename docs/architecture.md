@@ -4,13 +4,13 @@
 
 ```
 ┌─────────────────────────────┐       REST + WebSocket(JWT)       ┌──────────────────────────────┐
-│  GameTalk 客户端 (Windows)   │ ────────────────────────────────► │  GameTalk Server (Linux VPS)  │
+│  GameTalk 客户端             │ ────────────────────────────────► │  GameTalk Server (Linux VPS)  │
 │  Tauri 2 + React + TS        │                                   │  Fastify + WS + Node 22      │
-│  ├─ 主窗口（聊天 UI）        │ ◄──────────────────────────────── │  ├─ REST 路由（认证/房间）    │
-│  ├─ 输入 Overlay（游戏内）   │           广播消息                │  ├─ WS 网关（房间 pub/sub）  │
-│  └─ 消息 Overlay（绝对透明） │                                   │  └─ 内存房间表                │
-└─────────────────────────────┘                                   └──────────────┬───────────────┘
-                                                                                  │ SQL (pg)
+│  Windows / macOS / Linux     │ ◄──────────────────────────────── │  ├─ REST 路由（认证/房间）    │
+│  ├─ 主窗口（聊天 UI）        │           广播消息                │  ├─ WS 网关（房间 pub/sub）  │
+│  ├─ 输入 Overlay（游戏内）   │                                   │  └─ 内存房间表                │
+│  └─ 消息 Overlay（绝对透明） │                                   └──────────────┬───────────────┘
+└─────────────────────────────┘                                                   │ SQL (pg)
                                                                           ┌───────▼────────┐
                                                                           │ PostgreSQL 16   │
                                                                           └────────────────┘
@@ -47,7 +47,7 @@ gametalk/
 │   │   ├── share.tsx        # 屏幕采集窗入口
 │   │   └── buildInfo.ts     # 构建标识（vite define 注入）
 │   ├── scripts/             # build-id.mjs（构建唯一标识）/ copy-artifacts.mjs
-│   └── src-tauri/           # Rust 壳（托盘 / 单实例 / quit_app / set_proxy / 采集条隐藏）
+│   └── src-tauri/           # Rust 壳（托盘 / 单实例 / quit_app / set_proxy / 采集条隐藏 / 前台焦点还原）
 ├── server/                  # Fastify 服务端
 │   ├── src/
 │   │   ├── routes/          # REST 路由（health / auth / rooms / invites / friends / dm / stickers / media / turn）
@@ -201,12 +201,12 @@ gametalk/
 不做 Direct3D/OpenGL 挂钩、不做 DLL 注入。使用 Tauri 原生能力，六个窗口入口（Vite 多页：index / input / overlay / settings / screen / share）：
 
 - **main**：聊天主窗口（React 全量 UI）
-- **input**（快捷输入框）：`decorations:false, transparent:true, alwaysOnTop:true, skipTaskbar:true, focus:true`；全局快捷键（默认 `Alt+G`，设置可改；再按一次关闭）呼出 → 定位主屏底部居中 → 聚焦；Enter 发送（emit `game-input-send` → 主窗口走 WS）→ 自动隐藏；Esc 或再次按呼出键取消（emit `game-input-cancel`）。
+- **input**（快捷输入框）：`decorations:false, transparent:true, alwaysOnTop:true, skipTaskbar:true, focus:true, visibleOnAllWorkspaces:true`；全局快捷键（Windows/Linux 默认 `Alt+G`，macOS 默认 `Ctrl+Shift+G`，设置可改；再按一次关闭）呼出 → 先 `capture_foreground` 记下前台 → 定位主屏底部居中 → 聚焦；Enter 发送（emit `game-input-send` → 主窗口走 WS）→ 自动隐藏并 `restore_foreground`；Esc 或再次按呼出键取消（emit `game-input-cancel`）。
 - **overlay**（消息浮层）：同参数 + `focus:false` + `setIgnoreCursorEvents(true)`（点击穿透）；背景**绝对透明**（CSS `background: transparent`）；位置 6 预设（左上/上中/右上/左下/下中/右下）+ 缩放 0.5–2.0 + 自动隐藏时长 2–15s，设置实时生效（`applyOverlayConfig` → setPosition/setSize + emit config → CSS zoom）。浮层可能比主窗口晚挂载，因此每次推送消息前都会补发一次配置，避免缩放/时长停留在默认值。
 - **settings**：独立设置窗口，与主窗口共享 localStorage，变更经 `settings:changed` 事件回流主窗口执行本地副作用（快捷键、浮层位置、代理）。
 - **screen-\*** / **share-\***：屏幕共享的观看窗与采集窗，各自持有独立的 WS 信令连接（见第 4 节屏幕共享）。
 
-**焦点恢复**：输入窗发送后隐藏，Windows 将焦点还给先前的前台窗口（即游戏）。**前提**：目标用户在游戏中采用**无边框窗口化**模式（覆盖式窗口在独占全屏下无效）。
+**焦点恢复**：呼出输入框前 Rust 记下当前前台，发送/Esc 隐藏后再把它唤回。Windows 用 `GetForegroundWindow`/`SetForegroundWindow`（hide 往往已经能还焦点，仍显式还原以三端一致）；macOS 用 `NSWorkspace.frontmostApplication` + `NSRunningApplication.activateWithOptions`；Linux X11 用 `GetInputFocus`/`SetInputFocus`，无 `DISPLAY`（CI、纯 Wayland）时跳过。**前提**：目标用户在游戏中采用**无边框窗口化**模式（覆盖式窗口在独占全屏下无效）。
 
 ## 6.1 主题与提示音
 

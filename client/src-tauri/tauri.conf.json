@@ -34,7 +34,8 @@
         "resizable": false,
         "shadow": false,
         "focus": true,
-        "visible": false
+        "visible": false,
+        "visibleOnAllWorkspaces": true
       },
       {
         "label": "overlay",
@@ -49,7 +50,8 @@
         "resizable": false,
         "shadow": false,
         "focus": false,
-        "visible": false
+        "visible": false,
+        "visibleOnAllWorkspaces": true
       }
     ],
     "security": {

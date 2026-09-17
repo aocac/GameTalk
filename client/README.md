@@ -1,6 +1,6 @@
 # GameTalk Client
 
-Tauri 2 + React 19 + TypeScript 桌面客户端。Windows 提供全部功能（游戏模式、屏幕采集），Linux / macOS 的聊天与观看功能完整，由 CI 产出对应安装包。
+Tauri 2 + React 19 + TypeScript 桌面客户端。游戏模式（全局快捷键、透明浮层、焦点恢复）三端可用；屏幕采集目前只在 Windows 上提供。Linux / macOS 的聊天与观看功能完整，由 CI 产出对应安装包。
 
 ## 窗口
 
@@ -45,7 +45,7 @@ VITE_DEFAULT_SERVER_URL=https://你的域名
 - `src/stores/`：zustand 状态（`auth` / `chat` / `friends`），token 与设置持久化在 localStorage
 - `src/App.tsx`：主界面（登录 / 聊天 / 成员面板 / 各弹窗）
 - `src/buildInfo.ts`：构建标识（由 vite `define` 注入）
-- `src-tauri/`：Rust 壳（托盘、单实例、quit_app、set_proxy、采集提示条隐藏），业务逻辑尽量留在 TS
+- `src-tauri/`：Rust 壳（托盘、单实例、quit_app、set_proxy、采集提示条隐藏、前台焦点捕获/还原），业务逻辑尽量留在 TS
 - `capabilities/`：Tauri 权限清单，按窗口标签分开授权（main / input+overlay / settings / screen+share）
 - `test/`：gameMode 单测、store 回归、默认服务器地址解析、真实 server 集成测试
 
@@ -55,5 +55,5 @@ VITE_DEFAULT_SERVER_URL=https://你的域名
 - Tauri v2 的 `WebviewWindow.getByLabel` 返回 Promise；全局快捷键插件是 `@tauri-apps/plugin-global-shortcut`。
 - effect 里的 Tauri API 一律 try/catch：非 Tauri 环境（浏览器调试）会**同步抛异常**，不是 promise 拒绝。
 - 调用了新的 window API 就要同步补 `capabilities/*.json` 权限，否则调用会被静默拒绝。
-- 给 `src-tauri` 加 Windows 相关 crate 必须放进 `[target.'cfg(windows)'.dependencies]`，否则 Linux CI 的 cargo check 会挂。
+- 给 `src-tauri` 加 Windows / macOS / Linux 相关 crate 必须放进对应 `[target.'cfg(...)'.dependencies]`，否则其它平台的 cargo check 会挂。
 - 想用干净配置启动已构建的 release 包（不加载本机真实会话）：`WEBVIEW2_USER_DATA_FOLDER=C:\tmp\gt-profile gametalk.exe`。

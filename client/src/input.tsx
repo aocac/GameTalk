@@ -51,6 +51,11 @@ function InputApp() {
   const gotFocus = useRef(false);
 
   useEffect(() => {
+    const win = getCurrentWindow();
+    void win.setVisibleOnAllWorkspaces(true).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     const offCtx = listen<{ current: InputTarget | null; targets: InputTarget[] }>('game-input-context', (e) => {
       setCurrent(e.payload?.current ?? null);
       setTargets(e.payload?.targets ?? []);
