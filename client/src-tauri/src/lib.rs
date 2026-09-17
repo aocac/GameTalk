@@ -5,6 +5,9 @@ use tauri::{
 };
 use tauri_plugin_deep_link::DeepLinkExt;
 
+mod foreground;
+use foreground::{capture_foreground, restore_foreground};
+
 /// 彻底退出应用（前端关闭确认弹窗 → 退出）
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
@@ -135,7 +138,14 @@ pub fn run() {
     };
     builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![quit_app, set_proxy, write_file_bytes, hide_webview2_capture_bar])
+        .invoke_handler(tauri::generate_handler![
+            quit_app,
+            set_proxy,
+            write_file_bytes,
+            hide_webview2_capture_bar,
+            capture_foreground,
+            restore_foreground,
+        ])
         .setup(|app| {
             // 注册 gametalk:// 深链协议到当前用户注册表（不依赖安装器行为；
             // 浏览器点击链接 → 系统以本 exe 启动第二实例 → 单实例回调转发）

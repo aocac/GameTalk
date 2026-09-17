@@ -3,9 +3,25 @@ import { createJSONStorage, persist, type StateStorage } from 'zustand/middlewar
 import { invoke } from '@tauri-apps/api/core';
 import type { ShareQuality } from './screenShare';
 import type { ThemeSetting } from './theme';
+import {
+  defaultHotkeyFor,
+  detectDesktopOs,
+  LEGACY_DEFAULT_HOTKEY,
+  MACOS_DEFAULT_HOTKEY,
+  WINDOWS_DEFAULT_HOTKEY,
+  type DesktopOs,
+} from './platform';
 
 export type { ShareQuality };
 export type { ThemeSetting };
+export {
+  defaultHotkeyFor,
+  detectDesktopOs,
+  LEGACY_DEFAULT_HOTKEY,
+  MACOS_DEFAULT_HOTKEY,
+  WINDOWS_DEFAULT_HOTKEY,
+};
+export type { DesktopOs };
 
 export type OverlayPosition =
   | 'top-left'
@@ -103,10 +119,8 @@ export function resolveDefaultServerUrl(injected: string): string {
 
 export const DEFAULT_SERVER_URL = resolveDefaultServerUrl(readInjectedServerUrl());
 
-/** v0.4.2 起默认快捷键：Alt+G（原 Ctrl+Shift+Space 过长且 Space 在游戏内常用） */
-export const DEFAULT_HOTKEY = 'Alt+G';
-/** 旧默认快捷键：持久化了该值的用户在迁移时升级到新默认（自定义键不受影响） */
-export const LEGACY_DEFAULT_HOTKEY = 'Ctrl+Shift+Space';
+/** 当前平台的默认呼出快捷键（macOS 为 Ctrl+Shift+G，其余 Alt+G） */
+export const DEFAULT_HOTKEY = defaultHotkeyFor();
 export const OVERLAY_BASE_WIDTH = 380;
 export const OVERLAY_BASE_HEIGHT = 180;
 
@@ -126,6 +140,27 @@ export async function applyProxySetting(useProxy: boolean, proxyAddress: string)
   } catch {
     // 非 Tauri 环境（浏览器调试/测试）下无此命令，忽略
   }
+}
+
+/**
+ * 设置持久化迁移。os 可注入便于单测；正式运行用 detectDesktopOs()。
+ * - 仍写着 Ctrl+Shift+Space 的用户 → 当前平台默认
+ * - v2 之前 macOS 上的 Alt+G（曾是全平台默认，Option+G 会输入 ©）→ Ctrl+Shift+G
+ * - 用户自定义过的其它组合键不改
+ */
+export function migratePersistedSettings(
+  persisted: unknown,
+  fromVersion: number,
+  os: DesktopOs = detectDesktopOs(),
+): AppSettings {
+  const p = { ...((persisted ?? {}) as Partial<AppSettings>) };
+  const platformDefault = defaultHotkeyFor(os);
+  if (!p.hotkey || p.hotkey === LEGACY_DEFAULT_HOTKEY) {
+    p.hotkey = platformDefault;
+  } else if (fromVersion < 2 && os === 'macos' && p.hotkey === WINDOWS_DEFAULT_HOTKEY) {
+    p.hotkey = MACOS_DEFAULT_HOTKEY;
+  }
+  return p as AppSettings;
 }
 
 /** 非浏览器环境（vitest node）下的内存存储兜底 */
@@ -160,7 +195,7 @@ export const useSettings = create<AppSettings>()(
       setSoundVolume: (soundVolume) => set({ soundVolume: Math.min(100, Math.max(0, Math.round(soundVolume))) }),
       setNotifyLevel: (notifyLevel) => set({ notifyLevel }),
       setGameModeEnabled: (gameModeEnabled) => set({ gameModeEnabled }),
-      setHotkey: (hotkey) => set({ hotkey: hotkey.trim() || DEFAULT_HOTKEY }),
+      setHotkey: (hotkey) => set({ hotkey: hotkey.trim() || defaultHotkeyFor() }),
       setOverlayPosition: (overlayPosition) => set({ overlayPosition }),
       setOverlayEnabled: (overlayEnabled) => set({ overlayEnabled }),
       setOverlayCustomPosition: (overlayCustomPosition) => set({ overlayCustomPosition }),
@@ -175,13 +210,8 @@ export const useSettings = create<AppSettings>()(
     }),
     {
       name: 'gametalk-settings',
-      version: 1,
-      migrate: (persisted) => {
-        const p = persisted as Partial<AppSettings>;
-        // 仍为旧默认键的用户自动切到新默认（自定义过快捷键的不动）
-        if (p.hotkey === LEGACY_DEFAULT_HOTKEY) p.hotkey = DEFAULT_HOTKEY;
-        return p as AppSettings;
-      },
+      version: 2,
+      migrate: (persisted, fromVersion) => migratePersistedSettings(persisted, fromVersion),
       storage: typeof window !== 'undefined' ? createJSONStorage(() => localStorage) : createJSONStorage(() => memoryStorage),
     },
   ),

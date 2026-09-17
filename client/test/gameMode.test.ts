@@ -11,6 +11,7 @@ const mockWindow = {
   show: vi.fn(async () => undefined),
   hide: vi.fn(async () => undefined),
   setFocus: vi.fn(async () => undefined),
+  setVisibleOnAllWorkspaces: vi.fn(async () => undefined),
 };
 
 vi.mock('@tauri-apps/api/webviewWindow', () => ({
@@ -41,6 +42,13 @@ vi.mock('@tauri-apps/api/dpi', () => ({
   PhysicalSize: class {
     constructor(public width: number, public height: number) {}
   },
+}));
+
+const invokeCalls: string[] = [];
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(async (cmd: string) => {
+    invokeCalls.push(cmd);
+  }),
 }));
 
 vi.mock('@tauri-apps/api/window', () => ({
@@ -90,6 +98,7 @@ const sampleMessage: ChatMessage = {
 beforeEach(() => {
   calls.length = 0;
   emitted.length = 0;
+  invokeCalls.length = 0;
   registeredKeys.clear();
   useSettings.setState({
     gameModeEnabled: false,
@@ -121,6 +130,23 @@ describe('gameMode manager', () => {
     const pos = mockWindow.setPosition.mock.calls.at(-1)[0];
     expect(pos.x).toBe(Math.round((1920 - 460) / 2));
     expect(pos.y).toBe(1080 - 64 - 48);
+    // 呼出前必须先记下前台，否则 macOS/Linux 关输入框后焦点回不了游戏
+    expect(invokeCalls[0]).toBe('capture_foreground');
+    expect(invokeCalls.indexOf('capture_foreground')).toBeLessThan(invokeCalls.length);
+    expect(mockWindow.setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true);
+  });
+
+  it('hideInputWindow restores the captured foreground after hide', async () => {
+    await gameMode.startGameMode();
+    await gameMode.showInputWindow();
+    invokeCalls.length = 0;
+    await gameMode.hideInputWindow();
+    expect(mockWindow.hide).toHaveBeenCalled();
+    expect(invokeCalls).toContain('restore_foreground');
+    const hideOrder = mockWindow.hide.mock.invocationCallOrder.at(-1) ?? 0;
+    const restoreIdx = invokeCalls.lastIndexOf('restore_foreground');
+    expect(restoreIdx).toBeGreaterThanOrEqual(0);
+    expect(hideOrder).toBeGreaterThan(0);
   });
 
   it('hotkey press again hides the input window (toggle, Esc unaffected)', async () => {

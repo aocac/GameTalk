@@ -6,6 +6,7 @@
 
 ### 新增
 
+- 游戏模式适配 macOS / Linux：呼出前记下前台、关闭输入框后还原焦点（Windows Win32 / macOS NSRunningApplication / Linux X11；纯 Wayland 无 `DISPLAY` 时跳过）。macOS 默认快捷键改为 `Ctrl+Shift+G`（Option+G 会输入 ©），已保存 `Alt+G` 的 Mac 用户会自动迁移；Command 键录成 `Command`。输入框和浮层开启 `visibleOnAllWorkspaces`，可出现在 macOS 所有桌面。
 - 支持在构建期预置默认服务器地址：打包机放一个 `client/.env.local`（已被 gitignore）填 `VITE_DEFAULT_SERVER_URL`，打出的安装包首次启动即指向该地址，玩家不必手填。公开仓库与 CI 不含该文件，产物保持 `http://127.0.0.1:8787`。该值只在生产构建生效，`vite dev` 与单元测试始终使用本地地址。
 - 设置窗口的服务器地址下方显示「当前默认」值，便于确认安装包预置的是哪个地址。
 - 每用户图片存储配额（默认 64MB）与未引用图片 TTL 清理（默认 14 天）；超限返回 `quota_exceeded`。

@@ -107,6 +107,7 @@ function OverlayApp() {
     const win = getCurrentWindow();
     winRef.current = win;
     void win.setIgnoreCursorEvents(true);
+    void win.setVisibleOnAllWorkspaces(true).catch(() => undefined);
   }, []);
 
   const clearTimers = () => {

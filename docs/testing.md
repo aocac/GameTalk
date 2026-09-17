@@ -6,9 +6,9 @@
 |---|---|---|
 | 服务端单测/集成 | vitest | REST 路由、WS 网关（双客户端实时收发、房主删房、幂等 join、花名册/在线状态）、好友（申请/互加/删除 + 实时事件 + 在线广播 + 无向唯一索引）、好友私聊（非好友拒绝/双方广播/历史分页/会话聚合/撤回权限/图片与引用校验）、@提及（解析/成员校验/入库/编辑重算）、图片消息（上传校验/归属/绝对 URL/多图/每用户配额/未引用 TTL 清理）、禁言（仅房主/到期/解除）、WS 加固（限流 / 超大帧断连）、REST 限流（登录 429）、头像端点（data URL → HTTP 端点）、邀请链接（创建/资格/过期 410/耗尽 410/幂等入房不计数/吊销权限/并发兑换）、消息转发（源可见性/目标唯一/代复制 media/来源标注；转发进房复用禁言校验）、屏幕共享信令（非成员拒绝 / 启停广播 / 定向转发与越权拒绝 / 晚加入快照）、S3 兼容备份上传（SigV4 + 本地 mock PUT）、migration 幂等、输入校验与错误映射 |
 | 服务端回归 | vitest | `test/regressions.test.ts`：历史分页保留最新一条、空 mediaUrls 不算内容、退房/删房后订阅失效、房主不可退房、目标不在房间用 `target_not_in_room`、私聊撤回清 media_urls、编辑重算提及、改名同步广播、群表情媒体归属、邀请并发兑换、非法 id 不 500、代理信任判定（17 例） |
-| 客户端逻辑 | vitest | gameMode 管理器（mock Tauri，含换键后旧键注销、启动途中关闭的热键清理）、真实 server 集成测试（双端聊天 / not_in_room / 断线重连 / 花名册离线保留 / 好友私聊收发与历史 / 编辑往返） |
+| 客户端逻辑 | vitest | gameMode 管理器（mock Tauri，含换键后旧键注销、启动途中关闭的热键清理、呼出前 capture / 关闭后 restore 前台）、真实 server 集成测试（双端聊天 / not_in_room / 断线重连 / 花名册离线保留 / 好友私聊收发与历史 / 编辑往返） |
 | 屏幕共享逻辑 | vitest | `test/screenShare.test.ts`：连接生命周期、重复 request 非破坏性、码率分摊与档位、ICE 断线重启、relay 候选命中限码率（12 例，mock RTCPeerConnection） |
-| 默认服务器地址 | vitest | `test/settings.test.ts`：注入值去空白与尾部斜杠、空值回落本地地址、保留端口与路径、测试/dev 环境不受 `.env.local` 注入影响（6 例） |
+| 默认服务器地址 / 平台热键 | vitest | `test/settings.test.ts`：注入值去空白与尾部斜杠、空值回落本地地址、保留端口与路径、测试/dev 环境不受 `.env.local` 注入影响；平台默认热键与持久化 v2 迁移（macOS Alt+G → Ctrl+Shift+G） |
 | 客户端回归 | vitest | `test/store.regressions.test.ts`：纯图无文字发送、踢已退房成员不移除自己的房间、退房重进重载历史、加载失败可重试、历史重载合并新消息、断线排队消息不被清空、私聊翻页 loading、窗口失焦计未读、换账号丢弃在途响应（9 例） |
 | Lint | ESLint（双工作区） | `npm run lint` |
 | 前端构建 | `npm run build`（tsc + vite） | 类型安全 + 产物可构建 |
@@ -69,12 +69,13 @@ cd client/src-tauri && cargo check
 | 41 | 退房订阅清理对称性：REST 退房后不再收到该房间广播、花名册不再显示其在线 | ✅（session.test.ts 1 例） | ⬜ |
 | 42 | 客户端顶号处理：提示 + 清凭据 + 不再自动重连（防两端互相顶号死循环） | ✅（store.regressions.test.ts 1 例） | ⬜ |
 | 43 | 屏幕共享控制条布局体检（按 `CONTROL_W/H` 渲染真实 DOM，量溢出/换行/按钮压缩） | ✅（dev/probe-share-bar.mjs，失败退出码 1） | — |
-| 44 | 每用户图片配额（超限 413 `quota_exceeded`，他人不受影响） | ✅（media.test.ts） | — |
-| 45 | 未引用图片 TTL 清理（表情/消息附件保留，撤回后可清） | ✅（media.test.ts） | — |
-| 46 | 好友无向唯一索引（SQL 层拒绝 A→B 与 B→A 两行） | ✅（friends.test.ts） | — |
-| 47 | 备份对象存储上传（SigV4 签名稳定 + mock 端点 PUT 字节一致） | ✅（s3.test.ts） | — |
+| 44 | macOS / Linux 游戏模式（平台默认热键、呼出前 capture / 关闭后 restore 前台、Spaces 可见） | ✅（settings 热键迁移 + gameMode invoke 顺序，mock Tauri） | ⬜ 需人类物理验收 |
+| 45 | 每用户图片配额（超限 413 `quota_exceeded`，他人不受影响） | ✅（media.test.ts） | — |
+| 46 | 未引用图片 TTL 清理（表情/消息附件保留，撤回后可清） | ✅（media.test.ts） | — |
+| 47 | 好友无向唯一索引（SQL 层拒绝 A→B 与 B→A 两行） | ✅（friends.test.ts） | — |
+| 48 | 备份对象存储上传（SigV4 签名稳定 + mock 端点 PUT 字节一致） | ✅（s3.test.ts） | — |
 
-当前实测：server **105** 测试（14 文件）+ client **45** 测试（5 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。生产环境（境外云服务器，地址不记录在本仓库）2026-09-11 运行 **0.8.0** 并验证（`/health` 版本、`/api/turn` 匿名 401、WSS 握手、容器 healthy、宝塔与其他站点不受影响），当日测试数据已全量清理（users/rooms/messages/dm_messages/media/invite_links 归零）。
+当前实测：server **105** 测试（14 文件）+ client **55** 测试（5 文件）全绿；lint 双工作区通过；生产模式冒烟（health/register/login）通过。生产环境（境外云服务器，地址不记录在本仓库）2026-09-11 运行 **0.8.0** 并验证（`/health` 版本、`/api/turn` 匿名 401、WSS 握手、容器 healthy、宝塔与其他站点不受影响），当日测试数据已全量清理（users/rooms/messages/dm_messages/media/invite_links 归零）。
 
 ## 3. 真机验收清单
 
@@ -101,6 +102,8 @@ cd client/src-tauri && cargo check
 - [x] 屏幕共享端到端（窗口源、不带系统音频）：控制条实时预览 + `● 正在共享` + 观看人数 + `1296×688 · 4.4 Mbps · 9 fps` + 生效档 `自动·清晰`；观看端独立窗口播放真实远端画面；档位切换 省流量 864×459 / 流畅优先 1296×688 / 自动·清晰 即时生效；停止后控制条消失、观看窗自动关闭
 - [x] `room_gone`：房间被删后继续发送，客户端提示「房间已不存在（可能已被解散）」并移除本地房间（不再 `internal error`）
 - [ ] 待验收（环境阻塞）：**全屏采集 + 系统音频**路径——本开发机（RTX 5070 Ti + 向日葵虚拟显示器 + nvlddmkm 32.0.16.1074）在该路径上会触发 `0x116 VIDEO_TDR_ERROR` 蓝屏（WER 归因显卡驱动），需更新驱动或换机器后再验
+- [ ] 待验收（环境阻塞）：**macOS 游戏模式**——`Ctrl+Shift+G` 呼出、Option+G 不作为默认、关闭输入框后焦点回到游戏、浮层出现在所有 Spaces
+- [ ] 待验收（环境阻塞）：**Linux 游戏模式**——X11 下 `Alt+G` 呼出并还原焦点；纯 Wayland 下焦点可能回不去（已知限制）
 
 ## 4. 面向用户的本机验收步骤（无服务器部署时）
 
@@ -120,7 +123,7 @@ cd client/src-tauri && cargo check
    - 单机：浏览器打开 `http://localhost:1420`（需先 `cd client && npm run dev`），注册账号 B → 邀请码加入
 4. **双向实时聊天**：A/B 互发消息，双方实时可见；非本人消息触发提示音
 5. **消息历史**：退出账号 B 重新登录 → 加入房间 → 历史消息仍在（持久化）
-6. **游戏模式**：设置 → 启用游戏模式 → 游戏中按默认 `Alt+G`（原 Ctrl+Shift+Space，设置可改）呼出输入框 → 输入 → Enter 发送 → 游戏画面出现消息 Overlay → 再按呼出键或 ESC 关闭输入框
+6. **游戏模式**：设置 → 启用游戏模式 → 游戏中按平台默认快捷键（Windows/Linux `Alt+G`，macOS `Ctrl+Shift+G`；设置可改）呼出输入框 → 输入 → Enter 发送 → 游戏画面出现消息 Overlay → 再按呼出键或 ESC 关闭输入框，焦点应回到游戏
 7. **Overlay 设置**：调整位置预设/缩放比例/显示时长，观察实时生效；确认背景绝对透明
 8. **快捷键录制**：设置 → 点击快捷键输入框 → 按下新组合键（如 Alt+1）→ 游戏中用新快捷键呼出
 9. **头像**：设置 → 点击头像/「更换头像」→ 选择图片 → 头像更新（≤3MB，PNG/JPEG/WebP/GIF）

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { emit, listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { useSettings, applyProxySetting, DEFAULT_SERVER_URL, type OverlayPosition } from './app/settings';
+import { useSettings, applyProxySetting, DEFAULT_SERVER_URL, defaultHotkeyFor, detectDesktopOs, type OverlayPosition } from './app/settings';
 import { QUALITY_OPTIONS, QUALITY_PRESETS, qualityLabel } from './app/screenShare';
 import { previewSound } from './app/audio';
 import { applyTheme } from './app/theme';
@@ -29,6 +29,18 @@ const POSITION_LABELS: Record<OverlayPosition, string> = {
 
 const REPO_URL = 'https://github.com/aocac/GameTalk';
 const RELEASES_URL = `${REPO_URL}/releases/latest`;
+
+function gameHotkeyHint(): string {
+  const os = detectDesktopOs();
+  const def = defaultHotkeyFor(os);
+  if (os === 'macos') {
+    return `本机默认 ${def}。Option+G 会输入 ©，所以不要用 Alt+G。Command 键录制为 Command。发送后会把焦点还给之前的前台应用。`;
+  }
+  if (os === 'linux') {
+    return `本机默认 ${def}。X11 下发送后会尝试把焦点还给游戏；纯 Wayland 会话通常无法可靠恢复焦点，请用无边框窗口化。`;
+  }
+  return `本机默认 ${def}。发送后焦点交还给之前的前台窗口。`;
+}
 
 /** 变更：写自身 store + 通知主窗口 */
 function change(
@@ -333,6 +345,7 @@ export default function SettingsWindow() {
             <label className="field">
               <span>呼出快捷键（点击后按下组合键；游戏中再按一次可关闭输入框）</span>
               <HotkeyRecorder value={settings.hotkey} onChange={(v) => change('hotkey', v)} />
+              <span className="field-hint">{gameHotkeyHint()}</span>
             </label>
           </>
         )}
@@ -346,6 +359,11 @@ export default function SettingsWindow() {
                 <input type="checkbox" checked={settings.overlayEnabled} onChange={(e) => change('overlayEnabled', e.target.checked)} />
                 {settings.overlayEnabled ? '已开启' : '已关闭'}
               </div>
+              <span className="field-hint">
+                关掉之后浮层根本不会被创建。游戏请用无边框窗口化，全屏独占会盖住浮层。
+                {detectDesktopOs() === 'macos' ? ' macOS 上浮层会显示在所有桌面（Spaces）。' : ''}
+                {detectDesktopOs() === 'linux' ? ' Linux 请用 X11 或带 XWayland 的会话；纯 Wayland 下焦点往往无法还给游戏。' : ''}
+              </span>
             </label>
             <div className="field">
               <span>显示位置（点击即应用并预览 5 秒）</span>
