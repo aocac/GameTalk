@@ -17,6 +17,27 @@ const BASE_WIDTH = 380;
 const BASE_HEIGHT = 180;
 const FADE_MS = 350;
 
+type OverlayWin = ReturnType<typeof getCurrentWindow>;
+
+/**
+ * GTK/tao：隐藏窗口尚未 realize 时 `GdkWindow` 为 None，
+ * `setIgnoreCursorEvents` 会在 native 里 unwrap 把整个进程 abort。
+ * 必须先 await show()，再改点击穿透；从未 show 过则跳过（隐藏窗本也点不到）。
+ */
+let overlayMapped = false;
+
+function ignoreCursor(win: OverlayWin, ignore: boolean): void {
+  if (!overlayMapped) return;
+  void win.setIgnoreCursorEvents(ignore);
+}
+
+function showOverlay(win: OverlayWin, ignore: boolean): Promise<void> {
+  return win.show().then(() => {
+    overlayMapped = true;
+    return win.setIgnoreCursorEvents(ignore);
+  });
+}
+
 /** 若窗口位于主屏可视范围外，将其夹回屏内（防止拖出屏幕后找不到） */
 async function pullIntoView(
   win: ReturnType<typeof getCurrentWindow>,
@@ -102,11 +123,10 @@ function OverlayApp() {
     pollRef.current = null;
   };
 
-  // 点击穿透 + 永不聚焦：消息 Overlay 不干扰游戏操作
+  // 点击穿透在首次 show 之后再设：见 showOverlay。这里只钉工作区。
   useEffect(() => {
     const win = getCurrentWindow();
     winRef.current = win;
-    void win.setIgnoreCursorEvents(true);
     void win.setVisibleOnAllWorkspaces(true).catch(() => undefined);
   }, []);
 
@@ -126,7 +146,7 @@ function OverlayApp() {
           const win = winRef.current;
           if (win) {
             // 预览/消息结束后恢复点击穿透（预览期间为了可拖拽暂时关闭）
-            void win.setIgnoreCursorEvents(true);
+            ignoreCursor(win, true);
             void win.hide();
           }
           setFading(false);
@@ -196,12 +216,9 @@ function OverlayApp() {
           setAdjusting(false);
           adjustingRef.current = false;
           stopClampPoll();
-          void win.setIgnoreCursorEvents(true);
         }
-        // 消息始终点击穿透（预览期间可能被关掉了）
-        void win.setIgnoreCursorEvents(true);
-        // 窗口若在屏幕外（曾被拖出）则先拉回
-        void pullIntoView(win, scaleRef.current).then(() => void win.show());
+        // 窗口若在屏幕外（曾被拖出）则先拉回；show 之后再点击穿透
+        void pullIntoView(win, scaleRef.current).then(() => void showOverlay(win, true));
       }
       scheduleHide();
     }).then((off) => (unlistenAppend = off));
@@ -223,15 +240,13 @@ function OverlayApp() {
         setAdjusting(false);
         adjustingRef.current = false;
         stopClampPoll();
-        void win.setIgnoreCursorEvents(true);
       }
       // show 在 preview 监听内执行：与 adjust 退出的 hide 同源（同一 webview）同序，
       // 保证先 hide 后 show，窗口最终可见——消除跨 webview 的 hide/show 竞态
       // 强制置顶（防御：alwaysOnTop 配置失效时防止被主窗口遮挡）
       void win.setAlwaysOnTop(true);
-      // 预览期间允许鼠标交互（可点击预览框上的「拖动」按钮）
-      void win.setIgnoreCursorEvents(false);
-      void win.show();
+      // 预览期间允许鼠标交互（可点击预览框上的「拖动」按钮）；GTK 必须先 show
+      void showOverlay(win, false);
       scheduleHide(5000);
     }).then((off) => (unlistenPreview = off));
 
@@ -242,17 +257,17 @@ function OverlayApp() {
       adjustingRef.current = active;
       const win = winRef.current;
       if (!win) return;
-      void win.setIgnoreCursorEvents(!active);
       if (active) {
         clearTimers();
         setFading(false);
         // 进入调整模式：若窗口在屏幕外（上次拖出），拉回屏内；并启动防出屏轮询
-        void pullIntoView(win, scaleRef.current).then(() => void win.show());
+        void pullIntoView(win, scaleRef.current).then(() => void showOverlay(win, false));
         startClampPoll();
       } else {
         // 外部退出（如设置里复位/切预设）：不保存位置、不 emit adjust-done，
         // 避免回调覆盖用户当前选择的位置（竞态根因）
         stopClampPoll();
+        ignoreCursor(win, true);
         void win.hide();
       }
     }).then((off) => (unlistenAdjust = off));
@@ -335,7 +350,7 @@ function OverlayApp() {
             onClick={() => {
               const win = winRef.current;
               stopClampPoll();
-              if (win) void win.setIgnoreCursorEvents(true);
+              if (win) ignoreCursor(win, true);
               setAdjusting(false);
               adjustingRef.current = false;
               // 完成：读取最终位置（夹回屏内后）保存，然后隐藏（不再触发预览重新显示）
