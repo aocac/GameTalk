@@ -104,7 +104,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerFriendsRoutes(app, { db, jwt });
   registerDmRoutes(app, { db, jwt });
   registerStickersRoutes(app, { db, jwt });
-  registerMediaRoutes(app, { db, jwt });
+  registerMediaRoutes(app, { config, db, jwt });
   registerTurnRoutes(app, { config, jwt });
   registerWsRoutes(app, { config, db, jwt });
 

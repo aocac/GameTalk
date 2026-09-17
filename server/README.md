@@ -16,7 +16,7 @@ npm run migrate      # 手动执行 migrations/*.sql（服务启动时也会自�
 npm run reset-password -- <用户名> <新密码>   # 服务器主人重置用户密码（PGlite 模式需先停服）
 ```
 
-测试基线 89 例 / 11 个文件，包含 REST、WS 网关、好友、私聊、表情、邀请、转发、屏幕共享信令、TURN 凭据，以及 `test/regressions.test.ts`（分页、越权、竞态、输入校验等回归用例）。
+测试基线 105 例 / 14 个文件，包含 REST、WS 网关、好友、私聊、表情、邀请、转发、屏幕共享信令、TURN 凭据、图片配额与 TTL、S3 兼容备份上传，以及 `test/regressions.test.ts`（分页、越权、竞态、输入校验等回归用例）。
 
 ## 环境变量
 
@@ -25,13 +25,13 @@ npm run reset-password -- <用户名> <新密码>   # 服务器主人重置用�
 - `DATABASE_URL`：PostgreSQL 连接串（不设置则用 PGlite）
 - `JWT_SECRET`：生产模式下禁止默认值，否则启动报错
 
-可选：`RATE_LIMIT_MAX` / `RATE_LIMIT_AUTH_MAX`（限流阈值）、`TURN_SECRET` / `TURN_URL`（屏幕共享中继）、`CORS_ORIGIN`、`LOG_LEVEL`、`PGLITE_DATA_DIR`。完整清单见 `.env.example`。
+可选：`RATE_LIMIT_MAX` / `RATE_LIMIT_AUTH_MAX`（限流阈值）、`TURN_SECRET` / `TURN_URL`（屏幕共享中继）、`MEDIA_QUOTA_BYTES` / `MEDIA_UNUSED_TTL_DAYS`（图片配额与未引用清理）、`BACKUP_S3_*`（每日 dump 推对象存储）、`CORS_ORIGIN`、`LOG_LEVEL`、`PGLITE_DATA_DIR`。完整清单见 `.env.example`。
 
 ## 结构
 
 - `src/routes/`：REST（health / auth / rooms / invites / friends / dm / stickers / media / turn）
 - `src/ws/gateway.ts`：WS 网关（JWT 鉴权、内存房间表广播、花名册与在线状态、屏幕共享信令透传、单连接限流、心跳清理）
-- `src/lib/`：jwt / password / image / invite / avatar / validate / envfile
+- `src/lib/`：jwt / password / image / invite / avatar / validate / envfile / mediaLifecycle / s3
 - `src/db/`：pg 与 PGlite 双实现 + migration 执行器（同一接口，生产与测试同源 SQL）
 - `migrations/`：纯 SQL 迁移，启动时按文件名顺序自动应用，`_migrations` 表记录版本
 

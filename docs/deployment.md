@@ -50,6 +50,9 @@ nano .env && bash deploy.sh
 | `CORS_ORIGIN` | 可选，默认 `*`（桌面客户端不受浏览器同源限制）；需收紧时设置，多来源逗号分隔 |
 | `TURN_SECRET` | 可选，自建 TURN 中继共享密钥（见第 9 节） |
 | `TURN_URL` | 可选，TURN 地址（逗号分隔，建议同时给 UDP 与 TCP） |
+| `MEDIA_QUOTA_BYTES` | 可选，每用户图片存储上限（字节，默认 67108864 = 64MB；`0` 不限制） |
+| `MEDIA_UNUSED_TTL_DAYS` | 可选，未被消息/表情引用的图片保留天数（默认 14；`0` 不自动清理） |
+| `BACKUP_S3_ENDPOINT` 等 | 可选，每日 dump 额外推到 S3 兼容对象存储（见第 6 节）；四项凭据都填了才上传 |
 
 ### 数据迁移
 
@@ -197,6 +200,32 @@ schtasks /Create /F /TN "GameTalk 备份异地拉取" /SC DAILY /ST 09:10 `
 
 - 建议每月做一次恢复演练（下述步骤在 VPS 上用最新 dump 验证行数即可，不必真删数据）。
 
+### 对象存储冷备（S3 / COS / OSS / MinIO，可选）
+
+`pg_dump` 已经包含 `media` 表里的图片字节。把 dump 再推一份到对象存储，等于数据库和图片一起有了异地冷备，不再依赖单台 Windows 管理机定时拉取。
+
+在 `docker/.env` 填齐这四项（缺任何一项脚本都会跳过上传，只保留服务器本地 14 天）：
+
+```
+BACKUP_S3_ENDPOINT=https://cos.<地域>.myqcloud.com   # 或 oss-<地域>.aliyuncs.com / s3.<地域>.amazonaws.com / MinIO 地址
+BACKUP_S3_BUCKET=<桶名>
+BACKUP_S3_ACCESS_KEY=<密钥 ID>
+BACKUP_S3_SECRET_KEY=<密钥>
+BACKUP_S3_REGION=<地域>          # 签名用，COS/OSS 填对应地域
+BACKUP_S3_PREFIX=gametalk/      # 可选，对象键前缀
+BACKUP_S3_PATH_STYLE=true       # 默认路径风格 /bucket/key，MinIO 与大多数兼容层都用这个
+```
+
+`backup-db.sh` 在本地 dump 校验通过后，把文件拷进 server 容器，调用 `node dist/cli/push-backup.js` 做 SigV4 PUT。对象存储失败**不会丢掉本地 dump**（日志里会写警告）。手动补传：
+
+```bash
+docker cp /root/gametalk/backups/gametalk-db-XXXX.dump docker-server-1:/tmp/gt.dump
+docker exec -e BACKUP_S3_ENDPOINT -e BACKUP_S3_BUCKET -e BACKUP_S3_ACCESS_KEY -e BACKUP_S3_SECRET_KEY \
+  docker-server-1 node dist/cli/push-backup.js /tmp/gt.dump gametalk-db-XXXX.dump
+```
+
+服务端另有每用户图片配额（默认 64MB，`MEDIA_QUOTA_BYTES`）和未引用图片 TTL（默认 14 天，`MEDIA_UNUSED_TTL_DAYS`），避免 BYTEA 把磁盘吃满；撤回后清空引用的图会在 TTL 后被清掉，表情包引用的图不会。
+
 ### 恢复步骤
 
 ```bash
@@ -208,8 +237,7 @@ docker exec -i docker-postgres-1 pg_restore -U gametalk -d gametalk --clean --if
 docker compose start server                      # 3) 重启并验证 /health、登录、历史消息
 ```
 
-> 可选升级：条件允许时将备份再推送一份到对象存储（S3/COS/OSS 免费额度即可），
-> 把异地副本从「管理机定时拉取」升级为「服务器定时推送」，进一步降低对单台管理机的依赖。
+> 对象存储冷备的配置与手动补传见上一小节；不填 `BACKUP_S3_*` 时行为与原来完全一样（只留服务器本地 dump + 管理机拉取）。
 
 ## 7. 客户端下载
 
